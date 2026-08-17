@@ -1,4 +1,6 @@
 using EndpointPlatform.Domain.Auditing;
+using EndpointPlatform.Domain.Devices;
+using EndpointPlatform.Domain.Enrollment;
 using EndpointPlatform.Domain.Identity;
 using Microsoft.EntityFrameworkCore;
 
@@ -40,6 +42,12 @@ public sealed class EndpointPlatformDbContext(DbContextOptions<EndpointPlatformD
     public DbSet<RolePermission> RolePermissions => Set<RolePermission>();
 
     public DbSet<PlatformUserRole> PlatformUserRoles => Set<PlatformUserRole>();
+
+    public DbSet<Device> Devices => Set<Device>();
+
+    public DbSet<EnrollmentToken> EnrollmentTokens => Set<EnrollmentToken>();
+
+    public DbSet<AgentCredential> AgentCredentials => Set<AgentCredential>();
 
     /// <summary>
     /// Append-only. The runtime database role holds INSERT and SELECT here and

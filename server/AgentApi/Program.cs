@@ -1,4 +1,5 @@
 using System.Reflection;
+using EndpointPlatform.AgentApi.Endpoints;
 using EndpointPlatform.Contracts;
 using EndpointPlatform.Contracts.Common;
 using EndpointPlatform.Infrastructure.DependencyInjection;
@@ -78,6 +79,8 @@ public sealed class Program
             }
 
             app.MapPlatformHealthChecks();
+
+            app.MapAgentEndpoints();
 
             app.MapGet("/", () => new ServiceInfoResponse(
                     Service: "agent-api",

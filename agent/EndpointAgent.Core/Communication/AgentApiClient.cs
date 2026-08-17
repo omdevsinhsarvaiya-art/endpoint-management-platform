@@ -1,0 +1,137 @@
+using System.Net;
+using System.Net.Http.Json;
+using EndpointAgent.Core.Abstractions;
+using EndpointPlatform.Contracts;
+using EndpointPlatform.Contracts.Agent;
+using Microsoft.Extensions.Logging;
+
+namespace EndpointAgent.Core.Communication;
+
+/// <summary>
+/// HTTP implementation of <see cref="IAgentApiClient"/>.
+/// </summary>
+/// <remarks>
+/// <para>
+/// The credential is attached per request and never stored on the
+/// <see cref="HttpClient"/>'s default headers, so a client instance can never
+/// leak a credential into a request that should not carry one (enrollment).
+/// </para>
+/// <para>
+/// Log discipline: URLs and status codes are logged; header values, bodies and
+/// credential material never are.
+/// </para>
+/// </remarks>
+public sealed class AgentApiClient(HttpClient httpClient, ILogger<AgentApiClient> logger) : IAgentApiClient
+{
+    private readonly HttpClient _httpClient = httpClient
+        ?? throw new ArgumentNullException(nameof(httpClient));
+
+    private readonly ILogger<AgentApiClient> _logger = logger
+        ?? throw new ArgumentNullException(nameof(logger));
+
+    public async Task<AgentApiResult<EnrollResponse>> EnrollAsync(
+        EnrollRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        using var message = new HttpRequestMessage(
+            HttpMethod.Post,
+            AgentProtocol.RoutePrefix + AgentProtocol.Routes.Enroll)
+        {
+            Content = JsonContent.Create(request),
+        };
+
+        AddProtocolHeaders(message, request.AgentVersion);
+
+        return await SendAsync<EnrollResponse>(message, "enroll", cancellationToken);
+    }
+
+    public async Task<AgentApiResult<HeartbeatResponse>> HeartbeatAsync(
+        HeartbeatRequest request,
+        DeviceCredential credential,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(credential);
+
+        using var message = new HttpRequestMessage(
+            HttpMethod.Post,
+            AgentProtocol.RoutePrefix + AgentProtocol.Routes.Heartbeat)
+        {
+            Content = JsonContent.Create(request),
+        };
+
+        AddProtocolHeaders(message, request.AgentVersion);
+        message.Headers.Add(AgentProtocol.Headers.Credential, credential.ToHeaderValue());
+        message.Headers.Add(AgentProtocol.Headers.DeviceId, credential.DeviceId.ToString());
+
+        return await SendAsync<HeartbeatResponse>(message, "heartbeat", cancellationToken);
+    }
+
+    private static void AddProtocolHeaders(HttpRequestMessage message, string agentVersion)
+    {
+        message.Headers.Add(AgentProtocol.Headers.ProtocolVersion, AgentProtocol.Version.ToString());
+        message.Headers.Add(AgentProtocol.Headers.AgentVersion, agentVersion);
+    }
+
+    private async Task<AgentApiResult<T>> SendAsync<T>(
+        HttpRequestMessage message,
+        string operation,
+        CancellationToken cancellationToken)
+    {
+        HttpResponseMessage response;
+
+        try
+        {
+            response = await _httpClient.SendAsync(message, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw; // Shutdown, not a failure.
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            _logger.LogWarning("Agent {Operation} request failed to reach the server: {Reason}",
+                operation, ex.GetType().Name);
+            return AgentApiResult<T>.Transient();
+        }
+
+        using (response)
+        {
+            if (response.IsSuccessStatusCode)
+            {
+                var body = await response.Content.ReadFromJsonAsync<T>(cancellationToken);
+
+                if (body is null)
+                {
+                    _logger.LogWarning("Agent {Operation} returned success with an empty body.", operation);
+                    return AgentApiResult<T>.Transient();
+                }
+
+                return AgentApiResult<T>.Success(body);
+            }
+
+            if (response.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                _logger.LogWarning("Agent {Operation} was refused: credential not accepted (401).", operation);
+                return AgentApiResult<T>.Unauthorized();
+            }
+
+            if ((int)response.StatusCode is >= 400 and < 500)
+            {
+                _logger.LogWarning(
+                    "Agent {Operation} was rejected by the server: HTTP {StatusCode}.",
+                    operation,
+                    (int)response.StatusCode);
+                return AgentApiResult<T>.Rejected();
+            }
+
+            _logger.LogWarning(
+                "Agent {Operation} failed with server error HTTP {StatusCode}; will retry.",
+                operation,
+                (int)response.StatusCode);
+            return AgentApiResult<T>.Transient();
+        }
+    }
+}

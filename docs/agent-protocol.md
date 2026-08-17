@@ -1,8 +1,9 @@
 # Agent protocol
 
-Status: **v1, Phase 0 skeleton.** This document defines the frame that Phase 1
-fills in. Constants live in `shared/Contracts/AgentProtocol.cs` and are
-compiled into both the server and the agent, so names cannot drift.
+Status: **v1 — enrollment and heartbeat implemented (Phase 1).** Constants live
+in `shared/Contracts/AgentProtocol.cs`; request/response records in
+`shared/Contracts/Agent/`. Both sides compile against them, so names cannot
+drift. Authentication design rationale: `docs/adr/0008-agent-authentication.md`.
 
 ## Principles
 
@@ -28,28 +29,43 @@ compiled into both the server and the agent, so names cannot drift.
 
 | Header | Direction | Meaning |
 |---|---|---|
-| `X-Agent-Protocol-Version` | request | Protocol version (`1`) |
-| `X-Agent-Device-Id` | request | Enrolled device id (absent during enrollment) |
+| `X-Agent-Protocol-Version` | request | Protocol version (`1`); wrong values are rejected with 400 |
+| `X-Agent-Credential` | request | Device credential as `keyId.secret`; TLS-only |
+| `X-Agent-Device-Id` | request | Enrolled device id (informational; identity comes from the credential) |
 | `X-Agent-Version` | request | Agent build version, for fleet upgrade visibility |
 | `X-Correlation-Id` | both | Request tracing; server-generated if absent/invalid |
 
-Authentication headers are specified in Phase 1 together with the credential
-scheme (see ADR placeholder in `docs/adr/`).
+The credential uses a dedicated header rather than `Authorization: Bearer` so
+that agent credentials can never be confused with, or replayed as,
+administrator bearer tokens.
 
-## Endpoints (defined; implemented in Phase 1+)
+## Endpoints
 
-### `POST /agent/v1/enroll` *(Phase 1)*
-Exchange a scoped, expiring, limited-use enrollment token for a device record
-and a long-term device credential. The token is stored server-side only as a
-hash. Re-enrollment of a machine with a known machine identifier updates the
-existing device rather than creating a duplicate.
+### `POST /agent/v1/enroll` — implemented
+Anonymous (the enrollment token is the credential). Body: `EnrollRequest`
+(token, hostname, machine identifier, agent version, OS). Success returns
+`EnrollResponse` with the device id and the credential — the credential secret's
+only transmission, ever.
 
-### `POST /agent/v1/heartbeat` *(Phase 1)*
-Authenticated. Body: hostname, agent version, timestamp, basic status. Server
-updates `last_seen`; online/offline is derived server-side from heartbeat
-staleness, so a dead agent cannot lie about being alive.
+Refusals (unknown/expired/revoked/exhausted token, retired device) are a
+uniform 403 with identical bodies, verified by test, so callers cannot probe
+the token space. Every refusal is audited as `Denied` with the real reason.
 
-### `POST /agent/v1/inventory` *(Phase 2)*
+Re-enrollment of a known machine identifier updates the existing device,
+revokes its previous credentials and issues a fresh one (`ReEnrolled: true`).
+
+### `POST /agent/v1/heartbeat` — implemented
+Requires `X-Agent-Credential`. Body: `HeartbeatRequest` (hostname, agent
+version, OS, agent-local timestamp — recorded for skew diagnostics, never
+trusted for ordering). Server updates the device facts and `last_seen` from its
+own clock; online/offline is derived from staleness, so a dead agent cannot
+appear alive. The response returns server time and the interval the server
+wants agents to use, making cadence centrally tunable.
+
+Heartbeats do not produce per-event audit entries (volume); enrollment and all
+refusals do.
+
+### `POST /agent/v1/inventory` *(Phase 2 — not yet implemented, returns 404)*
 Authenticated. Full hardware/network/software inventory snapshot.
 
 ## Error handling

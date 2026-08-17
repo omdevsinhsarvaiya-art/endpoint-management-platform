@@ -1,11 +1,13 @@
 using System.Runtime.Versioning;
 using EndpointAgent.Core.Abstractions;
+using EndpointAgent.Core.Communication;
 using EndpointAgent.Core.Configuration;
-using EndpointAgent.Service;
+using EndpointAgent.Core.Enrollment;
+using EndpointAgent.Core.Heartbeat;
 using EndpointAgent.Windows;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Hosting.WindowsServices;
+using Microsoft.Extensions.Options;
 using Serilog;
 
 namespace EndpointAgent.Service;
@@ -14,19 +16,11 @@ namespace EndpointAgent.Service;
 /// Composition root for the Windows endpoint agent service.
 /// </summary>
 /// <remarks>
-/// <para>
 /// Runs as LocalSystem in production and is therefore a privileged security
-/// boundary, not an ordinary desktop application. This file does DI wiring,
-/// configuration and logging only: no business logic and no Windows API calls, so
-/// the privileged surface stays confined to reviewed, individually tested types in
+/// boundary. This file does DI wiring, configuration and logging only: no
+/// business logic and no Windows API calls, so the privileged surface stays
+/// confined to reviewed, individually tested types in
 /// <c>EndpointAgent.Windows</c>.
-/// </para>
-/// <para>
-/// Phase 0 scope: the service starts, binds configuration, resolves its Windows
-/// dependencies and logs what it can see about the machine. It performs no
-/// enrollment, holds no credential and sends nothing to the server - that arrives
-/// in Phase 1.
-/// </para>
 /// </remarks>
 [SupportedOSPlatform("windows")]
 public static class Program
@@ -41,10 +35,9 @@ public static class Program
         {
             var builder = Host.CreateApplicationBuilder(args);
 
+            // ENDPOINTAGENT_Agent__ServerBaseUrl, ENDPOINTAGENT_Enrollment__Token, ...
             builder.Configuration.AddEnvironmentVariables(prefix: "ENDPOINTAGENT_");
 
-            // Lets the same executable run as a Windows service and as a console
-            // application for debugging, without a separate build.
             builder.Services.AddWindowsService(options => options.ServiceName = "EndpointPlatformAgent");
 
             builder.Services.AddSerilog((services, configuration) => configuration
@@ -63,12 +56,40 @@ public static class Program
                     + "into accepting hostile privileged tasks.")
                 .ValidateOnStart();
 
+            builder.Services.AddOptions<EnrollmentOptions>()
+                .Bind(builder.Configuration.GetSection(EnrollmentOptions.SectionName));
+
             builder.Services.AddSingleton(TimeProvider.System);
 
             // Windows implementations of the platform-neutral abstractions.
             builder.Services.AddSingleton<ISystemInfoProvider, WindowsSystemInfoProvider>();
+            builder.Services.AddSingleton<IDeviceCredentialStore, DpapiDeviceCredentialStore>();
 
-            builder.Services.AddHostedService<AgentStartupDiagnosticsService>();
+            builder.Services.AddHttpClient<IAgentApiClient, AgentApiClient>((serviceProvider, client) =>
+                {
+                    var options = serviceProvider.GetRequiredService<IOptions<AgentOptions>>().Value;
+                    client.BaseAddress = new Uri(options.ServerBaseUrl, UriKind.Absolute);
+                    client.Timeout = TimeSpan.FromSeconds(options.RequestTimeoutSeconds);
+                })
+                .ConfigurePrimaryHttpMessageHandler(serviceProvider =>
+                {
+                    var options = serviceProvider.GetRequiredService<IOptions<AgentOptions>>().Value;
+                    var handler = new HttpClientHandler();
+
+                    // Only reachable in Debug builds - options validation refuses it
+                    // otherwise. Never ships enabled.
+                    if (options.AllowUntrustedServerCertificate && IsDebugBuild)
+                    {
+                        handler.ServerCertificateCustomValidationCallback =
+                            HttpClientHandler.DangerousAcceptAnyServerCertificateValidator;
+                    }
+
+                    return handler;
+                });
+
+            builder.Services.AddSingleton<AgentEnrollmentManager>();
+            builder.Services.AddSingleton<HeartbeatLoop>();
+            builder.Services.AddHostedService<AgentWorker>();
 
             var host = builder.Build();
             await host.RunAsync();

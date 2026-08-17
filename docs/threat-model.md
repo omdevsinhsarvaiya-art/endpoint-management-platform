@@ -110,10 +110,15 @@ privileged boundary:
 - The agent codebase cannot launch processes or embed PowerShell — the
   assemblies do not reference process creation at all, enforced by tests
   (ADR-0005). Windows work is done through APIs with no command line.
-- *(Phase 1)* Enrollment: scoped, expiring, limited-use tokens stored only as
-  hashes; per-device credentials; no fleet-wide shared secret.
-- *(Phase 1)* Device credential stored DPAPI-protected at machine scope in an
-  ACL'd directory.
+- **(Implemented, Phase 1)** Enrollment: scoped, expiring, limited-use tokens
+  stored only as hashes; per-device credentials; no fleet-wide shared secret;
+  refusals indistinguishable on the wire and audited with reasons; optimistic
+  concurrency on the last remaining use. See ADR-0008.
+- **(Implemented, Phase 1)** Device credential stored DPAPI-protected at
+  machine scope with extra entropy; directory ACL'd to SYSTEM/Administrators
+  when elevated; corrupt blobs degrade to re-enrollment, never crash.
+- **(Implemented, Phase 1)** Re-enrollment revokes prior credentials; retired
+  devices fail closed on both heartbeat and re-enrollment.
 - *(Phase 10)* Only typed tasks; scripts require hash + signature + recorded
   approval. No arbitrary command endpoint will exist.
 - The agent refuses to disable TLS certificate validation outside Debug builds
@@ -124,7 +129,8 @@ privileged boundary:
 | Limitation | Risk | Planned remedy |
 |---|---|---|
 | Audit records stay on the same PostgreSQL host | Table owner/superuser can drop triggers and rewrite history | Phase 15: ship audit stream to append-only external storage |
-| No authentication on either API yet | Anyone with network reach can call read endpoints | Phase 3 (admin) / Phase 1 (agent); until then: development only, loopback binding |
+| **Admin API has no authentication yet** (Agent API is authenticated as of Phase 1) | Anyone with network reach can issue enrollment tokens and read device data; mutations are audited against a synthetic `development-unauthenticated@localhost` actor | Phase 3; until then: development only, loopback binding |
+| Enrollment token is a bearer bootstrap secret | Holder of an unused token can enroll a hostile machine into management | Expiry ≤30 days, use caps, revocation, one-time display; operational handling guidance in deployment docs |
 | Development runs plain HTTP on localhost | Local traffic unencrypted | TLS termination is a deployment concern; HSTS+redirect already active outside Development |
 | No rate limiting yet | Brute force/DoS against future auth endpoints | Phase 3 alongside authentication, hardened in Phase 15 |
 | Single-node PostgreSQL/Redis | Availability, not security | Phase 15 |

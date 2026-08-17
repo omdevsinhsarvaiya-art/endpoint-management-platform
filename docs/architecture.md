@@ -149,4 +149,7 @@ are reverted automatically.
 ## Current phase status
 
 - **Phase 0 (foundation): complete.**
-- Phase 1 (secure enrollment + heartbeat): next.
+- **Phase 1 (secure enrollment + heartbeat): complete.** Enrollment tokens,
+  per-device credentials, authenticated heartbeat, device list/counts in the
+  dashboard. See ADR-0008.
+- Phase 2 (device inventory): next.

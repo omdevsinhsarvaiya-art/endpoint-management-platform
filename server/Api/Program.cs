@@ -1,4 +1,5 @@
 using System.Reflection;
+using EndpointPlatform.Api.Endpoints;
 using EndpointPlatform.Contracts.Common;
 using EndpointPlatform.Infrastructure.DependencyInjection;
 using EndpointPlatform.Infrastructure.Hosting;
@@ -91,6 +92,9 @@ public sealed class Program
             app.UseCors(DashboardCorsPolicy);
 
             app.MapPlatformHealthChecks();
+
+            app.MapEnrollmentTokenEndpoints();
+            app.MapDeviceEndpoints();
 
             app.MapGet("/", () => new ServiceInfoResponse(
                     Service: "admin-api",

@@ -80,20 +80,41 @@ public sealed class AgentApiHostTests(AgentApiFactory factory) : IClassFixture<A
     }
 
     /// <summary>
-    /// Phase 0 defines no agent endpoints yet. Asserting that they are absent keeps
-    /// the phase boundary honest: enrollment and heartbeat arrive in Phase 1, and
-    /// this test will be updated then to assert they require authentication.
+    /// Inventory arrives in Phase 2; until then the route must not exist.
     /// </summary>
-    [Theory]
-    [InlineData(AgentProtocol.RoutePrefix + AgentProtocol.Routes.Enroll)]
-    [InlineData(AgentProtocol.RoutePrefix + AgentProtocol.Routes.Heartbeat)]
-    [InlineData(AgentProtocol.RoutePrefix + AgentProtocol.Routes.Inventory)]
-    public async Task No_agent_endpoint_is_implemented_in_phase_0(string path)
+    [Fact]
+    public async Task The_inventory_endpoint_is_not_implemented_yet()
     {
         using var client = _factory.CreateClient();
 
-        var response = await client.PostAsync(new Uri(path, UriKind.Relative), content: null);
+        var response = await client.PostAsync(
+            new Uri(AgentProtocol.RoutePrefix + AgentProtocol.Routes.Inventory, UriKind.Relative),
+            content: null);
 
         response.StatusCode.ShouldBe(HttpStatusCode.NotFound);
+    }
+
+    /// <summary>
+    /// Heartbeat without a credential must be rejected before anything else
+    /// happens — this factory's database is unreachable, so a 401 here also proves
+    /// the rejection needs no database round trip.
+    /// </summary>
+    [Fact]
+    public async Task Heartbeat_without_a_credential_is_unauthorized()
+    {
+        using var client = _factory.CreateClient();
+
+        using var message = new HttpRequestMessage(
+            HttpMethod.Post,
+            new Uri(AgentProtocol.RoutePrefix + AgentProtocol.Routes.Heartbeat, UriKind.Relative))
+        {
+            Content = System.Net.Http.Json.JsonContent.Create(new Contracts.Agent.HeartbeatRequest(
+                "HOST", "1.0.0", null, DateTimeOffset.UtcNow)),
+        };
+        message.Headers.Add(AgentProtocol.Headers.ProtocolVersion, AgentProtocol.Version.ToString());
+
+        var response = await client.SendAsync(message);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
     }
 }

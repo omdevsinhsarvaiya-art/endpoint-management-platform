@@ -1,6 +1,7 @@
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import { AppShell } from './components/AppShell'
 import { DashboardPage } from './pages/DashboardPage'
+import { DevicesPage } from './pages/DevicesPage'
 import { PlaceholderPage } from './pages/PlaceholderPage'
 
 export default function App() {
@@ -9,10 +10,7 @@ export default function App() {
       <Routes>
         <Route element={<AppShell />}>
           <Route index element={<DashboardPage />} />
-          <Route
-            path="devices"
-            element={<PlaceholderPage title="Devices" phase="Phase 1 (enrollment and heartbeat)" />}
-          />
+          <Route path="devices" element={<DevicesPage />} />
           <Route
             path="users"
             element={<PlaceholderPage title="Users" phase="Phase 4 (local user management)" />}

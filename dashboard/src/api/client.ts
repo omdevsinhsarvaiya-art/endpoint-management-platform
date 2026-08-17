@@ -60,8 +60,45 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T
 }
 
+export interface DeviceListItem {
+  id: string
+  hostname: string
+  operatingSystem: string | null
+  agentVersion: string
+  status: 'Active' | 'Retired'
+  lastSeenAt: string | null
+  isOnline: boolean
+  enrolledAt: string
+}
+
+export interface DevicePage {
+  items: DeviceListItem[]
+  totalCount: number
+  page: number
+  pageSize: number
+}
+
+export interface DeviceCounts {
+  total: number
+  online: number
+  offline: number
+  retired: number
+}
+
 export function getServiceInfo(): Promise<ServiceInfo> {
   return request<ServiceInfo>('/')
+}
+
+export function getDevices(page: number, pageSize: number, search: string): Promise<DevicePage> {
+  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) })
+  if (search.trim().length > 0) {
+    params.set('search', search.trim())
+  }
+  return request<DevicePage>(`/admin/v1/devices?${params}`)
+}
+
+export function getDeviceCounts(): Promise<DeviceCounts> {
+  return request<DeviceCounts>('/admin/v1/devices/counts')
 }
 
 export function getReadiness(): Promise<HealthReport> {

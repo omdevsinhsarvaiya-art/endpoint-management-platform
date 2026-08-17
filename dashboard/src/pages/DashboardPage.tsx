@@ -1,29 +1,19 @@
 import { useEffect, useState } from 'react'
 import {
+  getDeviceCounts,
   getReadiness,
   getServiceInfo,
+  type DeviceCounts,
   type HealthReport,
   type ServiceInfo,
 } from '../api/client'
 
-interface StatCard {
-  label: string
-  value: string
-}
-
 /**
- * Phase 0 dashboard: platform connectivity and honest placeholders.
- *
- * The stat tiles show em-dashes rather than zeroes: "0 devices" would be a
- * claim about the estate, and no device inventory exists yet. Real values
- * arrive with enrollment (Phase 1) and inventory (Phase 2).
+ * Device tiles show live counts (Phase 1). The remaining tiles keep em-dashes
+ * rather than zeroes: "0 pending updates" would be a claim about the estate,
+ * and those collectors do not exist yet (Phases 8/12).
  */
-const PLACEHOLDER_STATS: StatCard[] = [
-  { label: 'Total Devices', value: '—' },
-  { label: 'Online', value: '—' },
-  { label: 'Offline', value: '—' },
-  { label: 'Healthy', value: '—' },
-  { label: 'Needs Attention', value: '—' },
+const PLACEHOLDER_STATS = [
   { label: 'Pending Updates', value: '—' },
   { label: 'Security Alerts', value: '—' },
 ]
@@ -42,6 +32,7 @@ function statusBadgeClass(status: string): string {
 export function DashboardPage() {
   const [serviceInfo, setServiceInfo] = useState<ServiceInfo | null>(null)
   const [health, setHealth] = useState<HealthReport | null>(null)
+  const [counts, setCounts] = useState<DeviceCounts | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -50,10 +41,15 @@ export function DashboardPage() {
 
     async function load() {
       try {
-        const [info, readiness] = await Promise.all([getServiceInfo(), getReadiness()])
+        const [info, readiness, deviceCounts] = await Promise.all([
+          getServiceInfo(),
+          getReadiness(),
+          getDeviceCounts(),
+        ])
         if (!cancelled) {
           setServiceInfo(info)
           setHealth(readiness)
+          setCounts(deviceCounts)
           setError(null)
         }
       } catch {
@@ -71,17 +67,26 @@ export function DashboardPage() {
     }
 
     void load()
+    const timer = setInterval(() => void load(), 30_000)
     return () => {
       cancelled = true
+      clearInterval(timer)
     }
   }, [])
+
+  const deviceStats = [
+    { label: 'Total Devices', value: counts ? String(counts.total) : '—' },
+    { label: 'Online', value: counts ? String(counts.online) : '—' },
+    { label: 'Offline', value: counts ? String(counts.offline) : '—' },
+    { label: 'Retired', value: counts ? String(counts.retired) : '—' },
+  ]
 
   return (
     <>
       {error && <div className="error-banner">{error}</div>}
 
       <div className="stat-grid">
-        {PLACEHOLDER_STATS.map((stat) => (
+        {[...deviceStats, ...PLACEHOLDER_STATS].map((stat) => (
           <div key={stat.label} className="card stat-card">
             <div className="stat-label">{stat.label}</div>
             <div className="stat-value">{stat.value}</div>

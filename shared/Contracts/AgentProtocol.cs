@@ -30,6 +30,14 @@ public static class AgentProtocol
 
         /// <summary>Agent build version, for fleet upgrade visibility.</summary>
         public const string AgentVersion = "X-Agent-Version";
+
+        /// <summary>
+        /// Device credential, presented as <c>keyId.secret</c>. Sent only over TLS.
+        /// A dedicated header rather than <c>Authorization: Bearer</c> so that agent
+        /// credentials can never be confused with (or replayed as) administrator
+        /// bearer tokens by any intermediary or log pipeline.
+        /// </summary>
+        public const string Credential = "X-Agent-Credential";
     }
 
     /// <summary>Agent-facing endpoint paths, relative to <see cref="RoutePrefix"/>.</summary>

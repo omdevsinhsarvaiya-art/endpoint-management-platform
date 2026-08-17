@@ -22,6 +22,7 @@
 
   <ItemGroup>
     <PackageReference Include="System.Management" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" />
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
   </ItemGroup>
 

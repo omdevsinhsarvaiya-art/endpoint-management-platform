@@ -79,6 +79,11 @@ public static class InfrastructureServiceCollectionExtensions
             .ValidateDataAnnotations()
             .ValidateOnStart();
 
+        services.AddOptions<AgentServerOptions>()
+            .Bind(configuration.GetSection(AgentServerOptions.SectionName))
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
+
         return services;
     }
 
@@ -140,6 +145,14 @@ public static class InfrastructureServiceCollectionExtensions
         });
 
         services.AddScoped<ReferenceDataSeeder>();
+
+        // Application services. Scoped: they hold the scoped DbContext.
+        services.AddHttpContextAccessor();
+        services.AddScoped<Auditing.AuditWriter>();
+        services.AddScoped<Enrollment.EnrollmentTokenService>();
+        services.AddScoped<Enrollment.AgentEnrollmentService>();
+        services.AddScoped<Enrollment.AgentAuthenticationService>();
+        services.AddScoped<Devices.DeviceReadService>();
 
         return services;
     }
