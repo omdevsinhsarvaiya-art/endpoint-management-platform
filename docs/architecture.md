@@ -152,4 +152,7 @@ are reverted automatically.
 - **Phase 1 (secure enrollment + heartbeat): complete.** Enrollment tokens,
   per-device credentials, authenticated heartbeat, device list/counts in the
   dashboard. See ADR-0008.
-- Phase 2 (device inventory): next.
+- **Phase 2 (device inventory): complete.** Hardware/network/logged-on-user
+  collection via WMI and managed APIs, pull-based refresh handshake through the
+  heartbeat response, device detail page (Overview/Hardware/Network tabs).
+- Phase 3 (authentication + RBAC + audit enforcement): next.

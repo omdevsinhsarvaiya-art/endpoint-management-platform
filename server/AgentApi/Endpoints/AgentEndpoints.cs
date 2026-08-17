@@ -35,6 +35,9 @@ public static class AgentEndpoints
         group.MapPost(AgentProtocol.Routes.Heartbeat, HeartbeatAsync)
             .WithName("AgentHeartbeat");
 
+        group.MapPost(AgentProtocol.Routes.Inventory, InventoryAsync)
+            .WithName("AgentInventory");
+
         return endpoints;
     }
 
@@ -129,7 +132,99 @@ public static class AgentEndpoints
 
         return Results.Ok(new HeartbeatResponse(
             now,
-            agentServerOptions.Value.HeartbeatIntervalSeconds));
+            agentServerOptions.Value.HeartbeatIntervalSeconds,
+            InventoryRequested: device.IsInventoryRefreshPending));
+    }
+
+    private static async Task<IResult> InventoryAsync(
+        [FromBody] InventoryReport report,
+        [FromHeader(Name = AgentProtocol.Headers.Credential)] string? credentialHeader,
+        [FromHeader(Name = AgentProtocol.Headers.ProtocolVersion)] int? protocolVersion,
+        AgentAuthenticationService authenticationService,
+        Infrastructure.Devices.DeviceInventoryService inventoryService,
+        TimeProvider timeProvider,
+        CancellationToken cancellationToken)
+    {
+        if (protocolVersion != AgentProtocol.Version)
+        {
+            return Results.Problem(
+                title: "Unsupported agent protocol version.",
+                statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        var authentication = await authenticationService.AuthenticateAsync(credentialHeader, cancellationToken);
+
+        if (!authentication.Success)
+        {
+            return Results.Unauthorized();
+        }
+
+        var validationError = ValidateInventoryReport(report);
+        if (validationError is not null)
+        {
+            return Results.Problem(title: validationError, statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        await inventoryService.ApplyAsync(authentication.Device!, report, cancellationToken);
+
+        return Results.Ok(new InventoryResponse(timeProvider.GetUtcNow()));
+    }
+
+    private static string? ValidateInventoryReport(InventoryReport report)
+    {
+        if (report.Hardware is null)
+        {
+            return "Hardware section is required.";
+        }
+
+        if (report.NetworkInterfaces is { Count: > Infrastructure.Devices.DeviceInventoryService.MaxNetworkInterfaces })
+        {
+            return "Too many network interfaces.";
+        }
+
+        if (report.Hardware.Disks is { Count: > Infrastructure.Devices.DeviceInventoryService.MaxDisks })
+        {
+            return "Too many disks.";
+        }
+
+        foreach (var nic in report.NetworkInterfaces ?? [])
+        {
+            if (string.IsNullOrWhiteSpace(nic.Name) || nic.Name.Length > 256)
+            {
+                return "Every network interface requires a name of at most 256 characters.";
+            }
+
+            if (nic.IpAddresses is { Count: > Infrastructure.Devices.DeviceInventoryService.MaxIpAddressesPerInterface })
+            {
+                return "Too many IP addresses on one interface.";
+            }
+
+            // Pre-validate the MAC so a malformed one is a clean 400 here rather
+            // than an exception inside the domain's normaliser.
+            if (nic.MacAddress is { } mac)
+            {
+                var hexDigits = mac.Count(Uri.IsHexDigit);
+                if (mac.Length > 23 || (hexDigits != 12 && hexDigits != 16))
+                {
+                    return "A network interface MAC address is malformed.";
+                }
+            }
+
+            foreach (var ip in nic.IpAddresses ?? [])
+            {
+                if (string.IsNullOrWhiteSpace(ip) || ip.Length > 64)
+                {
+                    return "A network interface IP address is malformed.";
+                }
+            }
+        }
+
+        if (report.LoggedOnUser is { Length: > 256 })
+        {
+            return "Logged-on user must be at most 256 characters.";
+        }
+
+        return null;
     }
 
     private static string? ValidateEnrollRequest(EnrollRequest request)

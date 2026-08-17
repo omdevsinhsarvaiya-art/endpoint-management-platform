@@ -101,6 +101,61 @@ export function getDeviceCounts(): Promise<DeviceCounts> {
   return request<DeviceCounts>('/admin/v1/devices/counts')
 }
 
+export interface DeviceDisk {
+  name: string
+  fileSystem: string | null
+  sizeBytes: number
+  freeBytes: number
+}
+
+export interface DeviceHardware {
+  serialNumber: string | null
+  manufacturer: string | null
+  model: string | null
+  cpuName: string | null
+  cpuPhysicalCores: number | null
+  cpuLogicalProcessors: number | null
+  totalMemoryBytes: number | null
+  disks: DeviceDisk[] | null
+  collectedAt: string
+}
+
+export interface DeviceNetworkInterface {
+  name: string
+  macAddress: string | null
+  ipAddresses: string[] | null
+  isUp: boolean
+}
+
+export interface DeviceDetail {
+  id: string
+  hostname: string
+  operatingSystem: string | null
+  agentVersion: string
+  status: 'Active' | 'Retired'
+  lastSeenAt: string | null
+  enrolledAt: string
+  machineIdentifier: string
+  loggedOnUser: string | null
+  inventoryCollectedAt: string | null
+  inventoryRefreshPending: boolean
+  hardware: DeviceHardware | null
+  networkInterfaces: DeviceNetworkInterface[]
+}
+
+export function getDevice(deviceId: string): Promise<DeviceDetail> {
+  return request<DeviceDetail>(`/admin/v1/devices/${encodeURIComponent(deviceId)}`)
+}
+
+export async function requestInventoryRefresh(deviceId: string): Promise<void> {
+  const response = await fetch(`/api/admin/v1/devices/${encodeURIComponent(deviceId)}/refresh-inventory`, {
+    method: 'POST',
+  })
+  if (!response.ok) {
+    throw new ApiError(response.status, 'Inventory refresh request failed', response.headers.get('X-Correlation-Id'))
+  }
+}
+
 export function getReadiness(): Promise<HealthReport> {
   // /health/ready returns 503 when unhealthy, which `request` would treat as an
   // error; a health page wants the body either way, so fetch it directly.

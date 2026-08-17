@@ -29,6 +29,7 @@ public sealed class HeartbeatLoop(
     AgentEnrollmentManager enrollmentManager,
     IAgentApiClient apiClient,
     ISystemInfoProvider systemInfoProvider,
+    IInventoryCollector inventoryCollector,
     IOptions<AgentOptions> agentOptions,
     IOptions<EnrollmentOptions> enrollmentOptions,
     TimeProvider timeProvider,
@@ -46,6 +47,9 @@ public sealed class HeartbeatLoop(
 
     private readonly ISystemInfoProvider _systemInfoProvider = systemInfoProvider
         ?? throw new ArgumentNullException(nameof(systemInfoProvider));
+
+    private readonly IInventoryCollector _inventoryCollector = inventoryCollector
+        ?? throw new ArgumentNullException(nameof(inventoryCollector));
 
     private readonly AgentOptions _agentOptions = agentOptions?.Value
         ?? throw new ArgumentNullException(nameof(agentOptions));
@@ -126,6 +130,11 @@ public sealed class HeartbeatLoop(
 
                     LogClockSkew(request.AgentTimestamp, response.ServerTime);
 
+                    if (response.InventoryRequested)
+                    {
+                        await UploadInventoryAsync(credential, stoppingToken);
+                    }
+
                     await DelayAsync(interval, stoppingToken);
                     continue;
                 }
@@ -162,6 +171,42 @@ public sealed class HeartbeatLoop(
         // this is scheduling, not cryptography.
         var jitteredTicks = Random.Shared.NextInt64(MinBackoff.Ticks, ceilingTicks + 1);
         return TimeSpan.FromTicks(jitteredTicks);
+    }
+
+    /// <summary>
+    /// Collects and uploads a full inventory snapshot. Failure is non-fatal: the
+    /// server keeps the request pending, so the next heartbeat retries naturally.
+    /// </summary>
+    private async Task UploadInventoryAsync(DeviceCredential credential, CancellationToken stoppingToken)
+    {
+        try
+        {
+            _logger.LogInformation("Server requested an inventory upload; collecting.");
+
+            var report = await _inventoryCollector.CollectAsync(stoppingToken);
+            var result = await _apiClient.UploadInventoryAsync(report, credential, stoppingToken);
+
+            if (result.IsSuccess)
+            {
+                _logger.LogInformation("Inventory uploaded successfully.");
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "Inventory upload was not accepted ({Status}); the server will re-request it.",
+                    result.Status);
+            }
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // Collector faults are already isolated per fact; this is the last
+            // line of defence so an unexpected failure cannot kill the loop.
+            _logger.LogError(ex, "Inventory collection failed; will retry on the next server request.");
+        }
     }
 
     private void LogClockSkew(DateTimeOffset agentTime, DateTimeOffset serverTime)

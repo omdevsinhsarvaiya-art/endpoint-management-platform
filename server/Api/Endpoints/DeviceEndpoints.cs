@@ -1,3 +1,6 @@
+using System.Text.Json;
+using EndpointPlatform.Domain.Auditing;
+using EndpointPlatform.Infrastructure.Auditing;
 using EndpointPlatform.Infrastructure.Devices;
 using EndpointPlatform.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -22,6 +25,8 @@ public static class DeviceEndpoints
         group.MapGet("/", ListAsync).WithName("ListDevices");
         group.MapGet("/counts", CountsAsync).WithName("GetDeviceCounts");
         group.MapGet("/{deviceId:guid}", GetAsync).WithName("GetDevice");
+        group.MapPost("/{deviceId:guid}/refresh-inventory", RefreshInventoryAsync)
+            .WithName("RequestDeviceInventoryRefresh");
 
         return endpoints;
     }
@@ -78,6 +83,16 @@ public static class DeviceEndpoints
             return Results.NotFound();
         }
 
+        var hardware = await dbContext.DeviceHardware
+            .AsNoTracking()
+            .SingleOrDefaultAsync(h => h.DeviceId == deviceId, cancellationToken);
+
+        var networkInterfaces = await dbContext.DeviceNetworkInterfaces
+            .AsNoTracking()
+            .Where(n => n.DeviceId == deviceId)
+            .OrderBy(n => n.Name)
+            .ToListAsync(cancellationToken);
+
         return Results.Ok(new
         {
             device.Id,
@@ -88,7 +103,74 @@ public static class DeviceEndpoints
             device.LastSeenAt,
             device.EnrolledAt,
             device.MachineIdentifier,
+            device.LoggedOnUser,
+            device.InventoryCollectedAt,
+            InventoryRefreshPending = device.IsInventoryRefreshPending,
+            Hardware = hardware is null
+                ? null
+                : new
+                {
+                    hardware.SerialNumber,
+                    hardware.Manufacturer,
+                    hardware.Model,
+                    hardware.CpuName,
+                    hardware.CpuPhysicalCores,
+                    hardware.CpuLogicalProcessors,
+                    hardware.TotalMemoryBytes,
+                    Disks = hardware.DisksJson is null
+                        ? (JsonElement?)null
+                        : JsonSerializer.Deserialize<JsonElement>(hardware.DisksJson),
+                    hardware.CollectedAt,
+                },
+            NetworkInterfaces = networkInterfaces.Select(n => new
+            {
+                n.Name,
+                n.MacAddress,
+                IpAddresses = n.IpAddressesJson is null
+                    ? null
+                    : (JsonElement?)JsonSerializer.Deserialize<JsonElement>(n.IpAddressesJson),
+                n.IsUp,
+            }),
         });
+    }
+
+    /// <summary>
+    /// Marks the device for inventory refresh; the agent picks the request up on
+    /// its next heartbeat. Pull-based — the server never connects to an agent.
+    /// </summary>
+    private static async Task<IResult> RefreshInventoryAsync(
+        Guid deviceId,
+        EndpointPlatformDbContext dbContext,
+        AuditWriter auditWriter,
+        TimeProvider timeProvider,
+        CancellationToken cancellationToken)
+    {
+        var device = await dbContext.Devices
+            .SingleOrDefaultAsync(d => d.Id == deviceId, cancellationToken);
+
+        if (device is null)
+        {
+            return Results.NotFound();
+        }
+
+        device.RequestInventoryRefresh(timeProvider.GetUtcNow());
+
+        var (actorId, actorDisplay) = DevelopmentActor.Get();
+
+        auditWriter.Stage(
+            device.OrganizationId,
+            AuditActorType.PlatformUser,
+            actorId,
+            actorDisplay,
+            action: "device.refresh_inventory",
+            AuditResult.Success,
+            audit => audit
+                .OnDevice(device.Id, device.Hostname)
+                .Requiring(Domain.Authorization.Permissions.Device.RefreshInventory));
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        return Results.Accepted();
     }
 
     private static Task<Guid?> GetDefaultOrganizationIdAsync(

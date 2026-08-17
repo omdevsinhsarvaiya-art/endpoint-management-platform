@@ -80,18 +80,30 @@ public sealed class AgentApiHostTests(AgentApiFactory factory) : IClassFixture<A
     }
 
     /// <summary>
-    /// Inventory arrives in Phase 2; until then the route must not exist.
+    /// Inventory without a credential must be rejected before anything else —
+    /// this factory's database is unreachable, so the 401 also proves rejection
+    /// needs no database round trip.
     /// </summary>
     [Fact]
-    public async Task The_inventory_endpoint_is_not_implemented_yet()
+    public async Task Inventory_without_a_credential_is_unauthorized()
     {
         using var client = _factory.CreateClient();
 
-        var response = await client.PostAsync(
-            new Uri(AgentProtocol.RoutePrefix + AgentProtocol.Routes.Inventory, UriKind.Relative),
-            content: null);
+        using var message = new HttpRequestMessage(
+            HttpMethod.Post,
+            new Uri(AgentProtocol.RoutePrefix + AgentProtocol.Routes.Inventory, UriKind.Relative))
+        {
+            Content = System.Net.Http.Json.JsonContent.Create(new Contracts.Agent.InventoryReport(
+                new Contracts.Agent.InventoryHardware(null, null, null, null, null, null, null, []),
+                [],
+                null,
+                DateTimeOffset.UtcNow)),
+        };
+        message.Headers.Add(AgentProtocol.Headers.ProtocolVersion, AgentProtocol.Version.ToString());
 
-        response.StatusCode.ShouldBe(HttpStatusCode.NotFound);
+        var response = await client.SendAsync(message);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
     }
 
     /// <summary>

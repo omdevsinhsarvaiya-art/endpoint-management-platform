@@ -63,6 +63,20 @@ public sealed class Device : AuditableEntity
     /// <summary>Set on enrollment and on every authenticated heartbeat.</summary>
     public DateTimeOffset? LastSeenAt { get; private set; }
 
+    /// <summary>Interactive user reported by the last inventory, e.g. <c>DOMAIN\jsmith</c>.</summary>
+    public string? LoggedOnUser { get; private set; }
+
+    /// <summary>
+    /// When an administrator last asked for a fresh inventory. The next heartbeat
+    /// response tells the agent to upload one; comparing against
+    /// <see cref="InventoryCollectedAt"/> decides whether the request is still
+    /// outstanding. Pull-based on purpose: the server never connects to agents.
+    /// </summary>
+    public DateTimeOffset? InventoryRequestedAt { get; private set; }
+
+    /// <summary>Server receive time of the most recent inventory upload.</summary>
+    public DateTimeOffset? InventoryCollectedAt { get; private set; }
+
     /// <summary>The enrollment token that admitted this device, for audit lineage.</summary>
     public Guid EnrolledWithTokenId { get; private set; }
 
@@ -135,6 +149,26 @@ public sealed class Device : AuditableEntity
         EnrolledWithTokenId = Guard.NotEmpty(enrollmentTokenId);
         EnrolledAt = now;
         LastSeenAt = now;
+    }
+
+    /// <summary>Marks an administrator's request for a fresh inventory.</summary>
+    public void RequestInventoryRefresh(DateTimeOffset now) => InventoryRequestedAt = now;
+
+    /// <summary>True when the agent should be told to upload inventory.</summary>
+    public bool IsInventoryRefreshPending =>
+        InventoryCollectedAt is null
+        || (InventoryRequestedAt is { } requested && requested > InventoryCollectedAt);
+
+    /// <summary>Applies the device-level facts carried by an inventory upload.</summary>
+    public void RecordInventory(string? loggedOnUser, DateTimeOffset now)
+    {
+        if (IsRetired)
+        {
+            throw new InvalidOperationException($"Device {Id} is retired and cannot record inventory.");
+        }
+
+        LoggedOnUser = Guard.OptionalMaxLength(loggedOnUser, 256);
+        InventoryCollectedAt = now;
     }
 
     public void Retire() => Status = DeviceStatus.Retired;

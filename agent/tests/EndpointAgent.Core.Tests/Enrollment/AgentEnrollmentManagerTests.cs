@@ -136,6 +136,10 @@ public sealed class AgentEnrollmentManagerTests
         public Task<AgentApiResult<HeartbeatResponse>> HeartbeatAsync(
             HeartbeatRequest request, DeviceCredential credential, CancellationToken cancellationToken = default) =>
             Task.FromResult(AgentApiResult<HeartbeatResponse>.Transient());
+
+        public Task<AgentApiResult<InventoryResponse>> UploadInventoryAsync(
+            InventoryReport report, DeviceCredential credential, CancellationToken cancellationToken = default) =>
+            Task.FromResult(AgentApiResult<InventoryResponse>.Transient());
     }
 
     private sealed class FakeSystemInfo : ISystemInfoProvider

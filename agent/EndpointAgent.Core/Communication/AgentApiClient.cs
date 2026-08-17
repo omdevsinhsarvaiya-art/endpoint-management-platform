@@ -69,6 +69,28 @@ public sealed class AgentApiClient(HttpClient httpClient, ILogger<AgentApiClient
         return await SendAsync<HeartbeatResponse>(message, "heartbeat", cancellationToken);
     }
 
+    public async Task<AgentApiResult<InventoryResponse>> UploadInventoryAsync(
+        InventoryReport report,
+        DeviceCredential credential,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(report);
+        ArgumentNullException.ThrowIfNull(credential);
+
+        using var message = new HttpRequestMessage(
+            HttpMethod.Post,
+            AgentProtocol.RoutePrefix + AgentProtocol.Routes.Inventory)
+        {
+            Content = JsonContent.Create(report),
+        };
+
+        AddProtocolHeaders(message, agentVersion: typeof(AgentApiClient).Assembly.GetName().Version?.ToString(3) ?? "0.0.0");
+        message.Headers.Add(AgentProtocol.Headers.Credential, credential.ToHeaderValue());
+        message.Headers.Add(AgentProtocol.Headers.DeviceId, credential.DeviceId.ToString());
+
+        return await SendAsync<InventoryResponse>(message, "inventory", cancellationToken);
+    }
+
     private static void AddProtocolHeaders(HttpRequestMessage message, string agentVersion)
     {
         message.Headers.Add(AgentProtocol.Headers.ProtocolVersion, AgentProtocol.Version.ToString());

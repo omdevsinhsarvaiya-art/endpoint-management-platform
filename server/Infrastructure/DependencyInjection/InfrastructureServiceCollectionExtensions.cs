@@ -153,6 +153,7 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<Enrollment.AgentEnrollmentService>();
         services.AddScoped<Enrollment.AgentAuthenticationService>();
         services.AddScoped<Devices.DeviceReadService>();
+        services.AddScoped<Devices.DeviceInventoryService>();
 
         return services;
     }

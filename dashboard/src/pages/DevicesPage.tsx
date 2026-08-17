@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { getDevices, type DevicePage } from '../api/client'
 
 const PAGE_SIZE = 25
@@ -97,7 +98,9 @@ export function DevicesPage() {
               <tbody>
                 {data.items.map((device) => (
                   <tr key={device.id}>
-                    <td style={{ fontWeight: 600 }}>{device.hostname}</td>
+                    <td style={{ fontWeight: 600 }}>
+                      <Link to={`/devices/${device.id}`}>{device.hostname}</Link>
+                    </td>
                     <td>
                       {device.status === 'Retired' ? (
                         <span className="badge neutral">Retired</span>

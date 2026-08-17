@@ -65,8 +65,18 @@ wants agents to use, making cadence centrally tunable.
 Heartbeats do not produce per-event audit entries (volume); enrollment and all
 refusals do.
 
-### `POST /agent/v1/inventory` *(Phase 2 — not yet implemented, returns 404)*
-Authenticated. Full hardware/network/software inventory snapshot.
+### `POST /agent/v1/inventory` — implemented
+Requires `X-Agent-Credential`. Body: `InventoryReport` — hardware section
+(serial, manufacturer, model, CPU, RAM, fixed volumes), network interfaces
+(name, MAC, IPs, up/down) and the interactively logged-on user. Uploads replace
+the previous snapshot wholesale; collection sizes are capped server-side
+(64 disks, 64 interfaces, 32 IPs each) and every field is length-validated
+before persistence.
+
+The refresh handshake is pull-based: the heartbeat response's
+`InventoryRequested` is true when an administrator asked for a refresh (or no
+inventory was ever received), and the agent responds by uploading. A failed
+upload leaves the request pending, so the next heartbeat retries naturally.
 
 ## Error handling
 

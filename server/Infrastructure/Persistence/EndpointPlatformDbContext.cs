@@ -45,6 +45,10 @@ public sealed class EndpointPlatformDbContext(DbContextOptions<EndpointPlatformD
 
     public DbSet<Device> Devices => Set<Device>();
 
+    public DbSet<DeviceHardware> DeviceHardware => Set<DeviceHardware>();
+
+    public DbSet<DeviceNetworkInterface> DeviceNetworkInterfaces => Set<DeviceNetworkInterface>();
+
     public DbSet<EnrollmentToken> EnrollmentTokens => Set<EnrollmentToken>();
 
     public DbSet<AgentCredential> AgentCredentials => Set<AgentCredential>();

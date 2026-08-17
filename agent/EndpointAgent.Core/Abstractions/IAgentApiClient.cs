@@ -21,6 +21,12 @@ public interface IAgentApiClient
         HeartbeatRequest request,
         DeviceCredential credential,
         CancellationToken cancellationToken = default);
+
+    /// <summary>Uploads an authenticated full inventory snapshot.</summary>
+    Task<AgentApiResult<InventoryResponse>> UploadInventoryAsync(
+        InventoryReport report,
+        DeviceCredential credential,
+        CancellationToken cancellationToken = default);
 }
 
 /// <summary>
