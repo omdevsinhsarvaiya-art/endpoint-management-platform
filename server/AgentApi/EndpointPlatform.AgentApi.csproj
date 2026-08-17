@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>EndpointPlatform.AgentApi</RootNamespace>
+    <AssemblyName>EndpointPlatform.AgentApi</AssemblyName>
+    <UserSecretsId>endpoint-platform-agent-api</UserSecretsId>
+    <!--
+      AGENT API - trust boundary: enrolled machine identities.
+      Never serves administrator endpoints, never accepts admin session cookies
+      or admin bearer tokens. See ADR-0001.
+    -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Swashbuckle.AspNetCore" />
+    <PackageReference Include="FluentValidation" />
+    <PackageReference Include="FluentValidation.DependencyInjectionExtensions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Infrastructure\EndpointPlatform.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="EndpointPlatform.AgentApi.Tests" />
+  </ItemGroup>
+
+</Project>

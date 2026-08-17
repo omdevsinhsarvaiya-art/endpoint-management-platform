@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>EndpointPlatform.Domain</RootNamespace>
+    <AssemblyName>EndpointPlatform.Domain</AssemblyName>
+    <!--
+      Pure domain model. No infrastructure dependencies of any kind:
+      no EF Core, no ASP.NET Core, no Npgsql, no Redis.
+      This constraint is enforced by ArchitectureTests.
+    -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="EndpointPlatform.Domain.Tests" />
+  </ItemGroup>
+
+</Project>

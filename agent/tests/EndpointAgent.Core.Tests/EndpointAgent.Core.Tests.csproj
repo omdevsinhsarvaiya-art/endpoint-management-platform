@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>EndpointAgent.Core.Tests</RootNamespace>
+    <AssemblyName>EndpointAgent.Core.Tests</AssemblyName>
+    <!-- Platform-neutral: runs on any OS, no Windows APIs touched. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\EndpointAgent.Core\EndpointAgent.Core.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>EndpointPlatform.Api</RootNamespace>
+    <AssemblyName>EndpointPlatform.Api</AssemblyName>
+    <UserSecretsId>endpoint-platform-admin-api</UserSecretsId>
+    <!--
+      ADMIN API - trust boundary: authenticated human administrators.
+      Never serves agent endpoints. See ADR-0001.
+    -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Swashbuckle.AspNetCore" />
+    <PackageReference Include="FluentValidation" />
+    <PackageReference Include="FluentValidation.DependencyInjectionExtensions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Infrastructure\EndpointPlatform.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="EndpointPlatform.Api.Tests" />
+  </ItemGroup>
+
+</Project>

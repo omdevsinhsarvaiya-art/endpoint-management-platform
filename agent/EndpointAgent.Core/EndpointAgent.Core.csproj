@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>EndpointAgent.Core</RootNamespace>
+    <AssemblyName>EndpointAgent.Core</AssemblyName>
+    <!--
+      Platform-neutral agent logic: enrollment state machine, heartbeat loop,
+      transport, retry/backoff, and the ABSTRACTIONS over Windows facilities.
+      Contains no Windows API calls, so it is fully unit-testable with fakes.
+      Windows implementations live in EndpointAgent.Windows.
+    -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" />
+    <PackageReference Include="Microsoft.Extensions.Options.DataAnnotations" />
+    <PackageReference Include="Microsoft.Extensions.Http" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\shared\Contracts\EndpointPlatform.Contracts.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="EndpointAgent.Core.Tests" />
+  </ItemGroup>
+
+</Project>

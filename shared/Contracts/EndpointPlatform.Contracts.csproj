@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>EndpointPlatform.Contracts</RootNamespace>
+    <AssemblyName>EndpointPlatform.Contracts</AssemblyName>
+    <!--
+      Wire contracts shared by the server and the Windows agent.
+      Deliberately dependency-free: no EF, no ASP.NET, no Windows types.
+    -->
+  </PropertyGroup>
+
+</Project>

@@ -1,0 +1,140 @@
+using System.Collections.Frozen;
+
+namespace EndpointPlatform.Domain.Authorization;
+
+/// <summary>
+/// The canonical catalogue of permissions understood by the platform.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Authorisation is permission-based, never role-name-based. Nothing outside this
+/// file should contain a bare permission string: policies, attributes, seeding and
+/// tests all reference these constants, so a typo becomes a compile error instead
+/// of a silently-open endpoint.
+/// </para>
+/// <para>
+/// <see cref="All"/> is the source of truth used to seed the <c>permissions</c>
+/// table. A permission that exists in the database but not here is stale; the
+/// reverse means seeding has not been run.
+/// </para>
+/// </remarks>
+public static class Permissions
+{
+    public static class Device
+    {
+        public const string View = "device.view";
+        public const string Restart = "device.restart";
+        public const string Shutdown = "device.shutdown";
+        public const string Lock = "device.lock";
+        public const string SignOutUser = "device.sign_out_user";
+        public const string Enroll = "device.enroll";
+        public const string Retire = "device.retire";
+        public const string RefreshInventory = "device.refresh_inventory";
+    }
+
+    public static class LocalUser
+    {
+        public const string View = "user.view";
+        public const string Create = "user.create";
+        public const string Delete = "user.delete";
+        public const string Disable = "user.disable";
+        public const string ResetPassword = "user.reset_password";
+        public const string ChangeType = "user.change_type";
+    }
+
+    public static class Group
+    {
+        public const string View = "group.view";
+        public const string Manage = "group.manage";
+    }
+
+    public static class Software
+    {
+        public const string View = "software.view";
+        public const string Deploy = "software.deploy";
+    }
+
+    public static class Policy
+    {
+        public const string View = "policy.view";
+        public const string Create = "policy.create";
+        public const string Assign = "policy.assign";
+    }
+
+    public static class Task
+    {
+        public const string View = "task.view";
+        public const string Execute = "task.execute";
+    }
+
+    public static class Audit
+    {
+        public const string View = "audit.view";
+    }
+
+    public static class Platform
+    {
+        public const string UserView = "platform.user.view";
+        public const string UserManage = "platform.user.manage";
+        public const string RoleManage = "platform.role.manage";
+        public const string EnrollmentTokenView = "platform.enrollment_token.view";
+        public const string EnrollmentTokenIssue = "platform.enrollment_token.issue";
+        public const string EnrollmentTokenRevoke = "platform.enrollment_token.revoke";
+        public const string SettingsManage = "platform.settings.manage";
+    }
+
+    /// <summary>Every permission the platform knows about, in seed order.</summary>
+    public static readonly FrozenSet<PermissionDefinition> All = new PermissionDefinition[]
+    {
+        new(Device.View, "Devices", "View devices and device details", HighRisk: false),
+        new(Device.Restart, "Devices", "Restart a device", HighRisk: true),
+        new(Device.Shutdown, "Devices", "Shut down a device", HighRisk: true),
+        new(Device.Lock, "Devices", "Lock a device session", HighRisk: false),
+        new(Device.SignOutUser, "Devices", "Sign out the interactive user on a device", HighRisk: true),
+        new(Device.Enroll, "Devices", "Approve or complete device enrollment", HighRisk: true),
+        new(Device.Retire, "Devices", "Retire a device and revoke its credential", HighRisk: true),
+        new(Device.RefreshInventory, "Devices", "Request an out-of-band inventory refresh", HighRisk: false),
+
+        new(LocalUser.View, "Local accounts", "View Windows local users on a device", HighRisk: false),
+        new(LocalUser.Create, "Local accounts", "Create a Windows local user", HighRisk: true),
+        new(LocalUser.Delete, "Local accounts", "Delete a Windows local user", HighRisk: true),
+        new(LocalUser.Disable, "Local accounts", "Enable or disable a Windows local user", HighRisk: true),
+        new(LocalUser.ResetPassword, "Local accounts", "Reset a Windows local user password", HighRisk: true),
+        new(LocalUser.ChangeType, "Local accounts", "Change account type (standard/administrator)", HighRisk: true),
+
+        new(Group.View, "Groups", "View device groups and Windows local groups", HighRisk: false),
+        new(Group.Manage, "Groups", "Create, modify and delete groups and memberships", HighRisk: true),
+
+        new(Software.View, "Software", "View software inventory", HighRisk: false),
+        new(Software.Deploy, "Software", "Deploy approved software packages", HighRisk: true),
+
+        new(Policy.View, "Policies", "View policies and compliance results", HighRisk: false),
+        new(Policy.Create, "Policies", "Create and version policies", HighRisk: false),
+        new(Policy.Assign, "Policies", "Assign policies to devices and groups", HighRisk: true),
+
+        new(Task.View, "Tasks", "View queued and completed tasks", HighRisk: false),
+        new(Task.Execute, "Tasks", "Queue a task for execution on a device", HighRisk: true),
+
+        new(Audit.View, "Audit", "Read the audit log", HighRisk: false),
+
+        new(Platform.UserView, "Platform", "View platform administrator accounts", HighRisk: false),
+        new(Platform.UserManage, "Platform", "Create, modify and disable platform administrators", HighRisk: true),
+        new(Platform.RoleManage, "Platform", "Assign roles and manage role permissions", HighRisk: true),
+        new(Platform.EnrollmentTokenView, "Platform", "View enrollment tokens (never their secret)", HighRisk: false),
+        new(Platform.EnrollmentTokenIssue, "Platform", "Issue a new agent enrollment token", HighRisk: true),
+        new(Platform.EnrollmentTokenRevoke, "Platform", "Revoke an agent enrollment token", HighRisk: false),
+        new(Platform.SettingsManage, "Platform", "Change platform-wide settings", HighRisk: true),
+    }.ToFrozenSet();
+
+    public static readonly FrozenSet<string> AllKeys =
+        All.Select(p => p.Key).ToFrozenSet(StringComparer.Ordinal);
+
+    public static bool IsKnown(string permissionKey) => AllKeys.Contains(permissionKey);
+}
+
+/// <summary>
+/// Metadata for one permission. <paramref name="HighRisk"/> marks operations that
+/// change security posture on an endpoint; the UI requires explicit confirmation
+/// for these and the audit log records them at elevated severity.
+/// </summary>
+public sealed record PermissionDefinition(string Key, string Category, string Description, bool HighRisk);

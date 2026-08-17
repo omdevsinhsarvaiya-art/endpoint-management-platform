@@ -1,0 +1,35 @@
+<Project>
+
+  <!--
+    Common settings for every test project in the repository.
+    Imported by server/tests/Directory.Build.props and agent/tests/Directory.Build.props.
+
+    Test host: xUnit v2 on VSTest, which `dotnet test` supports natively on the
+    .NET 10 SDK. See the "Testing" section of Directory.Packages.props and
+    docs/adr/0006-testing-stack.md for why xUnit v3 / Microsoft.Testing.Platform
+    was not used.
+  -->
+  <PropertyGroup>
+    <IsTestProject>true</IsTestProject>
+    <IsPackable>false</IsPackable>
+    <!-- CA1707: test method names use underscores for readability. -->
+    <NoWarn>$(NoWarn);CA1707;CA2007;CA1861</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Shouldly" />
+    <PackageReference Include="NSubstitute" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+    <Using Include="Shouldly" />
+  </ItemGroup>
+
+</Project>

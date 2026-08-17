@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <RootNamespace>EndpointAgent.Windows.Tests</RootNamespace>
+    <AssemblyName>EndpointAgent.Windows.Tests</AssemblyName>
+    <!--
+      Windows integration tests. These exercise real Windows APIs and therefore
+      only run on Windows. Tests that require elevation are marked with the
+      [RequiresElevation] trait and skip themselves when not elevated, rather
+      than failing, so the suite stays green in unelevated CI.
+    -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\EndpointAgent.Windows\EndpointAgent.Windows.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>EndpointAgent.Service</RootNamespace>
+    <AssemblyName>EndpointAgent.Service</AssemblyName>
+    <UserSecretsId>endpoint-agent-service</UserSecretsId>
+    <RuntimeIdentifier Condition="'$(PublishAgent)' == 'true'">win-x64</RuntimeIdentifier>
+    <SelfContained Condition="'$(PublishAgent)' == 'true'">false</SelfContained>
+    <!--
+      Windows Service host. Composition root only: DI wiring, configuration,
+      logging, and hosted services. No business logic, no Windows API calls.
+      Runs as LocalSystem in production - treat as a privileged security boundary.
+    -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" />
+    <PackageReference Include="Serilog.Extensions.Hosting" />
+    <PackageReference Include="Serilog.Settings.Configuration" />
+    <PackageReference Include="Serilog.Sinks.Console" />
+    <PackageReference Include="Serilog.Enrichers.Environment" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\EndpointAgent.Core\EndpointAgent.Core.csproj" />
+    <ProjectReference Include="..\EndpointAgent.Windows\EndpointAgent.Windows.csproj" />
+  </ItemGroup>
+
+</Project>

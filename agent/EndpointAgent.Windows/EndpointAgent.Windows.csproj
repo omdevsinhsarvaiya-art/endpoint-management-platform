@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      Plain net10.0-windows rather than net10.0-windows10.0.x: the agent uses
+      Win32 P/Invoke, WMI and DPAPI, none of which need the WinRT projections that
+      a versioned Windows TFM pulls in. Minimum supported OS is Windows 10 1809 /
+      Server 2019; that is a documented deployment requirement (see docs/deployment.md)
+      rather than an SupportedOSPlatformVersion assertion, which this TFM caps at 7.0.
+    -->
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <RootNamespace>EndpointAgent.Windows</RootNamespace>
+    <AssemblyName>EndpointAgent.Windows</AssemblyName>
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+    <!--
+      ALL Windows-specific implementation lives here and nowhere else:
+      Win32/PInvoke, WMI/CIM, DPAPI, registry, netapi32 local account APIs.
+      Every type here implements an abstraction declared in EndpointAgent.Core.
+      Rule: no arbitrary shell / PowerShell string execution. See ADR-0005.
+    -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Management" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\EndpointAgent.Core\EndpointAgent.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="EndpointAgent.Windows.Tests" />
+  </ItemGroup>
+
+</Project>

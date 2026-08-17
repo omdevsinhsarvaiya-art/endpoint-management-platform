@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>EndpointPlatform.Architecture.Tests</RootNamespace>
+    <AssemblyName>EndpointPlatform.Architecture.Tests</AssemblyName>
+    <!--
+      Guards the architectural rules stated in docs/architecture.md so they
+      cannot rot silently: domain purity, trust-boundary separation between the
+      Admin API and the Agent API, and the "no shell execution" agent rule.
+    -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Domain\EndpointPlatform.Domain.csproj" />
+    <ProjectReference Include="..\..\Infrastructure\EndpointPlatform.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\Api\EndpointPlatform.Api.csproj" />
+    <ProjectReference Include="..\..\AgentApi\EndpointPlatform.AgentApi.csproj" />
+    <ProjectReference Include="..\..\..\shared\Contracts\EndpointPlatform.Contracts.csproj" />
+  </ItemGroup>
+
+</Project>

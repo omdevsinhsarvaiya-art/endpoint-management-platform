@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>EndpointPlatform.Migrations</RootNamespace>
+    <AssemblyName>EndpointPlatform.Migrations</AssemblyName>
+    <!--
+      Holds the generated EF Core migration classes AND doubles as the migration
+      runner executed by docker compose / deployment before the APIs start.
+      Keeping migrations out of Infrastructure means neither API host ships the
+      migration history, and migrations can run under a higher-privileged DB
+      role than the runtime application role. See ADR-0003.
+    -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+    <PackageReference Include="Serilog.Extensions.Hosting" />
+    <PackageReference Include="Serilog.Sinks.Console" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Infrastructure\EndpointPlatform.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>

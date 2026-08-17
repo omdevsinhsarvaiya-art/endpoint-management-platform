@@ -1,0 +1,38 @@
+<Solution>
+  <Folder Name="/agent/">
+    <Project Path="agent/EndpointAgent.Core/EndpointAgent.Core.csproj" />
+    <Project Path="agent/EndpointAgent.Service/EndpointAgent.Service.csproj" />
+    <Project Path="agent/EndpointAgent.Windows/EndpointAgent.Windows.csproj" />
+  </Folder>
+  <Folder Name="/agent/tests/">
+    <Project Path="agent/tests/EndpointAgent.Core.Tests/EndpointAgent.Core.Tests.csproj" />
+    <Project Path="agent/tests/EndpointAgent.Windows.Tests/EndpointAgent.Windows.Tests.csproj" />
+  </Folder>
+  <Folder Name="/server/" />
+  <Folder Name="/server/AgentApi/">
+    <Project Path="server/AgentApi/EndpointPlatform.AgentApi.csproj" />
+  </Folder>
+  <Folder Name="/server/Api/">
+    <Project Path="server/Api/EndpointPlatform.Api.csproj" />
+  </Folder>
+  <Folder Name="/server/Domain/">
+    <Project Path="server/Domain/EndpointPlatform.Domain.csproj" />
+  </Folder>
+  <Folder Name="/server/Infrastructure/">
+    <Project Path="server/Infrastructure/EndpointPlatform.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/server/Migrations/">
+    <Project Path="server/Migrations/EndpointPlatform.Migrations.csproj" />
+  </Folder>
+  <Folder Name="/server/tests/">
+    <Project Path="server/tests/EndpointPlatform.AgentApi.Tests/EndpointPlatform.AgentApi.Tests.csproj" />
+    <Project Path="server/tests/EndpointPlatform.Api.Tests/EndpointPlatform.Api.Tests.csproj" />
+    <Project Path="server/tests/EndpointPlatform.Architecture.Tests/EndpointPlatform.Architecture.Tests.csproj" />
+    <Project Path="server/tests/EndpointPlatform.Domain.Tests/EndpointPlatform.Domain.Tests.csproj" />
+    <Project Path="server/tests/EndpointPlatform.Infrastructure.Tests/EndpointPlatform.Infrastructure.Tests.csproj" />
+  </Folder>
+  <Folder Name="/shared/" />
+  <Folder Name="/shared/Contracts/">
+    <Project Path="shared/Contracts/EndpointPlatform.Contracts.csproj" />
+  </Folder>
+</Solution>

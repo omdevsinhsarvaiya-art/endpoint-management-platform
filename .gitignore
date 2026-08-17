@@ -1,0 +1,80 @@
+# ---------------------------------------------------------------------------
+# Build output
+# ---------------------------------------------------------------------------
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+artifacts/
+publish/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.vs/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/launch.json.sample
+.idea/
+*.swp
+
+# ---------------------------------------------------------------------------
+# Node / dashboard
+# ---------------------------------------------------------------------------
+node_modules/
+dist/
+dist-ssr/
+.vite/
+coverage/
+*.local
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ---------------------------------------------------------------------------
+# Test output
+# ---------------------------------------------------------------------------
+TestResults/
+*.trx
+*.coverage
+*.coverlet.json
+
+# ---------------------------------------------------------------------------
+# Secrets and local configuration -- NEVER COMMIT
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+appsettings.Local.json
+appsettings.*.Local.json
+secrets.json
+
+# Certificates / private keys / credential material
+*.pfx
+*.p12
+*.key
+*.pem
+*.crt
+*.cer
+*.jks
+*.keystore
+certs/
+!certs/.gitkeep
+
+# Agent runtime state (contains device credential material)
+agent-state/
+*.agentcred
+
+# ---------------------------------------------------------------------------
+# Docker / infra local overrides
+# ---------------------------------------------------------------------------
+docker-compose.override.yml
+infra/data/
+
+# ---------------------------------------------------------------------------
+# OS noise
+# ---------------------------------------------------------------------------
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store

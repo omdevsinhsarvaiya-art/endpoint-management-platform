@@ -1,0 +1,46 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>EndpointPlatform.Infrastructure</RootNamespace>
+    <AssemblyName>EndpointPlatform.Infrastructure</AssemblyName>
+  </PropertyGroup>
+
+  <!--
+    Infrastructure references the ASP.NET Core shared framework so that the two
+    API hosts (Admin API, Agent API) can share host wiring (health checks,
+    Serilog, options binding) instead of duplicating it. See ADR-0002.
+    It does NOT contain controllers or endpoint routing for either API.
+  -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
+    <PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" />
+    <PackageReference Include="StackExchange.Redis" />
+    <!--
+      Microsoft.Extensions.Options.ConfigurationExtensions / .DataAnnotations are
+      part of the Microsoft.AspNetCore.App shared framework referenced above, so
+      they are intentionally NOT listed here (NU1510).
+    -->
+    <PackageReference Include="Serilog.AspNetCore" />
+    <PackageReference Include="Serilog.Enrichers.Environment" />
+    <PackageReference Include="AspNetCore.HealthChecks.NpgSql" />
+    <PackageReference Include="AspNetCore.HealthChecks.Redis" />
+    <PackageReference Include="AspNetCore.HealthChecks.UI.Client" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Domain\EndpointPlatform.Domain.csproj" />
+    <ProjectReference Include="..\..\shared\Contracts\EndpointPlatform.Contracts.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="EndpointPlatform.Infrastructure.Tests" />
+  </ItemGroup>
+
+</Project>

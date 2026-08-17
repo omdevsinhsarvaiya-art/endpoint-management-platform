@@ -1,0 +1,28 @@
+# Normalise line endings so files that are executed inside Linux containers are
+# never checked out with CRLF. A shell script with CRLF fails in Alpine with an
+# obscure "not found" / "bad interpreter" error, which is a miserable thing to
+# debug, so these are pinned explicitly.
+* text=auto eol=lf
+
+*.sh        text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+Dockerfile  text eol=lf
+*.sql       text eol=lf
+
+# Windows-oriented files keep CRLF.
+*.cs        text eol=crlf
+*.csproj    text eol=crlf
+*.props     text eol=crlf
+*.targets   text eol=crlf
+*.slnx      text eol=crlf
+*.ps1       text eol=crlf
+*.cmd       text eol=crlf
+*.bat       text eol=crlf
+
+# Never diff or normalise binary content.
+*.png       binary
+*.jpg       binary
+*.ico       binary
+*.pfx       binary
+*.snk       binary

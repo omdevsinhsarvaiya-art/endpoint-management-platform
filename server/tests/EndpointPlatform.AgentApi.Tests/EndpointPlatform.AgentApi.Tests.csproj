@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>EndpointPlatform.AgentApi.Tests</RootNamespace>
+    <AssemblyName>EndpointPlatform.AgentApi.Tests</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
+    <PackageReference Include="Testcontainers.PostgreSql" />
+    <PackageReference Include="Testcontainers.Redis" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\AgentApi\EndpointPlatform.AgentApi.csproj" />
+    <ProjectReference Include="..\..\Migrations\EndpointPlatform.Migrations.csproj" />
+  </ItemGroup>
+
+</Project>
