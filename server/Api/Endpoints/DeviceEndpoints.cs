@@ -1,4 +1,5 @@
 using System.Text.Json;
+using EndpointPlatform.Api.Security;
 using EndpointPlatform.Domain.Auditing;
 using EndpointPlatform.Infrastructure.Auditing;
 using EndpointPlatform.Infrastructure.Devices;
@@ -8,47 +9,47 @@ using Microsoft.EntityFrameworkCore;
 namespace EndpointPlatform.Api.Endpoints;
 
 /// <summary>
-/// Read-only device views for the dashboard: list, counts, detail.
+/// Device views and the inventory-refresh action, guarded by permission policies.
 /// </summary>
-/// <remarks>
-/// Same Phase 1 security note as <see cref="EnrollmentTokenEndpoints"/>: no
-/// authentication until Phase 3; localhost only. These are reads — the mutating
-/// device actions (restart, retire...) do not exist yet and will arrive after
-/// RBAC does.
-/// </remarks>
 public static class DeviceEndpoints
 {
     public static IEndpointRouteBuilder MapDeviceEndpoints(this IEndpointRouteBuilder endpoints)
     {
         var group = endpoints.MapGroup("/admin/v1/devices");
 
-        group.MapGet("/", ListAsync).WithName("ListDevices");
-        group.MapGet("/counts", CountsAsync).WithName("GetDeviceCounts");
-        group.MapGet("/{deviceId:guid}", GetAsync).WithName("GetDevice");
+        group.MapGet("/", ListAsync)
+            .WithName("ListDevices")
+            .RequirePermission(Domain.Authorization.Permissions.Device.View);
+
+        group.MapGet("/counts", CountsAsync)
+            .WithName("GetDeviceCounts")
+            .RequirePermission(Domain.Authorization.Permissions.Device.View);
+
+        group.MapGet("/{deviceId:guid}", GetAsync)
+            .WithName("GetDevice")
+            .RequirePermission(Domain.Authorization.Permissions.Device.View);
+
         group.MapPost("/{deviceId:guid}/refresh-inventory", RefreshInventoryAsync)
-            .WithName("RequestDeviceInventoryRefresh");
+            .WithName("RequestDeviceInventoryRefresh")
+            .RequirePermission(Domain.Authorization.Permissions.Device.RefreshInventory);
 
         return endpoints;
     }
 
     private static async Task<IResult> ListAsync(
         DeviceReadService deviceReadService,
-        EndpointPlatformDbContext dbContext,
-        int page,
-        int pageSize,
+        HttpContext httpContext,
         string? search,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        int page = 1,
+        int pageSize = 50)
     {
-        var organizationId = await GetDefaultOrganizationIdAsync(dbContext, cancellationToken);
-        if (organizationId is null)
-        {
-            return Results.Ok(new DevicePage([], 0, 1, 50));
-        }
+        var organizationId = AdminActor.Required(httpContext.User).OrganizationId;
 
         var result = await deviceReadService.ListAsync(
-            organizationId.Value,
-            page == 0 ? 1 : page,
-            pageSize == 0 ? 50 : pageSize,
+            organizationId,
+            page,
+            pageSize,
             search,
             cancellationToken);
 
@@ -57,26 +58,28 @@ public static class DeviceEndpoints
 
     private static async Task<IResult> CountsAsync(
         DeviceReadService deviceReadService,
-        EndpointPlatformDbContext dbContext,
+        HttpContext httpContext,
         CancellationToken cancellationToken)
     {
-        var organizationId = await GetDefaultOrganizationIdAsync(dbContext, cancellationToken);
-        if (organizationId is null)
-        {
-            return Results.Ok(new DeviceCounts(0, 0, 0, 0));
-        }
+        var organizationId = AdminActor.Required(httpContext.User).OrganizationId;
 
-        return Results.Ok(await deviceReadService.CountsAsync(organizationId.Value, cancellationToken));
+        return Results.Ok(await deviceReadService.CountsAsync(organizationId, cancellationToken));
     }
 
     private static async Task<IResult> GetAsync(
         Guid deviceId,
         EndpointPlatformDbContext dbContext,
+        HttpContext httpContext,
         CancellationToken cancellationToken)
     {
+        // Organization scoping: an administrator only ever sees their own
+        // organization's devices, even with a guessed id.
+        var organizationId = AdminActor.Required(httpContext.User).OrganizationId;
+
         var device = await dbContext.Devices
             .AsNoTracking()
-            .SingleOrDefaultAsync(d => d.Id == deviceId, cancellationToken);
+            .SingleOrDefaultAsync(
+                d => d.Id == deviceId && d.OrganizationId == organizationId, cancellationToken);
 
         if (device is null)
         {
@@ -143,10 +146,14 @@ public static class DeviceEndpoints
         EndpointPlatformDbContext dbContext,
         AuditWriter auditWriter,
         TimeProvider timeProvider,
+        HttpContext httpContext,
         CancellationToken cancellationToken)
     {
+        var actor = AdminActor.Required(httpContext.User);
+
         var device = await dbContext.Devices
-            .SingleOrDefaultAsync(d => d.Id == deviceId, cancellationToken);
+            .SingleOrDefaultAsync(
+                d => d.Id == deviceId && d.OrganizationId == actor.OrganizationId, cancellationToken);
 
         if (device is null)
         {
@@ -155,13 +162,11 @@ public static class DeviceEndpoints
 
         device.RequestInventoryRefresh(timeProvider.GetUtcNow());
 
-        var (actorId, actorDisplay) = DevelopmentActor.Get();
-
         auditWriter.Stage(
             device.OrganizationId,
             AuditActorType.PlatformUser,
-            actorId,
-            actorDisplay,
+            actor.UserId,
+            actor.Email,
             action: "device.refresh_inventory",
             AuditResult.Success,
             audit => audit
@@ -172,13 +177,4 @@ public static class DeviceEndpoints
 
         return Results.Accepted();
     }
-
-    private static Task<Guid?> GetDefaultOrganizationIdAsync(
-        EndpointPlatformDbContext dbContext,
-        CancellationToken cancellationToken) =>
-        dbContext.Organizations
-            .AsNoTracking()
-            .OrderBy(o => o.CreatedAt)
-            .Select(o => (Guid?)o.Id)
-            .FirstOrDefaultAsync(cancellationToken);
 }

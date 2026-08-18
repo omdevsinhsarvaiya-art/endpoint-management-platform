@@ -38,14 +38,26 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Fired when any API call returns 401 - the session has expired or been
+ * revoked. The auth provider listens and returns the user to the login page.
+ */
+export const sessionExpiredEvent = new EventTarget()
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api${path}`, {
     ...init,
     headers: {
       Accept: 'application/json',
+      // Anti-CSRF: the API refuses cookie-authenticated mutations without this.
+      'X-Requested-With': 'XMLHttpRequest',
       ...init?.headers,
     },
   })
+
+  if (response.status === 401) {
+    sessionExpiredEvent.dispatchEvent(new Event('expired'))
+  }
 
   if (!response.ok) {
     // Surface the correlation id so a user can quote it to an operator.
@@ -150,10 +162,62 @@ export function getDevice(deviceId: string): Promise<DeviceDetail> {
 export async function requestInventoryRefresh(deviceId: string): Promise<void> {
   const response = await fetch(`/api/admin/v1/devices/${encodeURIComponent(deviceId)}/refresh-inventory`, {
     method: 'POST',
+    headers: { 'X-Requested-With': 'XMLHttpRequest' },
   })
+  if (response.status === 401) {
+    sessionExpiredEvent.dispatchEvent(new Event('expired'))
+  }
   if (!response.ok) {
     throw new ApiError(response.status, 'Inventory refresh request failed', response.headers.get('X-Correlation-Id'))
   }
+}
+
+// ---------------------------------------------------------------- auth
+
+export interface CurrentUser {
+  userId: string
+  email: string
+  displayName: string
+  permissions: string[]
+}
+
+export async function login(email: string, password: string): Promise<CurrentUser> {
+  const response = await fetch('/api/admin/v1/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+    body: JSON.stringify({ email, password }),
+  })
+
+  if (!response.ok) {
+    throw new ApiError(response.status, 'Sign-in failed', response.headers.get('X-Correlation-Id'))
+  }
+
+  // The HttpOnly session cookie was set by this response; the sessionToken field
+  // in the body exists for non-browser clients and is deliberately not stored.
+  const body = (await response.json()) as {
+    userId: string
+    email: string
+    displayName: string
+    permissions: string[]
+  }
+
+  return {
+    userId: body.userId,
+    email: body.email,
+    displayName: body.displayName,
+    permissions: body.permissions,
+  }
+}
+
+export async function logout(): Promise<void> {
+  await fetch('/api/admin/v1/auth/logout', {
+    method: 'POST',
+    headers: { 'X-Requested-With': 'XMLHttpRequest' },
+  })
+}
+
+export function getCurrentUser(): Promise<CurrentUser> {
+  return request<CurrentUser>('/admin/v1/auth/me')
 }
 
 export function getReadiness(): Promise<HealthReport> {

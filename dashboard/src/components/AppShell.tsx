@@ -1,4 +1,5 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
+import { useAuth } from '../auth/AuthContext'
 
 interface NavItem {
   to: string
@@ -30,6 +31,7 @@ const TITLES: Record<string, string> = Object.fromEntries(
 
 export function AppShell() {
   const location = useLocation()
+  const { user, logout } = useAuth()
   const title = TITLES[location.pathname] ?? 'Endpoint Platform'
 
   return (
@@ -52,6 +54,23 @@ export function AppShell() {
       <div className="main">
         <header className="topbar">
           <h1>{title}</h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 13 }}>
+            <span style={{ color: 'var(--color-text-muted)' }}>{user?.email}</span>
+            <button
+              type="button"
+              onClick={() => void logout()}
+              style={{
+                border: '1px solid var(--color-border)',
+                background: 'var(--color-surface)',
+                borderRadius: 6,
+                padding: '5px 12px',
+                font: 'inherit',
+                cursor: 'pointer',
+              }}
+            >
+              Sign out
+            </button>
+          </div>
         </header>
         <main className="content">
           <Outlet />

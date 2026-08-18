@@ -1,8 +1,14 @@
 using System.Reflection;
+using System.Threading.RateLimiting;
 using EndpointPlatform.Api.Endpoints;
+using EndpointPlatform.Api.Security;
 using EndpointPlatform.Contracts.Common;
 using EndpointPlatform.Infrastructure.DependencyInjection;
 using EndpointPlatform.Infrastructure.Hosting;
+using EndpointPlatform.Infrastructure.Security;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Diagnostics;
 using Serilog;
 
 namespace EndpointPlatform.Api;
@@ -47,6 +53,48 @@ public sealed class Program
             builder.Services.AddPlatformHosting();
             builder.Services.AddEndpointPlatformInfrastructure(builder.Configuration, builder.Environment);
 
+            // --- Authentication and authorization (Phase 3) -------------------
+            builder.Services.AddOptions<AdminAuthOptions>()
+                .Bind(builder.Configuration.GetSection(AdminAuthOptions.SectionName))
+                .ValidateDataAnnotations()
+                .ValidateOnStart();
+
+            builder.Services.AddScoped<AdminAuthService>();
+
+            builder.Services
+                .AddAuthentication(AdminAuthenticationHandler.SchemeName)
+                .AddScheme<AuthenticationSchemeOptions, AdminAuthenticationHandler>(
+                    AdminAuthenticationHandler.SchemeName,
+                    displayName: "Admin session",
+                    configureOptions: null);
+
+            builder.Services.AddAuthorization();
+            builder.Services.AddSingleton<IAuthorizationPolicyProvider, PermissionPolicyProvider>();
+            builder.Services.AddSingleton<IAuthorizationHandler, PermissionRequirementHandler>();
+            builder.Services.AddScoped<IAuthorizationMiddlewareResultHandler, AuditingAuthorizationResultHandler>();
+
+            // Brute-force protection on sign-in: a small fixed window per client
+            // address. In-memory - adequate for a single instance; Redis-backed
+            // limiting is Phase 15 hardening.
+            builder.Services.AddRateLimiter(limiter =>
+            {
+                limiter.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+                limiter.AddPolicy(AuthEndpoints.LoginRateLimitPolicy, httpContext =>
+                {
+                    var authOptions = httpContext.RequestServices
+                        .GetRequiredService<Microsoft.Extensions.Options.IOptions<AdminAuthOptions>>().Value;
+
+                    return RateLimitPartition.GetFixedWindowLimiter(
+                        httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                        _ => new FixedWindowRateLimiterOptions
+                        {
+                            PermitLimit = authOptions.LoginAttemptsPerMinutePerAddress,
+                            Window = TimeSpan.FromMinutes(1),
+                            QueueLimit = 0,
+                        });
+                });
+            });
+
             builder.Services.AddEndpointsApiExplorer();
             builder.Services.AddSwaggerGen(options =>
             {
@@ -72,8 +120,14 @@ public sealed class Program
 
             app.UsePlatformRequestPipeline();
 
-            // Returns RFC 7807 problem details instead of a stack trace.
-            app.UseExceptionHandler();
+            // Returns RFC 7807 problem details instead of a stack trace. Malformed
+            // request bodies (BadHttpRequestException) are the caller's fault and
+            // surface as their own status code, not a 500.
+            app.UseExceptionHandler(new ExceptionHandlerOptions
+            {
+                StatusCodeSelector = static ex =>
+                    ex is BadHttpRequestException bad ? bad.StatusCode : StatusCodes.Status500InternalServerError,
+            });
             app.UseStatusCodePages();
 
             if (app.Environment.IsDevelopment())
@@ -91,8 +145,14 @@ public sealed class Program
 
             app.UseCors(DashboardCorsPolicy);
 
+            app.UseRateLimiter();
+            app.UseMiddleware<CsrfProtectionMiddleware>();
+            app.UseAuthentication();
+            app.UseAuthorization();
+
             app.MapPlatformHealthChecks();
 
+            app.MapAuthEndpoints();
             app.MapEnrollmentTokenEndpoints();
             app.MapDeviceEndpoints();
 

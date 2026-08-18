@@ -1,11 +1,31 @@
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
+import { AuthProvider, useAuth } from './auth/AuthContext'
 import { AppShell } from './components/AppShell'
 import { DashboardPage } from './pages/DashboardPage'
 import { DeviceDetailPage } from './pages/DeviceDetailPage'
 import { DevicesPage } from './pages/DevicesPage'
+import { LoginPage } from './pages/LoginPage'
 import { PlaceholderPage } from './pages/PlaceholderPage'
 
 export default function App() {
+  return (
+    <AuthProvider>
+      <AuthGate />
+    </AuthProvider>
+  )
+}
+
+function AuthGate() {
+  const { initializing, user } = useAuth()
+
+  if (initializing) {
+    return <div className="loading" style={{ padding: 40 }}>Loading…</div>
+  }
+
+  if (!user) {
+    return <LoginPage />
+  }
+
   return (
     <BrowserRouter>
       <Routes>

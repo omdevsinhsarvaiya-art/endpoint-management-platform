@@ -4,6 +4,7 @@ using EndpointPlatform.Contracts;
 using EndpointPlatform.Contracts.Common;
 using EndpointPlatform.Infrastructure.DependencyInjection;
 using EndpointPlatform.Infrastructure.Hosting;
+using Microsoft.AspNetCore.Diagnostics;
 using Serilog;
 
 namespace EndpointPlatform.AgentApi;
@@ -64,7 +65,11 @@ public sealed class Program
 
             app.UsePlatformRequestPipeline();
 
-            app.UseExceptionHandler();
+            app.UseExceptionHandler(new ExceptionHandlerOptions
+            {
+                StatusCodeSelector = static ex =>
+                    ex is BadHttpRequestException bad ? bad.StatusCode : StatusCodes.Status500InternalServerError,
+            });
             app.UseStatusCodePages();
 
             if (app.Environment.IsDevelopment())

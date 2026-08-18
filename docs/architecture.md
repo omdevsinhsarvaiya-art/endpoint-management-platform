@@ -155,4 +155,8 @@ are reverted automatically.
 - **Phase 2 (device inventory): complete.** Hardware/network/logged-on-user
   collection via WMI and managed APIs, pull-based refresh handshake through the
   heartbeat response, device detail page (Overview/Hardware/Network tabs).
-- Phase 3 (authentication + RBAC + audit enforcement): next.
+- **Phase 3 (authentication + RBAC + audit enforcement): complete.** PBKDF2
+  passwords, opaque revocable sessions (HttpOnly cookie + Bearer), permission
+  policies on every admin endpoint, denial auditing, lockout and login rate
+  limiting, operator bootstrap command, dashboard sign-in. See ADR-0009.
+- Phase 4 (local Windows user/group management): next.

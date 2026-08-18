@@ -43,6 +43,8 @@ public sealed class EndpointPlatformDbContext(DbContextOptions<EndpointPlatformD
 
     public DbSet<PlatformUserRole> PlatformUserRoles => Set<PlatformUserRole>();
 
+    public DbSet<AdminSession> AdminSessions => Set<AdminSession>();
+
     public DbSet<Device> Devices => Set<Device>();
 
     public DbSet<DeviceHardware> DeviceHardware => Set<DeviceHardware>();

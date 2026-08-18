@@ -129,10 +129,9 @@ privileged boundary:
 | Limitation | Risk | Planned remedy |
 |---|---|---|
 | Audit records stay on the same PostgreSQL host | Table owner/superuser can drop triggers and rewrite history | Phase 15: ship audit stream to append-only external storage |
-| **Admin API has no authentication yet** (Agent API is authenticated as of Phase 1) | Anyone with network reach can issue enrollment tokens and read device data; mutations are audited against a synthetic `development-unauthenticated@localhost` actor | Phase 3; until then: development only, loopback binding |
 | Enrollment token is a bearer bootstrap secret | Holder of an unused token can enroll a hostile machine into management | Expiry ≤30 days, use caps, revocation, one-time display; operational handling guidance in deployment docs |
 | Development runs plain HTTP on localhost | Local traffic unencrypted | TLS termination is a deployment concern; HSTS+redirect already active outside Development |
-| No rate limiting yet | Brute force/DoS against future auth endpoints | Phase 3 alongside authentication, hardened in Phase 15 |
+| Login rate limiting is in-memory, per instance | Resets on restart; not shared across replicas | Phase 15: Redis-backed limiter (account lockout already covers the account dimension) |
 | Single-node PostgreSQL/Redis | Availability, not security | Phase 15 |
 
 ## Standing rules (all phases)

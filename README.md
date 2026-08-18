@@ -4,7 +4,8 @@ Internal enterprise endpoint management for organization-owned Windows
 computers: central management backend, web administrator dashboard, and a
 Windows endpoint agent.
 
-**Status: Phase 0 (foundation) complete.** See
+**Status: Phases 0–3 complete** (foundation; secure enrollment + heartbeat;
+device inventory; authentication + RBAC + audit). See
 [docs/architecture.md](docs/architecture.md) for the design and
 [docs/adr/](docs/adr/) for the decisions behind it.
 
@@ -69,8 +70,10 @@ UI at `/swagger` (Development only). Full instructions and troubleshooting:
   fails with instructions if configuration is missing.
 - The agent cannot launch processes or run PowerShell — its assemblies do not
   reference process creation, enforced by tests.
-- **No authentication yet** (Phase 3 for admins, Phase 1 for agents): do not
-  expose these services beyond localhost.
+- Admin API: PBKDF2 passwords, revocable HttpOnly-cookie sessions, permission
+  policies on every endpoint, denial auditing, lockout + login rate limiting.
+  Bootstrap the first administrator with:
+  `ENDPOINTPLATFORM_Bootstrap__AdminEmail=... ENDPOINTPLATFORM_Bootstrap__AdminPassword=... dotnet run --project server\Migrations -- bootstrap-admin`
 
 ## Documentation
 

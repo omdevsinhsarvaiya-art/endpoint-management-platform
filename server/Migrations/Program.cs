@@ -61,6 +61,17 @@ public static class Program
 
             await using var dbContext = BuildDbContext(databaseOptions, loggerFactory);
 
+            // One-shot operator command: create the first Super Administrator.
+            if (args.Contains("bootstrap-admin", StringComparer.OrdinalIgnoreCase))
+            {
+                var bootstrapper = new AdminBootstrapper(
+                    dbContext, loggerFactory.CreateLogger<AdminBootstrapper>());
+
+                return await bootstrapper.RunAsync(
+                    configuration["Bootstrap:AdminEmail"],
+                    configuration["Bootstrap:AdminPassword"]);
+            }
+
             logger.LogInformation("Applying database migrations...");
 
             var pending = (await dbContext.Database.GetPendingMigrationsAsync()).ToArray();
