@@ -65,6 +65,7 @@ public static class Program
             builder.Services.AddSingleton<ISystemInfoProvider, WindowsSystemInfoProvider>();
             builder.Services.AddSingleton<IDeviceCredentialStore, DpapiDeviceCredentialStore>();
             builder.Services.AddSingleton<ILocalAccountsCollector, WindowsLocalAccountsCollector>();
+            builder.Services.AddSingleton<ISoftwareCollector, WindowsSoftwareCollector>();
             builder.Services.AddSingleton<IInventoryCollector, WindowsInventoryCollector>();
             builder.Services.AddSingleton<IDeviceControl, WindowsDeviceControl>();
 

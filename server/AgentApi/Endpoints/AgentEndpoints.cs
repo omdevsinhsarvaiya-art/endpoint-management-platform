@@ -301,6 +301,21 @@ public static class AgentEndpoints
             return "Logged-on user must be at most 256 characters.";
         }
 
+        if (report.Software is { Count: > Infrastructure.Devices.DeviceInventoryService.MaxSoftwareEntries })
+        {
+            return "Too many software entries.";
+        }
+
+        foreach (var app in report.Software ?? [])
+        {
+            if (string.IsNullOrWhiteSpace(app.Name) || app.Name.Length > 384
+                || app.Version is { Length: > 128 } || app.Publisher is { Length: > 256 }
+                || app.InstallLocation is { Length: > 512 })
+            {
+                return "A software entry is malformed.";
+            }
+        }
+
         if (report.LocalAccounts is { } accounts)
         {
             if (accounts.Users is { Count: > Infrastructure.Devices.DeviceInventoryService.MaxLocalUsers })

@@ -14,6 +14,7 @@ public sealed class WindowsInventoryCollectorTests
         new(
             new WindowsSystemInfoProvider(NullLogger<WindowsSystemInfoProvider>.Instance),
             new WindowsLocalAccountsCollector(NullLogger<WindowsLocalAccountsCollector>.Instance),
+            new WindowsSoftwareCollector(NullLogger<WindowsSoftwareCollector>.Instance),
             TimeProvider.System,
             NullLogger<WindowsInventoryCollector>.Instance);
 

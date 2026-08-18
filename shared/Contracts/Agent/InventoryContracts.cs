@@ -15,7 +15,23 @@ public sealed record InventoryReport(
     IReadOnlyList<InventoryNetworkInterface> NetworkInterfaces,
     string? LoggedOnUser,
     DateTimeOffset CollectedAt,
-    InventoryLocalAccounts? LocalAccounts = null);
+    InventoryLocalAccounts? LocalAccounts = null,
+    IReadOnlyList<InventorySoftware>? Software = null);
+
+/// <summary>One installed application, read from the Windows uninstall registry.</summary>
+/// <param name="Name">Display name (required).</param>
+/// <param name="Version">Display version, when present.</param>
+/// <param name="Publisher">Publisher, when present.</param>
+/// <param name="InstallDate">Install date as reported (yyyymmdd or free text), when present.</param>
+/// <param name="InstallLocation">Install path, when present.</param>
+/// <param name="Architecture">"x64", "x86" or null.</param>
+public sealed record InventorySoftware(
+    string Name,
+    string? Version,
+    string? Publisher,
+    string? InstallDate,
+    string? InstallLocation,
+    string? Architecture);
 
 /// <summary>Windows local accounts snapshot.</summary>
 public sealed record InventoryLocalAccounts(

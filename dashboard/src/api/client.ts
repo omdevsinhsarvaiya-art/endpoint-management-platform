@@ -182,6 +182,7 @@ export interface DeviceDetail {
   networkInterfaces: DeviceNetworkInterface[]
   localUsers: DeviceLocalUser[]
   localGroups: DeviceLocalGroup[]
+  software: DeviceSoftwareItem[]
 }
 
 export interface DeviceTaskItem {
@@ -213,6 +214,36 @@ export async function queueDeviceAction(
   if (!response.ok) {
     throw new ApiError(response.status, `${action} failed`, response.headers.get('X-Correlation-Id'))
   }
+}
+
+export interface SoftwareTitle {
+  name: string
+  version: string | null
+  publisher: string | null
+  installCount: number
+}
+export interface SoftwareTitlePage {
+  items: SoftwareTitle[]
+  totalCount: number
+  page: number
+  pageSize: number
+}
+export interface DeviceSoftwareItem {
+  name: string
+  version: string | null
+  publisher: string | null
+  installDate: string | null
+  architecture: string | null
+}
+
+export function getSoftwareTitles(page: number, pageSize: number, search: string, publisher: string): Promise<SoftwareTitlePage> {
+  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) })
+  if (search.trim()) params.set('search', search.trim())
+  if (publisher) params.set('publisher', publisher)
+  return request<SoftwareTitlePage>(`/admin/v1/software?${params}`)
+}
+export function getSoftwarePublishers(): Promise<string[]> {
+  return request<string[]>('/admin/v1/software/publishers')
 }
 
 export function getDevice(deviceId: string): Promise<DeviceDetail> {

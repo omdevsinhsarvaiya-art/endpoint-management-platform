@@ -56,6 +56,8 @@ public sealed class EndpointPlatformDbContext(DbContextOptions<EndpointPlatformD
 
     public DbSet<DeviceLocalGroup> DeviceLocalGroups => Set<DeviceLocalGroup>();
 
+    public DbSet<DeviceSoftware> DeviceSoftware => Set<DeviceSoftware>();
+
     public DbSet<DeviceTask> DeviceTasks => Set<DeviceTask>();
 
     public DbSet<EnrollmentToken> EnrollmentTokens => Set<EnrollmentToken>();

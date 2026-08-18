@@ -37,6 +37,7 @@ public sealed class DeviceInventoryService(
     public const int MaxLocalUsers = 2048;
     public const int MaxLocalGroups = 512;
     public const int MaxGroupMembers = 2048;
+    public const int MaxSoftwareEntries = 8192;
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -114,6 +115,11 @@ public sealed class DeviceInventoryService(
             await ApplyLocalAccountsAsync(device, localAccounts, now, cancellationToken);
         }
 
+        if (report.Software is { } software)
+        {
+            await ApplySoftwareAsync(device, software, now, cancellationToken);
+        }
+
         device.RecordInventory(report.LoggedOnUser, now);
 
         await _dbContext.SaveChangesAsync(cancellationToken);
@@ -178,6 +184,36 @@ public sealed class DeviceInventoryService(
                 group.Description,
                 JsonSerializer.Serialize(members, JsonOptions),
                 members.Length,
+                now));
+        }
+    }
+
+    private async Task ApplySoftwareAsync(
+        Device device,
+        IReadOnlyList<InventorySoftware> software,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var existing = await _dbContext.DeviceSoftware
+            .Where(s => s.DeviceId == device.Id)
+            .ToListAsync(cancellationToken);
+        _dbContext.DeviceSoftware.RemoveRange(existing);
+
+        foreach (var app in software.Take(MaxSoftwareEntries))
+        {
+            if (string.IsNullOrWhiteSpace(app.Name))
+            {
+                continue;
+            }
+
+            _dbContext.DeviceSoftware.Add(new DeviceSoftware(
+                device.Id,
+                Truncate(app.Name, 384)!,
+                Truncate(app.Version, 128),
+                Truncate(app.Publisher, 256),
+                Truncate(app.InstallDate, 32),
+                Truncate(app.InstallLocation, 512),
+                Truncate(app.Architecture, 16),
                 now));
         }
     }

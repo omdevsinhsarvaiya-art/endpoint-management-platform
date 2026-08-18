@@ -183,6 +183,13 @@ public static class DeviceEndpoints
             .OrderBy(g => g.Name)
             .ToListAsync(cancellationToken);
 
+        var software = await dbContext.DeviceSoftware
+            .AsNoTracking()
+            .Where(sw => sw.DeviceId == deviceId)
+            .OrderBy(sw => sw.Name)
+            .Select(sw => new { sw.Name, sw.Version, sw.Publisher, sw.InstallDate, sw.Architecture })
+            .ToListAsync(cancellationToken);
+
         return Results.Ok(new
         {
             device.Id,
@@ -242,6 +249,7 @@ public static class DeviceEndpoints
                 IsAdministrators = g.IsAdministratorsGroup,
                 Members = (JsonElement?)JsonSerializer.Deserialize<JsonElement>(g.MembersJson),
             }),
+            Software = software,
         });
     }
 

@@ -10,7 +10,7 @@ import {
   type DeviceTaskItem,
 } from '../api/client'
 
-type Tab = 'overview' | 'hardware' | 'network' | 'users' | 'groups' | 'actions' | 'tasks'
+type Tab = 'overview' | 'hardware' | 'network' | 'users' | 'groups' | 'software' | 'actions' | 'tasks'
 
 function formatBytes(bytes: number | null): string {
   if (bytes == null) return '—'
@@ -97,6 +97,7 @@ export function DeviceDetailPage() {
     { key: 'network', label: 'Network' },
     { key: 'users', label: `Users${device.localUsers.length ? ` (${device.localUsers.length})` : ''}` },
     { key: 'groups', label: `Groups${device.localGroups.length ? ` (${device.localGroups.length})` : ''}` },
+    { key: 'software', label: `Software${device.software.length ? ` (${device.software.length})` : ''}` },
     { key: 'actions', label: 'Actions' },
     { key: 'tasks', label: `Tasks${tasks.length ? ` (${tasks.length})` : ''}` },
   ]
@@ -340,6 +341,34 @@ export function DeviceDetailPage() {
                         ? g.members.map((m) => m.name).join(', ')
                         : '—'}
                     </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {tab === 'software' && (
+        <div className="card">
+          {!device.software.length && (
+            <div className="empty-state">
+              <div className="title">No software inventory yet</div>
+              <div>Use "Refresh inventory" and wait for the agent's next heartbeat.</div>
+            </div>
+          )}
+          {!!device.software.length && (
+            <table className="table">
+              <thead>
+                <tr><th>Application</th><th>Version</th><th>Publisher</th><th>Arch</th></tr>
+              </thead>
+              <tbody>
+                {device.software.map((sw) => (
+                  <tr key={`${sw.name}|${sw.version}`}>
+                    <td style={{ fontWeight: 600 }}>{sw.name}</td>
+                    <td>{sw.version ?? '—'}</td>
+                    <td>{sw.publisher ?? '—'}</td>
+                    <td>{sw.architecture ?? '—'}</td>
                   </tr>
                 ))}
               </tbody>

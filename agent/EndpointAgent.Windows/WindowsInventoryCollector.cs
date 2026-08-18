@@ -29,6 +29,7 @@ namespace EndpointAgent.Windows;
 public sealed class WindowsInventoryCollector(
     ISystemInfoProvider systemInfoProvider,
     ILocalAccountsCollector localAccountsCollector,
+    ISoftwareCollector softwareCollector,
     TimeProvider timeProvider,
     ILogger<WindowsInventoryCollector> logger) : IInventoryCollector
 {
@@ -37,6 +38,9 @@ public sealed class WindowsInventoryCollector(
 
     private readonly ILocalAccountsCollector _localAccountsCollector = localAccountsCollector
         ?? throw new ArgumentNullException(nameof(localAccountsCollector));
+
+    private readonly ISoftwareCollector _softwareCollector = softwareCollector
+        ?? throw new ArgumentNullException(nameof(softwareCollector));
 
     private readonly TimeProvider _timeProvider = timeProvider
         ?? throw new ArgumentNullException(nameof(timeProvider));
@@ -64,12 +68,23 @@ public sealed class WindowsInventoryCollector(
             _logger.LogWarning(ex, "Local accounts collection failed; omitting the section this snapshot.");
         }
 
+        IReadOnlyList<InventorySoftware>? software = null;
+        try
+        {
+            software = await _softwareCollector.CollectAsync(cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Software collection failed; omitting the section this snapshot.");
+        }
+
         return new InventoryReport(
             hardware,
             interfaces,
             loggedOnUser,
             _timeProvider.GetUtcNow(),
-            localAccounts);
+            localAccounts,
+            software);
     }
 
     private InventoryHardware CollectHardware()

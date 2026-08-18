@@ -4,6 +4,7 @@ import { AppShell } from './components/AppShell'
 import { DashboardPage } from './pages/DashboardPage'
 import { DeviceDetailPage } from './pages/DeviceDetailPage'
 import { DevicesPage } from './pages/DevicesPage'
+import { SoftwarePage } from './pages/SoftwarePage'
 import { LoginPage } from './pages/LoginPage'
 import { PlaceholderPage } from './pages/PlaceholderPage'
 
@@ -41,10 +42,7 @@ function AuthGate() {
             path="groups"
             element={<PlaceholderPage title="Groups" phase="Phase 4 (local group management)" />}
           />
-          <Route
-            path="software"
-            element={<PlaceholderPage title="Software" phase="Phase 7 (software inventory)" />}
-          />
+          <Route path="software" element={<SoftwarePage />} />
           <Route
             path="policies"
             element={<PlaceholderPage title="Policies" phase="Phase 6 (policy engine v1)" />}

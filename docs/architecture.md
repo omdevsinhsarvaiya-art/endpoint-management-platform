@@ -174,3 +174,7 @@ are reverted automatically.
   dashboard Actions + Tasks tabs. Pipeline verified live with the benign
   Ping type; destructive executors unit-tested, not live-fired (need an
   elevated Windows host).
+- **Phase 7 (software inventory): complete.** Installed apps read from the
+  Windows uninstall registry (read-only), ingested with the inventory snapshot,
+  device Software tab plus a fleet-wide Software page (search, publisher filter,
+  per-title install counts). Verified live with this laptop's 26 real titles.
