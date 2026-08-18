@@ -39,6 +39,17 @@ public interface IAgentApiClient
         AgentTaskResult result,
         DeviceCredential credential,
         CancellationToken cancellationToken = default);
+
+    /// <summary>Fetches the device's effective policies.</summary>
+    Task<AgentApiResult<AgentPolicyListResponse>> GetPoliciesAsync(
+        DeviceCredential credential,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Reports policy compliance results.</summary>
+    Task<AgentApiResult<Unit>> PostComplianceAsync(
+        AgentPolicyComplianceReport report,
+        DeviceCredential credential,
+        CancellationToken cancellationToken = default);
 }
 
 /// <summary>Placeholder for a response body-less call (204 No Content).</summary>

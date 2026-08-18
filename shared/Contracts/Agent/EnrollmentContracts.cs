@@ -61,4 +61,5 @@ public sealed record HeartbeatResponse(
     DateTimeOffset ServerTime,
     int HeartbeatIntervalSeconds,
     bool InventoryRequested = false,
-    bool TasksPending = false);
+    bool TasksPending = false,
+    bool PoliciesPending = false);

@@ -46,7 +46,79 @@ public static class AgentEndpoints
                 PostTaskResultAsync)
             .WithName("AgentPostTaskResult");
 
+        group.MapGet(AgentProtocol.Routes.Policies, GetPoliciesAsync)
+            .WithName("AgentGetPolicies");
+
+        group.MapPost(AgentProtocol.Routes.Policies + AgentProtocol.Routes.PolicyComplianceSuffix, PostComplianceAsync)
+            .WithName("AgentPostCompliance");
+
         return endpoints;
+    }
+
+    private static async Task<IResult> GetPoliciesAsync(
+        [FromHeader(Name = AgentProtocol.Headers.Credential)] string? credentialHeader,
+        [FromHeader(Name = AgentProtocol.Headers.ProtocolVersion)] int? protocolVersion,
+        AgentAuthenticationService authenticationService,
+        Infrastructure.Policies.PolicyService policyService,
+        CancellationToken cancellationToken)
+    {
+        if (protocolVersion != AgentProtocol.Version)
+        {
+            return Results.Problem(title: "Unsupported agent protocol version.", statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        var auth = await authenticationService.AuthenticateAsync(credentialHeader, cancellationToken);
+        if (!auth.Success)
+        {
+            return Results.Unauthorized();
+        }
+
+        var effective = await policyService.GetEffectivePoliciesAsync(auth.Device!.Id, cancellationToken);
+        var policies = effective.Select(e => new AgentPolicy(
+            e.Policy.Id, e.Version.Id, e.Version.VersionNumber, e.Policy.Type.ToString(), e.Version.DesiredStateJson)).ToArray();
+
+        return Results.Ok(new AgentPolicyListResponse(policies));
+    }
+
+    private static async Task<IResult> PostComplianceAsync(
+        [FromBody] AgentPolicyComplianceReport report,
+        [FromHeader(Name = AgentProtocol.Headers.Credential)] string? credentialHeader,
+        [FromHeader(Name = AgentProtocol.Headers.ProtocolVersion)] int? protocolVersion,
+        AgentAuthenticationService authenticationService,
+        Infrastructure.Policies.PolicyService policyService,
+        CancellationToken cancellationToken)
+    {
+        if (protocolVersion != AgentProtocol.Version)
+        {
+            return Results.Problem(title: "Unsupported agent protocol version.", statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        var auth = await authenticationService.AuthenticateAsync(credentialHeader, cancellationToken);
+        if (!auth.Success)
+        {
+            return Results.Unauthorized();
+        }
+
+        if (report.Results is { Count: > 1000 })
+        {
+            return Results.Problem(title: "Too many compliance results.", statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        var items = new List<Infrastructure.Policies.ComplianceInput>();
+        foreach (var r in report.Results ?? [])
+        {
+            if (!Enum.TryParse<Domain.Policies.PolicyComplianceState>(r.State, out var state))
+            {
+                return Results.Problem(title: "Invalid compliance state.", statusCode: StatusCodes.Status400BadRequest);
+            }
+
+            var deviations = (r.Deviations ?? []).Where(d => d.Length <= 512).Take(64).ToArray();
+            items.Add(new Infrastructure.Policies.ComplianceInput(
+                r.PolicyId, r.PolicyVersionId, r.VersionNumber, state, deviations));
+        }
+
+        await policyService.RecordComplianceAsync(auth.Device!.OrganizationId, auth.Device.Id, items, cancellationToken);
+        return Results.NoContent();
     }
 
     private static async Task<IResult> ClaimTasksAsync(
@@ -161,6 +233,7 @@ public static class AgentEndpoints
         [FromHeader(Name = AgentProtocol.Headers.ProtocolVersion)] int? protocolVersion,
         AgentAuthenticationService authenticationService,
         Infrastructure.Persistence.EndpointPlatformDbContext dbContext,
+        Infrastructure.Policies.PolicyService policyService,
         IOptions<AgentServerOptions> agentServerOptions,
         TimeProvider timeProvider,
         CancellationToken cancellationToken)
@@ -206,11 +279,14 @@ public static class AgentEndpoints
             .AnyAsync(t => t.DeviceId == device.Id
                            && t.Status == Domain.Tasks.DeviceTaskStatus.Queued, cancellationToken);
 
+        var policiesPending = await policyService.HasPendingComplianceAsync(device.Id, cancellationToken);
+
         return Results.Ok(new HeartbeatResponse(
             now,
             agentServerOptions.Value.HeartbeatIntervalSeconds,
             InventoryRequested: device.IsInventoryRefreshPending,
-            TasksPending: tasksPending));
+            TasksPending: tasksPending,
+            PoliciesPending: policiesPending));
     }
 
     private static async Task<IResult> InventoryAsync(

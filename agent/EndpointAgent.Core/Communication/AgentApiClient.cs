@@ -131,6 +131,34 @@ public sealed class AgentApiClient(HttpClient httpClient, ILogger<AgentApiClient
         return await SendNoContentAsync(message, "task-result", cancellationToken);
     }
 
+    public async Task<AgentApiResult<AgentPolicyListResponse>> GetPoliciesAsync(
+        DeviceCredential credential, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(credential);
+        using var message = new HttpRequestMessage(HttpMethod.Get, AgentProtocol.RoutePrefix + AgentProtocol.Routes.Policies);
+        AddProtocolHeaders(message, AgentVersion());
+        message.Headers.Add(AgentProtocol.Headers.Credential, credential.ToHeaderValue());
+        message.Headers.Add(AgentProtocol.Headers.DeviceId, credential.DeviceId.ToString());
+        return await SendAsync<AgentPolicyListResponse>(message, "get-policies", cancellationToken);
+    }
+
+    public async Task<AgentApiResult<Unit>> PostComplianceAsync(
+        AgentPolicyComplianceReport report, DeviceCredential credential, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(report);
+        ArgumentNullException.ThrowIfNull(credential);
+        using var message = new HttpRequestMessage(
+            HttpMethod.Post,
+            AgentProtocol.RoutePrefix + AgentProtocol.Routes.Policies + AgentProtocol.Routes.PolicyComplianceSuffix)
+        {
+            Content = JsonContent.Create(report),
+        };
+        AddProtocolHeaders(message, AgentVersion());
+        message.Headers.Add(AgentProtocol.Headers.Credential, credential.ToHeaderValue());
+        message.Headers.Add(AgentProtocol.Headers.DeviceId, credential.DeviceId.ToString());
+        return await SendNoContentAsync(message, "post-compliance", cancellationToken);
+    }
+
     private static string AgentVersion() =>
         typeof(AgentApiClient).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
 

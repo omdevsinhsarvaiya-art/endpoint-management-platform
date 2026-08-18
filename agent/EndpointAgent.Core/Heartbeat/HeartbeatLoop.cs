@@ -31,6 +31,7 @@ public sealed class HeartbeatLoop(
     ISystemInfoProvider systemInfoProvider,
     IInventoryCollector inventoryCollector,
     EndpointAgent.Core.Tasks.TaskDispatcher taskDispatcher,
+    EndpointAgent.Core.Policies.PolicyRunner policyRunner,
     IOptions<AgentOptions> agentOptions,
     IOptions<EnrollmentOptions> enrollmentOptions,
     TimeProvider timeProvider,
@@ -54,6 +55,9 @@ public sealed class HeartbeatLoop(
 
     private readonly EndpointAgent.Core.Tasks.TaskDispatcher _taskDispatcher = taskDispatcher
         ?? throw new ArgumentNullException(nameof(taskDispatcher));
+
+    private readonly EndpointAgent.Core.Policies.PolicyRunner _policyRunner = policyRunner
+        ?? throw new ArgumentNullException(nameof(policyRunner));
 
     private readonly AgentOptions _agentOptions = agentOptions?.Value
         ?? throw new ArgumentNullException(nameof(agentOptions));
@@ -144,6 +148,11 @@ public sealed class HeartbeatLoop(
                         await RunTasksAsync(credential, stoppingToken);
                     }
 
+                    if (response.PoliciesPending)
+                    {
+                        await RunPoliciesAsync(credential, stoppingToken);
+                    }
+
                     await DelayAsync(interval, stoppingToken);
                     continue;
                 }
@@ -191,6 +200,22 @@ public sealed class HeartbeatLoop(
     /// queued and the next heartbeat retries, and a per-task failure is reported to
     /// the server rather than crashing the loop.
     /// </summary>
+    private async Task RunPoliciesAsync(DeviceCredential credential, CancellationToken stoppingToken)
+    {
+        try
+        {
+            await _policyRunner.RunAsync(credential, stoppingToken);
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Policy evaluation failed; it will be retried on the next heartbeat.");
+        }
+    }
+
     private async Task RunTasksAsync(DeviceCredential credential, CancellationToken stoppingToken)
     {
         try

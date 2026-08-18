@@ -190,3 +190,13 @@ are reverted automatically.
   an expected-image guard) as typed tasks via ServiceController/Process - no
   shell (ADR-0005, refined guard). Read side verified live (306 services, 60
   processes from this laptop); control executors unit-tested, not live-fired.
+- **Phase 6 (policy engine v1): complete.** Desired-state architecture:
+  Policy + immutable PolicyVersion (historical versions never mutated) +
+  PolicyAssignment + PolicyComplianceResult; ScreenLockTimeout policy type;
+  agent pulls effective policies, evaluates (read-only, never remediates),
+  reports Compliant/NonCompliant/Unknown with deviations; heartbeat
+  PoliciesPending handshake; Policies dashboard page. Verified live: create ->
+  assign -> agent evaluated this laptop's real screen-lock -> reported Unknown
+  with an honest deviation, audited. (EF key-generation fix: child entities
+  added via a tracked parent's navigation now use ValueGeneratedNever so they
+  insert rather than mis-update.)

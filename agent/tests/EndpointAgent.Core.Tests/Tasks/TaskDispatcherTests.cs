@@ -90,5 +90,9 @@ public sealed class TaskDispatcherTests
             throw new NotSupportedException();
         public Task<AgentApiResult<InventoryResponse>> UploadInventoryAsync(InventoryReport r, DeviceCredential c, CancellationToken ct = default) =>
             throw new NotSupportedException();
+        public Task<AgentApiResult<AgentPolicyListResponse>> GetPoliciesAsync(DeviceCredential c, CancellationToken ct = default) =>
+            throw new NotSupportedException();
+        public Task<AgentApiResult<Unit>> PostComplianceAsync(AgentPolicyComplianceReport r, DeviceCredential c, CancellationToken ct = default) =>
+            throw new NotSupportedException();
     }
 }

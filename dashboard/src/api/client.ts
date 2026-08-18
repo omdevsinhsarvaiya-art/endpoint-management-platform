@@ -315,6 +315,50 @@ export function getSecurityOverview(): Promise<SecurityOverview> {
   return request<SecurityOverview>('/admin/v1/security/overview')
 }
 
+export interface PolicyRow {
+  id: string
+  type: string
+  name: string
+  description: string
+  isEnabled: boolean
+  currentVersionNumber: number
+  compliant: number
+  nonCompliant: number
+  unknown: number
+}
+export interface PolicyComplianceRow {
+  deviceId: string
+  hostname: string
+  state: string
+  policyVersionNumber: number
+  evaluatedAt: string
+  deviations: string[] | null
+}
+export function getPolicies(): Promise<PolicyRow[]> {
+  return request<PolicyRow[]>('/admin/v1/policies')
+}
+export function getPolicyCompliance(policyId: string): Promise<PolicyComplianceRow[]> {
+  return request<PolicyComplianceRow[]>(`/admin/v1/policies/${encodeURIComponent(policyId)}/compliance`)
+}
+export async function createScreenLockPolicy(name: string, description: string, maxTimeoutSeconds: number): Promise<void> {
+  const r = await fetch('/api/admin/v1/policies', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+    body: JSON.stringify({ type: 'ScreenLockTimeout', name, description, maxTimeoutSeconds }),
+  })
+  if (r.status === 401) sessionExpiredEvent.dispatchEvent(new Event('expired'))
+  if (!r.ok) throw new ApiError(r.status, 'Create policy failed', r.headers.get('X-Correlation-Id'))
+}
+export async function assignPolicy(policyId: string, deviceId: string): Promise<void> {
+  const r = await fetch(`/api/admin/v1/policies/${encodeURIComponent(policyId)}/assign`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+    body: JSON.stringify({ deviceId }),
+  })
+  if (r.status === 401) sessionExpiredEvent.dispatchEvent(new Event('expired'))
+  if (!r.ok) throw new ApiError(r.status, 'Assign policy failed', r.headers.get('X-Correlation-Id'))
+}
+
 export function getDevice(deviceId: string): Promise<DeviceDetail> {
   return request<DeviceDetail>(`/admin/v1/devices/${encodeURIComponent(deviceId)}`)
 }

@@ -5,6 +5,7 @@ import { DashboardPage } from './pages/DashboardPage'
 import { DeviceDetailPage } from './pages/DeviceDetailPage'
 import { DevicesPage } from './pages/DevicesPage'
 import { SecurityPage } from './pages/SecurityPage'
+import { PoliciesPage } from './pages/PoliciesPage'
 import { SoftwarePage } from './pages/SoftwarePage'
 import { LoginPage } from './pages/LoginPage'
 import { PlaceholderPage } from './pages/PlaceholderPage'
@@ -44,10 +45,7 @@ function AuthGate() {
             element={<PlaceholderPage title="Groups" phase="Phase 4 (local group management)" />}
           />
           <Route path="software" element={<SoftwarePage />} />
-          <Route
-            path="policies"
-            element={<PlaceholderPage title="Policies" phase="Phase 6 (policy engine v1)" />}
-          />
+          <Route path="policies" element={<PoliciesPage />} />
           <Route
             path="updates"
             element={<PlaceholderPage title="Updates" phase="Phase 8 (Windows Update visibility)" />}

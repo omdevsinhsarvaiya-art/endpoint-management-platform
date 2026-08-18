@@ -148,6 +148,14 @@ public sealed class AgentEnrollmentManagerTests
         public Task<AgentApiResult<Unit>> PostTaskResultAsync(
             Guid taskId, AgentTaskResult result, DeviceCredential credential, CancellationToken cancellationToken = default) =>
             Task.FromResult(AgentApiResult<Unit>.Success(Unit.Value));
+
+        public Task<AgentApiResult<AgentPolicyListResponse>> GetPoliciesAsync(
+            DeviceCredential credential, CancellationToken cancellationToken = default) =>
+            Task.FromResult(AgentApiResult<AgentPolicyListResponse>.Success(new AgentPolicyListResponse([])));
+
+        public Task<AgentApiResult<Unit>> PostComplianceAsync(
+            AgentPolicyComplianceReport report, DeviceCredential credential, CancellationToken cancellationToken = default) =>
+            Task.FromResult(AgentApiResult<Unit>.Success(Unit.Value));
     }
 
     private sealed class FakeSystemInfo : ISystemInfoProvider

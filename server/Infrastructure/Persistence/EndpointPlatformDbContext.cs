@@ -2,6 +2,7 @@ using EndpointPlatform.Domain.Auditing;
 using EndpointPlatform.Domain.Devices;
 using EndpointPlatform.Domain.Enrollment;
 using EndpointPlatform.Domain.Identity;
+using EndpointPlatform.Domain.Policies;
 using EndpointPlatform.Domain.Tasks;
 using Microsoft.EntityFrameworkCore;
 
@@ -63,6 +64,14 @@ public sealed class EndpointPlatformDbContext(DbContextOptions<EndpointPlatformD
     public DbSet<DeviceServiceEntry> DeviceServices => Set<DeviceServiceEntry>();
 
     public DbSet<DeviceProcessEntry> DeviceProcesses => Set<DeviceProcessEntry>();
+
+    public DbSet<Policy> Policies => Set<Policy>();
+
+    public DbSet<PolicyVersion> PolicyVersions => Set<PolicyVersion>();
+
+    public DbSet<PolicyAssignment> PolicyAssignments => Set<PolicyAssignment>();
+
+    public DbSet<PolicyComplianceResult> PolicyComplianceResults => Set<PolicyComplianceResult>();
 
     public DbSet<DeviceTask> DeviceTasks => Set<DeviceTask>();
 

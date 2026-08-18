@@ -70,6 +70,9 @@ public static class Program
             builder.Services.AddSingleton<WindowsServiceProcessProvider>();
             builder.Services.AddSingleton<IServiceProcessCollector>(sp => sp.GetRequiredService<WindowsServiceProcessProvider>());
             builder.Services.AddSingleton<IServiceProcessControl>(sp => sp.GetRequiredService<WindowsServiceProcessProvider>());
+            builder.Services.AddSingleton<IScreenLockPolicyReader, WindowsScreenLockPolicyReader>();
+            builder.Services.AddSingleton<EndpointAgent.Core.Policies.PolicyEvaluator>();
+            builder.Services.AddSingleton<EndpointAgent.Core.Policies.PolicyRunner>();
             builder.Services.AddSingleton<IInventoryCollector, WindowsInventoryCollector>();
             builder.Services.AddSingleton<IDeviceControl, WindowsDeviceControl>();
 

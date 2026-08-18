@@ -52,5 +52,11 @@ public static class AgentProtocol
 
         /// <summary>Agent posts a task result to {RoutePrefix}/tasks/{id}/result.</summary>
         public const string TaskResultSuffix = "/result";
+
+        /// <summary>Agent pulls its effective policies (GET) here.</summary>
+        public const string Policies = "/policies";
+
+        /// <summary>Agent posts compliance to {RoutePrefix}/policies/compliance.</summary>
+        public const string PolicyComplianceSuffix = "/compliance";
     }
 }
