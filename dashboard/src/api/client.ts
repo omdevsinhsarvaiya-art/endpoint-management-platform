@@ -184,6 +184,22 @@ export interface DeviceDetail {
   localGroups: DeviceLocalGroup[]
   software: DeviceSoftwareItem[]
   securityPosture: SecurityPosture | null
+  services: DeviceServiceRow[]
+  processes: DeviceProcessRow[]
+}
+
+export interface DeviceServiceRow {
+  name: string
+  displayName: string
+  status: string
+  startMode: string
+}
+export interface DeviceProcessRow {
+  processId: number
+  name: string
+  workingSetBytes: number
+  executablePath: string | null
+  collectedAt: string
 }
 
 export interface DeviceTaskItem {
@@ -195,6 +211,16 @@ export interface DeviceTaskItem {
   deliveredAt: string | null
   completedAt: string | null
   resultMessage: string | null
+}
+
+export async function controlService(deviceId: string, serviceName: string, action: 'Start' | 'Stop' | 'Restart'): Promise<void> {
+  const r = await fetch(`/api/admin/v1/devices/${encodeURIComponent(deviceId)}/actions/control-service`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+    body: JSON.stringify({ serviceName, action }),
+  })
+  if (r.status === 401) sessionExpiredEvent.dispatchEvent(new Event('expired'))
+  if (!r.ok) throw new ApiError(r.status, 'Service control failed', r.headers.get('X-Correlation-Id'))
 }
 
 export function getDeviceTasks(deviceId: string): Promise<DeviceTaskItem[]> {

@@ -35,3 +35,21 @@ exactly that call site rather than removed.
   small.
 - Anything genuinely impossible without a process launch is deferred to the
   Phase 10 pipeline rather than snuck in early.
+
+## Amendment (Phase 9): process/service control
+
+Phase 9 introduces service control (`ServiceController`) and process termination
+(`Process.GetProcessById().Kill()` with an expected-image guard). These are NOT
+the pattern ADR-0005 forbids: they take typed arguments and have no command line
+to inject into. The enforcement test was therefore made *precise* rather than
+loosened:
+
+- `EndpointAgent.Core` still references no process API at all.
+- A source scan asserts **`Process.Start` appears in no agent source file** -
+  that is the actual shell/launch vector. `Kill`/`GetProcessById`/`GetProcesses`
+  and `ServiceController` are permitted.
+- The PowerShell-SDK ban is unchanged.
+
+`Process.Start` (for approved-script execution) remains forbidden until the
+signed-script pipeline exists, at which point the scan is tightened to allow
+exactly that one reviewed call site.

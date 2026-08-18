@@ -17,7 +17,26 @@ public sealed record InventoryReport(
     DateTimeOffset CollectedAt,
     InventoryLocalAccounts? LocalAccounts = null,
     IReadOnlyList<InventorySoftware>? Software = null,
-    InventorySecurityPosture? SecurityPosture = null);
+    InventorySecurityPosture? SecurityPosture = null,
+    IReadOnlyList<InventoryService>? Services = null,
+    IReadOnlyList<InventoryProcess>? Processes = null);
+
+/// <summary>One Windows service, as reported by the agent.</summary>
+public sealed record InventoryService(
+    string Name,
+    string DisplayName,
+    string Status,
+    string StartMode);
+
+/// <summary>
+/// One running process (point-in-time snapshot; the agent caps the list to the
+/// top consumers). Not authoritative real-time state - it is "as of last inventory".
+/// </summary>
+public sealed record InventoryProcess(
+    int ProcessId,
+    string Name,
+    long WorkingSetBytes,
+    string? ExecutablePath);
 
 /// <summary>
 /// Security posture snapshot. Every field is nullable: a value the agent could not

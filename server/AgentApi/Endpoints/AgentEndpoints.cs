@@ -328,6 +328,16 @@ public static class AgentEndpoints
             }
         }
 
+        if (report.Services is { Count: > Infrastructure.Devices.DeviceInventoryService.MaxServices })
+        {
+            return "Too many services.";
+        }
+
+        if (report.Processes is { Count: > Infrastructure.Devices.DeviceInventoryService.MaxProcesses })
+        {
+            return "Too many processes.";
+        }
+
         if (report.LocalAccounts is { } accounts)
         {
             if (accounts.Users is { Count: > Infrastructure.Devices.DeviceInventoryService.MaxLocalUsers })

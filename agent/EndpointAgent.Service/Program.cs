@@ -67,6 +67,9 @@ public static class Program
             builder.Services.AddSingleton<ILocalAccountsCollector, WindowsLocalAccountsCollector>();
             builder.Services.AddSingleton<ISoftwareCollector, WindowsSoftwareCollector>();
             builder.Services.AddSingleton<ISecurityPostureCollector, WindowsSecurityPostureCollector>();
+            builder.Services.AddSingleton<WindowsServiceProcessProvider>();
+            builder.Services.AddSingleton<IServiceProcessCollector>(sp => sp.GetRequiredService<WindowsServiceProcessProvider>());
+            builder.Services.AddSingleton<IServiceProcessControl>(sp => sp.GetRequiredService<WindowsServiceProcessProvider>());
             builder.Services.AddSingleton<IInventoryCollector, WindowsInventoryCollector>();
             builder.Services.AddSingleton<IDeviceControl, WindowsDeviceControl>();
 
@@ -78,6 +81,8 @@ public static class Program
             builder.Services.AddSingleton<EndpointAgent.Core.Tasks.ITaskExecutor, EndpointAgent.Core.Tasks.ShutdownTaskExecutor>();
             builder.Services.AddSingleton<EndpointAgent.Core.Tasks.ITaskExecutor, EndpointAgent.Core.Tasks.LockTaskExecutor>();
             builder.Services.AddSingleton<EndpointAgent.Core.Tasks.ITaskExecutor, EndpointAgent.Core.Tasks.SignOutTaskExecutor>();
+            builder.Services.AddSingleton<EndpointAgent.Core.Tasks.ITaskExecutor, EndpointAgent.Core.Tasks.ControlServiceTaskExecutor>();
+            builder.Services.AddSingleton<EndpointAgent.Core.Tasks.ITaskExecutor, EndpointAgent.Core.Tasks.TerminateProcessTaskExecutor>();
 
             builder.Services.AddHttpClient<IAgentApiClient, AgentApiClient>((serviceProvider, client) =>
                 {

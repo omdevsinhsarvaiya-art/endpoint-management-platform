@@ -127,3 +127,76 @@ public sealed class SignOutTaskExecutor(IDeviceControl deviceControl, ILogger<Si
         return new AgentTaskResult(true, "Interactive user signed out.", null);
     }
 }
+
+/// <summary>Starts/stops/restarts a Windows service in response to a ControlService task.</summary>
+public sealed class ControlServiceTaskExecutor(
+    IServiceProcessControl control,
+    Microsoft.Extensions.Logging.ILogger<ControlServiceTaskExecutor> logger) : ITaskExecutor
+{
+    public string TaskType => "ControlService";
+
+    public async Task<AgentTaskResult> ExecuteAsync(AgentTask task, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(task.PayloadJson))
+        {
+            return new AgentTaskResult(false, "Missing service-control payload.", null);
+        }
+
+        string serviceName;
+        string action;
+        try
+        {
+            using var doc = JsonDocument.Parse(task.PayloadJson);
+            serviceName = doc.RootElement.GetProperty("serviceName").GetString() ?? "";
+            action = doc.RootElement.GetProperty("action").GetString() ?? "";
+        }
+        catch (Exception ex) when (ex is JsonException or KeyNotFoundException or InvalidOperationException)
+        {
+            return new AgentTaskResult(false, "Malformed service-control payload.", null);
+        }
+
+        switch (action)
+        {
+            case "Start": await control.StartServiceAsync(serviceName, cancellationToken); break;
+            case "Stop": await control.StopServiceAsync(serviceName, cancellationToken); break;
+            case "Restart": await control.RestartServiceAsync(serviceName, cancellationToken); break;
+            default: return new AgentTaskResult(false, $"Unknown service action '{action}'.", null);
+        }
+
+        logger.LogInformation("Service {Service} {Action} completed.", serviceName, action);
+        return new AgentTaskResult(true, $"Service '{serviceName}' {action.ToLowerInvariant()} completed.", null);
+    }
+}
+
+/// <summary>Terminates a process (with an expected-image guard) for a TerminateProcess task.</summary>
+public sealed class TerminateProcessTaskExecutor(
+    IServiceProcessControl control,
+    Microsoft.Extensions.Logging.ILogger<TerminateProcessTaskExecutor> logger) : ITaskExecutor
+{
+    public string TaskType => "TerminateProcess";
+
+    public async Task<AgentTaskResult> ExecuteAsync(AgentTask task, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(task.PayloadJson))
+        {
+            return new AgentTaskResult(false, "Missing terminate-process payload.", null);
+        }
+
+        int pid;
+        string expectedImage;
+        try
+        {
+            using var doc = JsonDocument.Parse(task.PayloadJson);
+            pid = doc.RootElement.GetProperty("processId").GetInt32();
+            expectedImage = doc.RootElement.GetProperty("expectedImageName").GetString() ?? "";
+        }
+        catch (Exception ex) when (ex is JsonException or KeyNotFoundException or InvalidOperationException)
+        {
+            return new AgentTaskResult(false, "Malformed terminate-process payload.", null);
+        }
+
+        await control.TerminateProcessAsync(pid, expectedImage, cancellationToken);
+        logger.LogInformation("Process {Pid} ({Image}) terminated.", pid, expectedImage);
+        return new AgentTaskResult(true, $"Process {pid} ({expectedImage}) terminated.", null);
+    }
+}

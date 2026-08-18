@@ -38,6 +38,8 @@ public sealed class DeviceInventoryService(
     public const int MaxLocalGroups = 512;
     public const int MaxGroupMembers = 2048;
     public const int MaxSoftwareEntries = 8192;
+    public const int MaxServices = 2048;
+    public const int MaxProcesses = 500;
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -123,6 +125,11 @@ public sealed class DeviceInventoryService(
         if (report.SecurityPosture is { } posture)
         {
             await ApplySecurityPostureAsync(device, posture, now, cancellationToken);
+        }
+
+        if (report.Services is { } || report.Processes is { })
+        {
+            await ApplyServicesProcessesAsync(device, report.Services, report.Processes, now, cancellationToken);
         }
 
         device.RecordInventory(report.LoggedOnUser, now);
@@ -243,6 +250,52 @@ public sealed class DeviceInventoryService(
             posture.FirewallDomainEnabled, posture.FirewallPrivateEnabled, posture.FirewallPublicEnabled,
             posture.SecureBootEnabled, posture.TpmPresent, posture.TpmEnabled, posture.TpmSpecVersion,
             posture.BitLockerSystemDriveStatus, posture.LocalAdministratorCount, now);
+    }
+
+    private async Task ApplyServicesProcessesAsync(
+        Device device,
+        IReadOnlyList<InventoryService>? services,
+        IReadOnlyList<InventoryProcess>? processes,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        if (services is not null)
+        {
+            var existing = await _dbContext.DeviceServices
+                .Where(s => s.DeviceId == device.Id).ToListAsync(cancellationToken);
+            _dbContext.DeviceServices.RemoveRange(existing);
+
+            foreach (var svc in services.Take(MaxServices))
+            {
+                if (string.IsNullOrWhiteSpace(svc.Name) || string.IsNullOrWhiteSpace(svc.DisplayName))
+                {
+                    continue;
+                }
+
+                _dbContext.DeviceServices.Add(new DeviceServiceEntry(
+                    device.Id, Truncate(svc.Name, 256)!, Truncate(svc.DisplayName, 384)!,
+                    Truncate(svc.Status, 32) ?? "Unknown", Truncate(svc.StartMode, 32) ?? "Unknown", now));
+            }
+        }
+
+        if (processes is not null)
+        {
+            var existing = await _dbContext.DeviceProcesses
+                .Where(p => p.DeviceId == device.Id).ToListAsync(cancellationToken);
+            _dbContext.DeviceProcesses.RemoveRange(existing);
+
+            foreach (var proc in processes.Take(MaxProcesses))
+            {
+                if (string.IsNullOrWhiteSpace(proc.Name) || proc.ProcessId < 0)
+                {
+                    continue;
+                }
+
+                _dbContext.DeviceProcesses.Add(new DeviceProcessEntry(
+                    device.Id, proc.ProcessId, Truncate(proc.Name, 256)!,
+                    Math.Max(0, proc.WorkingSetBytes), Truncate(proc.ExecutablePath, 512), now));
+            }
+        }
     }
 
     private static string? Truncate(string? value, int maxLength)

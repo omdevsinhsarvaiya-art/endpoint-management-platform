@@ -61,7 +61,63 @@ public static class DeviceEndpoints
             .WithName("ListDeviceTasks")
             .RequirePermission(Domain.Authorization.Permissions.Task.View);
 
+        group.MapPost("/{deviceId:guid}/actions/control-service", ControlServiceAsync)
+            .WithName("ControlDeviceService")
+            .RequirePermission(Domain.Authorization.Permissions.Task.Execute);
+
+        group.MapPost("/{deviceId:guid}/actions/terminate-process", TerminateProcessAsync)
+            .WithName("TerminateDeviceProcess")
+            .RequirePermission(Domain.Authorization.Permissions.Task.Execute);
+
         return endpoints;
+    }
+
+    public sealed record ControlServiceRequest(string ServiceName, string Action);
+    public sealed record TerminateProcessRequest(int ProcessId, string ExpectedImageName);
+
+    private static async Task<IResult> ControlServiceAsync(
+        Guid deviceId,
+        ControlServiceRequest request,
+        HttpContext httpContext,
+        DeviceTaskService taskService,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(request.ServiceName) || request.ServiceName.Length > 256
+            || request.Action is not ("Start" or "Stop" or "Restart"))
+        {
+            return Results.Problem(title: "Invalid service-control request.", statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        var actor = AdminActor.Required(httpContext.User);
+        var action = Enum.Parse<TaskPayloads.ServiceAction>(request.Action);
+        var task = await taskService.QueueAsync(
+            actor.OrganizationId, deviceId, DeviceTaskType.ControlService,
+            new TaskPayloads.ControlService(request.ServiceName, action),
+            actor.UserId, actor.Email, cancellationToken);
+
+        return task is null ? Results.NotFound() : Results.Accepted($"/admin/v1/devices/{deviceId}/tasks", new { taskId = task.Id });
+    }
+
+    private static async Task<IResult> TerminateProcessAsync(
+        Guid deviceId,
+        TerminateProcessRequest request,
+        HttpContext httpContext,
+        DeviceTaskService taskService,
+        CancellationToken cancellationToken)
+    {
+        if (request.ProcessId <= 4 || string.IsNullOrWhiteSpace(request.ExpectedImageName)
+            || request.ExpectedImageName.Length > 256)
+        {
+            return Results.Problem(title: "Invalid terminate-process request.", statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        var actor = AdminActor.Required(httpContext.User);
+        var task = await taskService.QueueAsync(
+            actor.OrganizationId, deviceId, DeviceTaskType.TerminateProcess,
+            new TaskPayloads.TerminateProcess(request.ProcessId, request.ExpectedImageName),
+            actor.UserId, actor.Email, cancellationToken);
+
+        return task is null ? Results.NotFound() : Results.Accepted($"/admin/v1/devices/{deviceId}/tasks", new { taskId = task.Id });
     }
 
     private static async Task<IResult> QueueActionAsync(
@@ -194,6 +250,20 @@ public static class DeviceEndpoints
             .AsNoTracking()
             .SingleOrDefaultAsync(p => p.DeviceId == deviceId, cancellationToken);
 
+        var services = await dbContext.DeviceServices
+            .AsNoTracking()
+            .Where(sv => sv.DeviceId == deviceId)
+            .OrderBy(sv => sv.DisplayName)
+            .Select(sv => new { sv.Name, sv.DisplayName, sv.Status, sv.StartMode })
+            .ToListAsync(cancellationToken);
+
+        var processes = await dbContext.DeviceProcesses
+            .AsNoTracking()
+            .Where(pr => pr.DeviceId == deviceId)
+            .OrderByDescending(pr => pr.WorkingSetBytes)
+            .Select(pr => new { pr.ProcessId, pr.Name, pr.WorkingSetBytes, pr.ExecutablePath, pr.CollectedAt })
+            .ToListAsync(cancellationToken);
+
         return Results.Ok(new
         {
             device.Id,
@@ -254,6 +324,8 @@ public static class DeviceEndpoints
                 Members = (JsonElement?)JsonSerializer.Deserialize<JsonElement>(g.MembersJson),
             }),
             Software = software,
+            Services = services,
+            Processes = processes,
             SecurityPosture = posture is null ? null : new
             {
                 posture.DefenderAntivirusEnabled,

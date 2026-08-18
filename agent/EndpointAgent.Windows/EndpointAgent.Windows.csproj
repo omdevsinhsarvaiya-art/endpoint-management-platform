@@ -24,6 +24,7 @@
     <PackageReference Include="System.Management" />
     <PackageReference Include="System.Security.Cryptography.ProtectedData" />
     <PackageReference Include="System.DirectoryServices.AccountManagement" />
+    <PackageReference Include="System.ServiceProcess.ServiceController" />
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
   </ItemGroup>
 

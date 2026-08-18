@@ -184,3 +184,9 @@ are reverted automatically.
   Security tab + fleet Security page with score distribution. Verified live:
   this laptop scores 100% on readable checks; TPM/BitLocker correctly "unknown"
   unelevated.
+- **Phase 9 (services & processes): complete.** Read-only service list and a
+  capped point-in-time process snapshot in inventory (device Services/Processes
+  tabs); controlled actions (service start/stop/restart, process terminate with
+  an expected-image guard) as typed tasks via ServiceController/Process - no
+  shell (ADR-0005, refined guard). Read side verified live (306 services, 60
+  processes from this laptop); control executors unit-tested, not live-fired.

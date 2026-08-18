@@ -10,7 +10,7 @@ import {
   type DeviceTaskItem,
 } from '../api/client'
 
-type Tab = 'overview' | 'hardware' | 'network' | 'users' | 'groups' | 'software' | 'security' | 'actions' | 'tasks'
+type Tab = 'overview' | 'hardware' | 'network' | 'users' | 'groups' | 'software' | 'security' | 'services' | 'processes' | 'actions' | 'tasks'
 
 function formatBytes(bytes: number | null): string {
   if (bytes == null) return '—'
@@ -99,6 +99,8 @@ export function DeviceDetailPage() {
     { key: 'groups', label: `Groups${device.localGroups.length ? ` (${device.localGroups.length})` : ''}` },
     { key: 'software', label: `Software${device.software.length ? ` (${device.software.length})` : ''}` },
     { key: 'security', label: 'Security' },
+    { key: 'services', label: `Services${device.services.length ? ` (${device.services.length})` : ''}` },
+    { key: 'processes', label: `Processes${device.processes.length ? ` (${device.processes.length})` : ''}` },
     { key: 'actions', label: 'Actions' },
     { key: 'tasks', label: `Tasks${tasks.length ? ` (${tasks.length})` : ''}` },
   ]
@@ -427,6 +429,58 @@ export function DeviceDetailPage() {
               </>
             )
           })()}
+        </div>
+      )}
+
+      {tab === 'services' && (
+        <div className="card">
+          {!device.services.length && (
+            <div className="empty-state"><div className="title">No service inventory yet</div><div>Refresh inventory and wait for the next heartbeat.</div></div>
+          )}
+          {!!device.services.length && (
+            <div style={{ maxHeight: 520, overflowY: 'auto' }}>
+              <table className="table">
+                <thead><tr><th>Service</th><th>Status</th><th>Start mode</th></tr></thead>
+                <tbody>
+                  {device.services.map((sv) => (
+                    <tr key={sv.name}>
+                      <td><div style={{ fontWeight: 600 }}>{sv.displayName}</div><div style={{ color: 'var(--color-text-muted)', fontSize: 12 }}>{sv.name}</div></td>
+                      <td>{sv.status === 'Running' ? <span className="badge ok">Running</span> : <span className="badge neutral">{sv.status}</span>}</td>
+                      <td>{sv.startMode}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === 'processes' && (
+        <div className="card">
+          {!device.processes.length && (
+            <div className="empty-state"><div className="title">No process snapshot yet</div><div>Refresh inventory and wait for the next heartbeat.</div></div>
+          )}
+          {!!device.processes.length && (
+            <>
+              <div style={{ color: 'var(--color-text-muted)', fontSize: 12.5, marginBottom: 8 }}>
+                Point-in-time snapshot (top by memory) as of {device.processes[0] ? new Date(device.processes[0].collectedAt).toLocaleString() : ''}.
+              </div>
+              <table className="table">
+                <thead><tr><th>Process</th><th>PID</th><th>Memory</th><th>Path</th></tr></thead>
+                <tbody>
+                  {device.processes.map((pr) => (
+                    <tr key={pr.processId}>
+                      <td style={{ fontWeight: 600 }}>{pr.name}</td>
+                      <td>{pr.processId}</td>
+                      <td>{formatBytes(pr.workingSetBytes)}</td>
+                      <td style={{ color: 'var(--color-text-muted)', fontSize: 12, maxWidth: 380, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pr.executablePath ?? '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
         </div>
       )}
 

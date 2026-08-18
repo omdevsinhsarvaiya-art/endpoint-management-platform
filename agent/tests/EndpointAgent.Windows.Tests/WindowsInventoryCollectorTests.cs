@@ -18,6 +18,7 @@ public sealed class WindowsInventoryCollectorTests
             new WindowsSecurityPostureCollector(
                 new WindowsLocalAccountsCollector(NullLogger<WindowsLocalAccountsCollector>.Instance),
                 NullLogger<WindowsSecurityPostureCollector>.Instance),
+            new WindowsServiceProcessProvider(NullLogger<WindowsServiceProcessProvider>.Instance),
             TimeProvider.System,
             NullLogger<WindowsInventoryCollector>.Instance);
 

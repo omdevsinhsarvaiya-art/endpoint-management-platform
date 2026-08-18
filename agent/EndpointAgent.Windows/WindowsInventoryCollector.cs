@@ -31,6 +31,7 @@ public sealed class WindowsInventoryCollector(
     ILocalAccountsCollector localAccountsCollector,
     ISoftwareCollector softwareCollector,
     ISecurityPostureCollector securityPostureCollector,
+    IServiceProcessCollector serviceProcessCollector,
     TimeProvider timeProvider,
     ILogger<WindowsInventoryCollector> logger) : IInventoryCollector
 {
@@ -45,6 +46,12 @@ public sealed class WindowsInventoryCollector(
 
     private readonly ISecurityPostureCollector _securityPostureCollector = securityPostureCollector
         ?? throw new ArgumentNullException(nameof(securityPostureCollector));
+
+    private readonly IServiceProcessCollector _serviceProcessCollector = serviceProcessCollector
+        ?? throw new ArgumentNullException(nameof(serviceProcessCollector));
+
+    /// <summary>Cap on the process snapshot carried with inventory.</summary>
+    private const int MaxProcessesInInventory = 60;
 
     private readonly TimeProvider _timeProvider = timeProvider
         ?? throw new ArgumentNullException(nameof(timeProvider));
@@ -92,6 +99,18 @@ public sealed class WindowsInventoryCollector(
             _logger.LogWarning(ex, "Security posture collection failed; omitting the section this snapshot.");
         }
 
+        IReadOnlyList<InventoryService>? services = null;
+        IReadOnlyList<InventoryProcess>? processes = null;
+        try
+        {
+            services = await _serviceProcessCollector.CollectServicesAsync(cancellationToken);
+            processes = await _serviceProcessCollector.CollectProcessesAsync(MaxProcessesInInventory, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Service/process collection failed; omitting the section this snapshot.");
+        }
+
         return new InventoryReport(
             hardware,
             interfaces,
@@ -99,7 +118,9 @@ public sealed class WindowsInventoryCollector(
             _timeProvider.GetUtcNow(),
             localAccounts,
             software,
-            posture);
+            posture,
+            services,
+            processes);
     }
 
     private InventoryHardware CollectHardware()
