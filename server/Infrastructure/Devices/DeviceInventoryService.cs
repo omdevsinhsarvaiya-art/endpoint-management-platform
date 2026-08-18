@@ -34,6 +34,9 @@ public sealed class DeviceInventoryService(
     public const int MaxDisks = 64;
     public const int MaxNetworkInterfaces = 64;
     public const int MaxIpAddressesPerInterface = 32;
+    public const int MaxLocalUsers = 2048;
+    public const int MaxLocalGroups = 512;
+    public const int MaxGroupMembers = 2048;
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -106,6 +109,11 @@ public sealed class DeviceInventoryService(
                 now));
         }
 
+        if (report.LocalAccounts is { } localAccounts)
+        {
+            await ApplyLocalAccountsAsync(device, localAccounts, now, cancellationToken);
+        }
+
         device.RecordInventory(report.LoggedOnUser, now);
 
         await _dbContext.SaveChangesAsync(cancellationToken);
@@ -117,6 +125,61 @@ public sealed class DeviceInventoryService(
             device.Hostname,
             Math.Min((report.NetworkInterfaces ?? []).Count, MaxNetworkInterfaces),
             disks.Length);
+    }
+
+    private async Task ApplyLocalAccountsAsync(
+        Device device,
+        InventoryLocalAccounts localAccounts,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        // Replace-wholesale, same pattern as network interfaces.
+        var existingUsers = await _dbContext.DeviceLocalUsers
+            .Where(u => u.DeviceId == device.Id)
+            .ToListAsync(cancellationToken);
+        _dbContext.DeviceLocalUsers.RemoveRange(existingUsers);
+
+        foreach (var user in (localAccounts.Users ?? []).Take(MaxLocalUsers))
+        {
+            _dbContext.DeviceLocalUsers.Add(new DeviceLocalUser(
+                device.Id,
+                user.Sid,
+                user.Name,
+                user.FullName,
+                user.Description,
+                user.Enabled,
+                user.PasswordRequired,
+                user.PasswordExpires,
+                user.LastLogon,
+                user.IsLocalAdministrator,
+                now));
+        }
+
+        var existingGroups = await _dbContext.DeviceLocalGroups
+            .Where(g => g.DeviceId == device.Id)
+            .ToListAsync(cancellationToken);
+        _dbContext.DeviceLocalGroups.RemoveRange(existingGroups);
+
+        foreach (var group in (localAccounts.Groups ?? []).Take(MaxLocalGroups))
+        {
+            var members = (group.Members ?? []).Take(MaxGroupMembers)
+                .Select(m => new
+                {
+                    name = Truncate(m.Name, 256),
+                    sid = Truncate(m.Sid, 184),
+                    memberType = Truncate(m.MemberType, 16),
+                })
+                .ToArray();
+
+            _dbContext.DeviceLocalGroups.Add(new DeviceLocalGroup(
+                device.Id,
+                group.Sid,
+                group.Name,
+                group.Description,
+                JsonSerializer.Serialize(members, JsonOptions),
+                members.Length,
+                now));
+        }
     }
 
     private static string? Truncate(string? value, int maxLength)

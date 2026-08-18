@@ -159,4 +159,12 @@ are reverted automatically.
   passwords, opaque revocable sessions (HttpOnly cookie + Bearer), permission
   policies on every admin endpoint, denial auditing, lockout and login rate
   limiting, operator bootstrap command, dashboard sign-in. See ADR-0009.
-- Phase 4 (local Windows user/group management): next.
+- **Phase 4 (local user/group management) — READ SIDE complete.** Local
+  users/groups/membership collected via System.DirectoryServices.AccountManagement
+  (SID-keyed, admin flag via well-known S-1-5-32-544 membership), ingested with
+  the inventory snapshot, Users/Groups tabs on the device page.
+  **Mutations (create/disable/reset password/change type/membership) are NOT
+  implemented**: they are gated on an elevated Windows test environment and the
+  typed-task delivery channel, per the phase's own safety requirements. The
+  read/write split is structural — `ILocalAccountsCollector` is read-only and a
+  separate mutation abstraction will be introduced with its own tests.

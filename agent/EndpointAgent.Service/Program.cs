@@ -64,6 +64,7 @@ public static class Program
             // Windows implementations of the platform-neutral abstractions.
             builder.Services.AddSingleton<ISystemInfoProvider, WindowsSystemInfoProvider>();
             builder.Services.AddSingleton<IDeviceCredentialStore, DpapiDeviceCredentialStore>();
+            builder.Services.AddSingleton<ILocalAccountsCollector, WindowsLocalAccountsCollector>();
             builder.Services.AddSingleton<IInventoryCollector, WindowsInventoryCollector>();
 
             builder.Services.AddHttpClient<IAgentApiClient, AgentApiClient>((serviceProvider, client) =>

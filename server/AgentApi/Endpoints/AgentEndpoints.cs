@@ -224,7 +224,71 @@ public static class AgentEndpoints
             return "Logged-on user must be at most 256 characters.";
         }
 
+        if (report.LocalAccounts is { } accounts)
+        {
+            if (accounts.Users is { Count: > Infrastructure.Devices.DeviceInventoryService.MaxLocalUsers })
+            {
+                return "Too many local users.";
+            }
+
+            if (accounts.Groups is { Count: > Infrastructure.Devices.DeviceInventoryService.MaxLocalGroups })
+            {
+                return "Too many local groups.";
+            }
+
+            foreach (var user in accounts.Users ?? [])
+            {
+                if (!IsValidSid(user.Sid) || string.IsNullOrWhiteSpace(user.Name) || user.Name.Length > 256
+                    || user.FullName is { Length: > 256 } || user.Description is { Length: > 512 })
+                {
+                    return "A local user entry is malformed.";
+                }
+            }
+
+            foreach (var group in accounts.Groups ?? [])
+            {
+                if (!IsValidSid(group.Sid) || string.IsNullOrWhiteSpace(group.Name) || group.Name.Length > 256
+                    || group.Description is { Length: > 512 })
+                {
+                    return "A local group entry is malformed.";
+                }
+
+                if (group.Members is { Count: > Infrastructure.Devices.DeviceInventoryService.MaxGroupMembers })
+                {
+                    return "A local group reports too many members.";
+                }
+
+                foreach (var member in group.Members ?? [])
+                {
+                    if (string.IsNullOrWhiteSpace(member.Name) || member.Name.Length > 256
+                        || (member.Sid is { } sid && !IsValidSid(sid)))
+                    {
+                        return "A group member entry is malformed.";
+                    }
+                }
+            }
+        }
+
         return null;
+    }
+
+    /// <summary>Structural SID check: "S-1-..." with digits and dashes, bounded length.</summary>
+    private static bool IsValidSid(string? sid)
+    {
+        if (sid is null || sid.Length is < 4 or > 184 || !sid.StartsWith("S-1-", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        foreach (var c in sid.AsSpan(2))
+        {
+            if (c is not ((>= '0' and <= '9') or '-'))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static string? ValidateEnrollRequest(EnrollRequest request)

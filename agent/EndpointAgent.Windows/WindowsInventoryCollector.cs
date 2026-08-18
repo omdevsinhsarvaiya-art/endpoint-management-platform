@@ -28,11 +28,15 @@ namespace EndpointAgent.Windows;
 [SupportedOSPlatform("windows")]
 public sealed class WindowsInventoryCollector(
     ISystemInfoProvider systemInfoProvider,
+    ILocalAccountsCollector localAccountsCollector,
     TimeProvider timeProvider,
     ILogger<WindowsInventoryCollector> logger) : IInventoryCollector
 {
     private readonly ISystemInfoProvider _systemInfoProvider = systemInfoProvider
         ?? throw new ArgumentNullException(nameof(systemInfoProvider));
+
+    private readonly ILocalAccountsCollector _localAccountsCollector = localAccountsCollector
+        ?? throw new ArgumentNullException(nameof(localAccountsCollector));
 
     private readonly TimeProvider _timeProvider = timeProvider
         ?? throw new ArgumentNullException(nameof(timeProvider));
@@ -40,7 +44,7 @@ public sealed class WindowsInventoryCollector(
     private readonly ILogger<WindowsInventoryCollector> _logger = logger
         ?? throw new ArgumentNullException(nameof(logger));
 
-    public ValueTask<InventoryReport> CollectAsync(CancellationToken cancellationToken = default)
+    public async ValueTask<InventoryReport> CollectAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -48,11 +52,24 @@ public sealed class WindowsInventoryCollector(
         var interfaces = CollectNetworkInterfaces();
         var loggedOnUser = CollectLoggedOnUser();
 
-        return ValueTask.FromResult(new InventoryReport(
+        InventoryLocalAccounts? localAccounts = null;
+        try
+        {
+            localAccounts = await _localAccountsCollector.CollectAsync(cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Fault isolation as everywhere else in this collector: a broken SAM
+            // enumeration must not lose the hardware/network snapshot.
+            _logger.LogWarning(ex, "Local accounts collection failed; omitting the section this snapshot.");
+        }
+
+        return new InventoryReport(
             hardware,
             interfaces,
             loggedOnUser,
-            _timeProvider.GetUtcNow()));
+            _timeProvider.GetUtcNow(),
+            localAccounts);
     }
 
     private InventoryHardware CollectHardware()

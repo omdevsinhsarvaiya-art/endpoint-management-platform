@@ -13,6 +13,7 @@ public sealed class WindowsInventoryCollectorTests
     private static WindowsInventoryCollector CreateCollector() =>
         new(
             new WindowsSystemInfoProvider(NullLogger<WindowsSystemInfoProvider>.Instance),
+            new WindowsLocalAccountsCollector(NullLogger<WindowsLocalAccountsCollector>.Instance),
             TimeProvider.System,
             NullLogger<WindowsInventoryCollector>.Instance);
 

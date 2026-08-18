@@ -96,6 +96,18 @@ public static class DeviceEndpoints
             .OrderBy(n => n.Name)
             .ToListAsync(cancellationToken);
 
+        var localUsers = await dbContext.DeviceLocalUsers
+            .AsNoTracking()
+            .Where(u => u.DeviceId == deviceId)
+            .OrderBy(u => u.Name)
+            .ToListAsync(cancellationToken);
+
+        var localGroups = await dbContext.DeviceLocalGroups
+            .AsNoTracking()
+            .Where(g => g.DeviceId == deviceId)
+            .OrderBy(g => g.Name)
+            .ToListAsync(cancellationToken);
+
         return Results.Ok(new
         {
             device.Id,
@@ -133,6 +145,27 @@ public static class DeviceEndpoints
                     ? null
                     : (JsonElement?)JsonSerializer.Deserialize<JsonElement>(n.IpAddressesJson),
                 n.IsUp,
+            }),
+            LocalUsers = localUsers.Select(u => new
+            {
+                u.Sid,
+                u.Name,
+                u.FullName,
+                u.Description,
+                u.Enabled,
+                u.PasswordRequired,
+                u.PasswordExpires,
+                u.LastLogon,
+                u.IsLocalAdministrator,
+            }),
+            LocalGroups = localGroups.Select(g => new
+            {
+                g.Sid,
+                g.Name,
+                g.Description,
+                g.MemberCount,
+                IsAdministrators = g.IsAdministratorsGroup,
+                Members = (JsonElement?)JsonSerializer.Deserialize<JsonElement>(g.MembersJson),
             }),
         });
     }

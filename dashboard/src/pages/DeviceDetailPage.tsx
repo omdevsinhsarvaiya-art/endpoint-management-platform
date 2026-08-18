@@ -6,7 +6,7 @@ import {
   type DeviceDetail,
 } from '../api/client'
 
-type Tab = 'overview' | 'hardware' | 'network'
+type Tab = 'overview' | 'hardware' | 'network' | 'users' | 'groups'
 
 function formatBytes(bytes: number | null): string {
   if (bytes == null) return '—'
@@ -70,6 +70,8 @@ export function DeviceDetailPage() {
     { key: 'overview', label: 'Overview' },
     { key: 'hardware', label: 'Hardware' },
     { key: 'network', label: 'Network' },
+    { key: 'users', label: `Users${device.localUsers.length ? ` (${device.localUsers.length})` : ''}` },
+    { key: 'groups', label: `Groups${device.localGroups.length ? ` (${device.localGroups.length})` : ''}` },
   ]
 
   return (
@@ -201,6 +203,95 @@ export function DeviceDetailPage() {
             </>
           )}
         </>
+      )}
+
+      {tab === 'users' && (
+        <div className="card">
+          {!device.localUsers.length && (
+            <div className="empty-state">
+              <div className="title">No local user inventory yet</div>
+              <div>Use "Refresh inventory" and wait for the agent's next heartbeat.</div>
+            </div>
+          )}
+          {!!device.localUsers.length && (
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Account</th><th>Status</th><th>Type</th>
+                  <th>Password</th><th>Last logon</th><th>Description</th>
+                </tr>
+              </thead>
+              <tbody>
+                {device.localUsers.map((u) => (
+                  <tr key={u.sid}>
+                    <td>
+                      <div style={{ fontWeight: 600 }}>{u.name}</div>
+                      {u.fullName && (
+                        <div style={{ color: 'var(--color-text-muted)', fontSize: 12 }}>{u.fullName}</div>
+                      )}
+                    </td>
+                    <td>
+                      {u.enabled
+                        ? <span className="badge ok">Enabled</span>
+                        : <span className="badge neutral">Disabled</span>}
+                    </td>
+                    <td>
+                      {u.isLocalAdministrator
+                        ? <span className="badge warn">Administrator</span>
+                        : <span className="badge neutral">Standard</span>}
+                    </td>
+                    <td style={{ fontSize: 12.5 }}>
+                      {u.passwordRequired ? 'required' : 'not required'}
+                      {' · '}
+                      {u.passwordExpires ? 'expires' : 'never expires'}
+                    </td>
+                    <td>{u.lastLogon ? new Date(u.lastLogon).toLocaleString() : '—'}</td>
+                    <td style={{ color: 'var(--color-text-muted)', fontSize: 12.5 }}>{u.description ?? ''}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {tab === 'groups' && (
+        <div className="card">
+          {!device.localGroups.length && (
+            <div className="empty-state">
+              <div className="title">No local group inventory yet</div>
+              <div>Use "Refresh inventory" and wait for the agent's next heartbeat.</div>
+            </div>
+          )}
+          {!!device.localGroups.length && (
+            <table className="table">
+              <thead>
+                <tr><th>Group</th><th>Members</th><th>Membership</th></tr>
+              </thead>
+              <tbody>
+                {device.localGroups.map((g) => (
+                  <tr key={g.sid}>
+                    <td>
+                      <div style={{ fontWeight: 600 }}>
+                        {g.name}{' '}
+                        {g.isAdministrators && <span className="badge warn">high impact</span>}
+                      </div>
+                      {g.description && (
+                        <div style={{ color: 'var(--color-text-muted)', fontSize: 12 }}>{g.description}</div>
+                      )}
+                    </td>
+                    <td>{g.memberCount}</td>
+                    <td style={{ fontSize: 12.5 }}>
+                      {g.members?.length
+                        ? g.members.map((m) => m.name).join(', ')
+                        : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
       )}
 
       {tab === 'network' && (

@@ -6,11 +6,46 @@ namespace EndpointPlatform.Contracts.Agent;
 /// wholesale — no diffing on the wire, which keeps the agent stateless about what
 /// the server already knows.
 /// </summary>
+/// <param name="LocalAccounts">
+/// Windows local users/groups/membership. Nullable: agents predating this
+/// section omit it, and the server keeps whatever it last knew.
+/// </param>
 public sealed record InventoryReport(
     InventoryHardware Hardware,
     IReadOnlyList<InventoryNetworkInterface> NetworkInterfaces,
     string? LoggedOnUser,
-    DateTimeOffset CollectedAt);
+    DateTimeOffset CollectedAt,
+    InventoryLocalAccounts? LocalAccounts = null);
+
+/// <summary>Windows local accounts snapshot.</summary>
+public sealed record InventoryLocalAccounts(
+    IReadOnlyList<InventoryLocalUser> Users,
+    IReadOnlyList<InventoryLocalGroup> Groups);
+
+/// <summary>
+/// One local user. The SID is the stable identity — names are renameable.
+/// No credential material of any kind is collected or carried.
+/// </summary>
+public sealed record InventoryLocalUser(
+    string Sid,
+    string Name,
+    string? FullName,
+    string? Description,
+    bool Enabled,
+    bool PasswordRequired,
+    bool PasswordExpires,
+    DateTimeOffset? LastLogon,
+    bool IsLocalAdministrator);
+
+/// <summary>One local group with its member account names/SIDs.</summary>
+public sealed record InventoryLocalGroup(
+    string Sid,
+    string Name,
+    string? Description,
+    IReadOnlyList<InventoryGroupMember> Members);
+
+/// <param name="Sid">Null for members whose SID cannot be resolved (orphaned domain members).</param>
+public sealed record InventoryGroupMember(string Name, string? Sid, string MemberType);
 
 /// <summary>Hardware section of an inventory report. Unknown values are null, never guessed.</summary>
 public sealed record InventoryHardware(

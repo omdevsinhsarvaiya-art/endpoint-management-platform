@@ -139,6 +139,33 @@ export interface DeviceNetworkInterface {
   isUp: boolean
 }
 
+export interface DeviceLocalUser {
+  sid: string
+  name: string
+  fullName: string | null
+  description: string | null
+  enabled: boolean
+  passwordRequired: boolean
+  passwordExpires: boolean
+  lastLogon: string | null
+  isLocalAdministrator: boolean
+}
+
+export interface DeviceLocalGroupMember {
+  name: string
+  sid: string | null
+  memberType: string
+}
+
+export interface DeviceLocalGroup {
+  sid: string
+  name: string
+  description: string | null
+  memberCount: number
+  isAdministrators: boolean
+  members: DeviceLocalGroupMember[] | null
+}
+
 export interface DeviceDetail {
   id: string
   hostname: string
@@ -153,6 +180,8 @@ export interface DeviceDetail {
   inventoryRefreshPending: boolean
   hardware: DeviceHardware | null
   networkInterfaces: DeviceNetworkInterface[]
+  localUsers: DeviceLocalUser[]
+  localGroups: DeviceLocalGroup[]
 }
 
 export function getDevice(deviceId: string): Promise<DeviceDetail> {
