@@ -19,6 +19,7 @@ public static class PolicyEndpoints
         group.MapGet("/", ListAsync).WithName("ListPolicies").RequirePermission(Permissions.Policy.View);
         group.MapPost("/", CreateAsync).WithName("CreatePolicy").RequirePermission(Permissions.Policy.Create);
         group.MapPost("/{policyId:guid}/assign", AssignAsync).WithName("AssignPolicy").RequirePermission(Permissions.Policy.Assign);
+        group.MapPost("/{policyId:guid}/assign-group", AssignGroupAsync).WithName("AssignPolicyToGroup").RequirePermission(Permissions.Policy.Assign);
         group.MapGet("/{policyId:guid}/compliance", ComplianceAsync).WithName("PolicyCompliance").RequirePermission(Permissions.Policy.View);
 
         return endpoints;
@@ -95,6 +96,35 @@ public static class PolicyEndpoints
         var ok = await policyService.AssignToDeviceAsync(
             actor.OrganizationId, policyId, request.DeviceId, actor.UserId, actor.Email, cancellationToken);
         return ok ? Results.NoContent() : Results.NotFound();
+    }
+
+    public sealed record AssignGroupRequest(Guid GroupId);
+
+    private static async Task<IResult> AssignGroupAsync(
+        Guid policyId, [FromBody] AssignGroupRequest request, HttpContext httpContext,
+        EndpointPlatformDbContext dbContext, PolicyService policyService, CancellationToken cancellationToken)
+    {
+        var actor = AdminActor.Required(httpContext.User);
+        var policy = await dbContext.Policies
+            .SingleOrDefaultAsync(p => p.Id == policyId && p.OrganizationId == actor.OrganizationId, cancellationToken);
+        var groupExists = await dbContext.DeviceGroups
+            .AnyAsync(g => g.Id == request.GroupId && g.OrganizationId == actor.OrganizationId, cancellationToken);
+        if (policy is null || !groupExists)
+        {
+            return Results.NotFound();
+        }
+
+        var already = await dbContext.PolicyAssignments.AnyAsync(
+            x => x.PolicyId == policyId && x.TargetType == PolicyAssignmentTarget.Group && x.TargetId == request.GroupId,
+            cancellationToken);
+        if (!already)
+        {
+            dbContext.PolicyAssignments.Add(new PolicyAssignment(
+                actor.OrganizationId, policyId, PolicyAssignmentTarget.Group, request.GroupId));
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
+
+        return Results.NoContent();
     }
 
     private static async Task<IResult> ComplianceAsync(

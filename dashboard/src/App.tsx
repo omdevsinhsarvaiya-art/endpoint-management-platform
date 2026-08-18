@@ -5,6 +5,7 @@ import { DashboardPage } from './pages/DashboardPage'
 import { DeviceDetailPage } from './pages/DeviceDetailPage'
 import { DevicesPage } from './pages/DevicesPage'
 import { SecurityPage } from './pages/SecurityPage'
+import { GroupsPage } from './pages/GroupsPage'
 import { PoliciesPage } from './pages/PoliciesPage'
 import { SoftwarePage } from './pages/SoftwarePage'
 import { LoginPage } from './pages/LoginPage'
@@ -40,10 +41,7 @@ function AuthGate() {
             path="users"
             element={<PlaceholderPage title="Users" phase="Phase 4 (local user management)" />}
           />
-          <Route
-            path="groups"
-            element={<PlaceholderPage title="Groups" phase="Phase 4 (local group management)" />}
-          />
+          <Route path="groups" element={<GroupsPage />} />
           <Route path="software" element={<SoftwarePage />} />
           <Route path="policies" element={<PoliciesPage />} />
           <Route

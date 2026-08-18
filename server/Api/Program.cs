@@ -158,6 +158,7 @@ public sealed class Program
             app.MapSoftwareEndpoints();
             app.MapSecurityEndpoints();
             app.MapPolicyEndpoints();
+            app.MapGroupEndpoints();
 
             app.MapGet("/", () => new ServiceInfoResponse(
                     Service: "admin-api",

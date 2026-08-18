@@ -359,6 +359,23 @@ export async function assignPolicy(policyId: string, deviceId: string): Promise<
   if (!r.ok) throw new ApiError(r.status, 'Assign policy failed', r.headers.get('X-Correlation-Id'))
 }
 
+export interface GroupRow { id: string; name: string; description: string; type: string; memberCount: number }
+export interface GroupMember { id: string; hostname: string; status: string }
+export function getGroups(): Promise<GroupRow[]> { return request<GroupRow[]>('/admin/v1/groups') }
+export function getGroupMembers(groupId: string): Promise<GroupMember[]> {
+  return request<GroupMember[]>(`/admin/v1/groups/${encodeURIComponent(groupId)}/members`)
+}
+export async function createGroup(name: string, description: string): Promise<void> {
+  const r = await fetch('/api/admin/v1/groups', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }, body: JSON.stringify({ name, description }) })
+  if (r.status === 401) sessionExpiredEvent.dispatchEvent(new Event('expired'))
+  if (!r.ok) throw new ApiError(r.status, 'Create group failed', r.headers.get('X-Correlation-Id'))
+}
+export async function addGroupMember(groupId: string, deviceId: string): Promise<void> {
+  const r = await fetch(`/api/admin/v1/groups/${encodeURIComponent(groupId)}/members`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }, body: JSON.stringify({ deviceId }) })
+  if (r.status === 401) sessionExpiredEvent.dispatchEvent(new Event('expired'))
+  if (!r.ok) throw new ApiError(r.status, 'Add member failed', r.headers.get('X-Correlation-Id'))
+}
+
 export function getDevice(deviceId: string): Promise<DeviceDetail> {
   return request<DeviceDetail>(`/admin/v1/devices/${encodeURIComponent(deviceId)}`)
 }

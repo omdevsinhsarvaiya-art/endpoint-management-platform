@@ -200,3 +200,8 @@ are reverted automatically.
   with an honest deviation, audited. (EF key-generation fix: child entities
   added via a tracked parent's navigation now use ValueGeneratedNever so they
   insert rather than mis-update.)
+- **Phase 13 (device groups): complete.** Static device groups with audited
+  membership; policies can target a group, and GetEffectivePolicies resolves a
+  device's policies through its group memberships (verified: group-targeted
+  policy reaches members only, and leaves a device when it is removed). Groups
+  dashboard page with membership management.

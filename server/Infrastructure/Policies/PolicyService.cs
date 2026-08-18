@@ -103,11 +103,18 @@ public sealed class PolicyService(
     public async Task<IReadOnlyList<EffectivePolicy>> GetEffectivePoliciesAsync(
         Guid deviceId, CancellationToken cancellationToken = default)
     {
-        // Direct device assignments. Group targeting is resolved in Phase 13, which
-        // extends this query to include the device's group memberships.
+        // Direct device assignments plus assignments to any group the device is in.
+        var groupIds = await _dbContext.DeviceGroupMemberships
+            .Where(m => m.DeviceId == deviceId)
+            .Select(m => m.GroupId)
+            .ToListAsync(cancellationToken);
+
         var policyIds = await _dbContext.PolicyAssignments
-            .Where(a => a.TargetType == PolicyAssignmentTarget.Device && a.TargetId == deviceId)
+            .Where(a =>
+                (a.TargetType == PolicyAssignmentTarget.Device && a.TargetId == deviceId)
+                || (a.TargetType == PolicyAssignmentTarget.Group && groupIds.Contains(a.TargetId)))
             .Select(a => a.PolicyId)
+            .Distinct()
             .ToListAsync(cancellationToken);
 
         if (policyIds.Count == 0)
