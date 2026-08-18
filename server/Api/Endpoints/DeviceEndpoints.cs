@@ -190,6 +190,10 @@ public static class DeviceEndpoints
             .Select(sw => new { sw.Name, sw.Version, sw.Publisher, sw.InstallDate, sw.Architecture })
             .ToListAsync(cancellationToken);
 
+        var posture = await dbContext.DeviceSecurityPosture
+            .AsNoTracking()
+            .SingleOrDefaultAsync(p => p.DeviceId == deviceId, cancellationToken);
+
         return Results.Ok(new
         {
             device.Id,
@@ -250,6 +254,23 @@ public static class DeviceEndpoints
                 Members = (JsonElement?)JsonSerializer.Deserialize<JsonElement>(g.MembersJson),
             }),
             Software = software,
+            SecurityPosture = posture is null ? null : new
+            {
+                posture.DefenderAntivirusEnabled,
+                posture.DefenderRealtimeProtectionEnabled,
+                posture.DefenderSignatureAgeDays,
+                posture.FirewallDomainEnabled,
+                posture.FirewallPrivateEnabled,
+                posture.FirewallPublicEnabled,
+                posture.SecureBootEnabled,
+                posture.TpmPresent,
+                posture.TpmEnabled,
+                posture.TpmSpecVersion,
+                posture.BitLockerSystemDriveStatus,
+                posture.LocalAdministratorCount,
+                posture.CollectedAt,
+                ComplianceScore = posture.ComplianceScore(),
+            },
         });
     }
 

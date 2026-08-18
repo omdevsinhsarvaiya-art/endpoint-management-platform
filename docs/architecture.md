@@ -178,3 +178,9 @@ are reverted automatically.
   Windows uninstall registry (read-only), ingested with the inventory snapshot,
   device Software tab plus a fleet-wide Software page (search, publisher filter,
   per-title install counts). Verified live with this laptop's 26 real titles.
+- **Phase 12 (security posture): complete.** Defender/firewall/Secure Boot/TPM/
+  BitLocker/local-admin-count read (read-only WMI + registry), null = "unknown"
+  (never a false negative), compliance score over readable checks only, device
+  Security tab + fleet Security page with score distribution. Verified live:
+  this laptop scores 100% on readable checks; TPM/BitLocker correctly "unknown"
+  unelevated.

@@ -183,6 +183,7 @@ export interface DeviceDetail {
   localUsers: DeviceLocalUser[]
   localGroups: DeviceLocalGroup[]
   software: DeviceSoftwareItem[]
+  securityPosture: SecurityPosture | null
 }
 
 export interface DeviceTaskItem {
@@ -244,6 +245,48 @@ export function getSoftwareTitles(page: number, pageSize: number, search: string
 }
 export function getSoftwarePublishers(): Promise<string[]> {
   return request<string[]>('/admin/v1/software/publishers')
+}
+
+export interface SecurityPosture {
+  defenderAntivirusEnabled: boolean | null
+  defenderRealtimeProtectionEnabled: boolean | null
+  defenderSignatureAgeDays: number | null
+  firewallDomainEnabled: boolean | null
+  firewallPrivateEnabled: boolean | null
+  firewallPublicEnabled: boolean | null
+  secureBootEnabled: boolean | null
+  tpmPresent: boolean | null
+  tpmEnabled: boolean | null
+  tpmSpecVersion: string | null
+  bitLockerSystemDriveStatus: string | null
+  localAdministratorCount: number | null
+  collectedAt: string
+  complianceScore: number | null
+}
+export interface DeviceSecuritySummary {
+  deviceId: string
+  hostname: string
+  complianceScore: number | null
+  defenderEnabled: boolean | null
+  firewallEnabled: boolean | null
+  secureBootEnabled: boolean | null
+  tpmEnabled: boolean | null
+  bitLockerSystemDriveStatus: string | null
+  localAdministratorCount: number | null
+  collectedAt: string
+}
+export interface SecurityOverview {
+  summary: {
+    devicesReporting: number
+    averageScore: number | null
+    healthy: number
+    needsAttention: number
+    critical: number
+  }
+  devices: DeviceSecuritySummary[]
+}
+export function getSecurityOverview(): Promise<SecurityOverview> {
+  return request<SecurityOverview>('/admin/v1/security/overview')
 }
 
 export function getDevice(deviceId: string): Promise<DeviceDetail> {

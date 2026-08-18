@@ -10,7 +10,7 @@ import {
   type DeviceTaskItem,
 } from '../api/client'
 
-type Tab = 'overview' | 'hardware' | 'network' | 'users' | 'groups' | 'software' | 'actions' | 'tasks'
+type Tab = 'overview' | 'hardware' | 'network' | 'users' | 'groups' | 'software' | 'security' | 'actions' | 'tasks'
 
 function formatBytes(bytes: number | null): string {
   if (bytes == null) return '—'
@@ -98,6 +98,7 @@ export function DeviceDetailPage() {
     { key: 'users', label: `Users${device.localUsers.length ? ` (${device.localUsers.length})` : ''}` },
     { key: 'groups', label: `Groups${device.localGroups.length ? ` (${device.localGroups.length})` : ''}` },
     { key: 'software', label: `Software${device.software.length ? ` (${device.software.length})` : ''}` },
+    { key: 'security', label: 'Security' },
     { key: 'actions', label: 'Actions' },
     { key: 'tasks', label: `Tasks${tasks.length ? ` (${tasks.length})` : ''}` },
   ]
@@ -374,6 +375,58 @@ export function DeviceDetailPage() {
               </tbody>
             </table>
           )}
+        </div>
+      )}
+
+      {tab === 'security' && (
+        <div className="card">
+          {!device.securityPosture && (
+            <div className="empty-state">
+              <div className="title">No security posture yet</div>
+              <div>Use "Refresh inventory" and wait for the agent's next heartbeat. Some checks (BitLocker, TPM) require the agent to run elevated.</div>
+            </div>
+          )}
+          {device.securityPosture && (() => {
+            const p = device.securityPosture
+            const row = (label: string, v: boolean | null, extra?: string) => (
+              <tr>
+                <td style={{ color: 'var(--color-text-muted)', width: 260 }}>{label}</td>
+                <td>
+                  {v == null
+                    ? <span style={{ color: 'var(--color-text-muted)' }}>Unknown (agent may need elevation)</span>
+                    : v ? <span className="badge ok">Pass</span> : <span className="badge crit">Fail</span>}
+                  {extra ? <span style={{ marginLeft: 8, color: 'var(--color-text-muted)', fontSize: 12.5 }}>{extra}</span> : null}
+                </td>
+              </tr>
+            )
+            return (
+              <>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
+                  <span style={{ fontSize: 15, fontWeight: 600 }}>Compliance score</span>
+                  {p.complianceScore == null
+                    ? <span className="badge neutral">Unknown</span>
+                    : <span className={p.complianceScore >= 80 ? 'badge ok' : p.complianceScore >= 50 ? 'badge warn' : 'badge crit'} style={{ fontSize: 15 }}>{p.complianceScore}%</span>}
+                </div>
+                <table className="table">
+                  <tbody>
+                    {row('Microsoft Defender antivirus', p.defenderAntivirusEnabled)}
+                    {row('Defender real-time protection', p.defenderRealtimeProtectionEnabled)}
+                    {row('Defender signatures fresh (≤7d)', p.defenderSignatureAgeDays == null ? null : p.defenderSignatureAgeDays <= 7, p.defenderSignatureAgeDays == null ? undefined : `${p.defenderSignatureAgeDays}d old`)}
+                    {row('Firewall (Domain)', p.firewallDomainEnabled)}
+                    {row('Firewall (Private)', p.firewallPrivateEnabled)}
+                    {row('Firewall (Public)', p.firewallPublicEnabled)}
+                    {row('Secure Boot', p.secureBootEnabled)}
+                    {row('TPM enabled', p.tpmEnabled, p.tpmSpecVersion ? `v${p.tpmSpecVersion}` : undefined)}
+                    {row('BitLocker (system drive)', p.bitLockerSystemDriveStatus == null ? null : p.bitLockerSystemDriveStatus === 'On', p.bitLockerSystemDriveStatus ?? undefined)}
+                    <tr>
+                      <td style={{ color: 'var(--color-text-muted)' }}>Local administrators</td>
+                      <td>{p.localAdministratorCount ?? '—'}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </>
+            )
+          })()}
         </div>
       )}
 

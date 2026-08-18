@@ -58,6 +58,8 @@ public sealed class EndpointPlatformDbContext(DbContextOptions<EndpointPlatformD
 
     public DbSet<DeviceSoftware> DeviceSoftware => Set<DeviceSoftware>();
 
+    public DbSet<DeviceSecurityPosture> DeviceSecurityPosture => Set<DeviceSecurityPosture>();
+
     public DbSet<DeviceTask> DeviceTasks => Set<DeviceTask>();
 
     public DbSet<EnrollmentToken> EnrollmentTokens => Set<EnrollmentToken>();

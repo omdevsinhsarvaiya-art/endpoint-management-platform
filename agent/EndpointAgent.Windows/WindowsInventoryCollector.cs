@@ -30,6 +30,7 @@ public sealed class WindowsInventoryCollector(
     ISystemInfoProvider systemInfoProvider,
     ILocalAccountsCollector localAccountsCollector,
     ISoftwareCollector softwareCollector,
+    ISecurityPostureCollector securityPostureCollector,
     TimeProvider timeProvider,
     ILogger<WindowsInventoryCollector> logger) : IInventoryCollector
 {
@@ -41,6 +42,9 @@ public sealed class WindowsInventoryCollector(
 
     private readonly ISoftwareCollector _softwareCollector = softwareCollector
         ?? throw new ArgumentNullException(nameof(softwareCollector));
+
+    private readonly ISecurityPostureCollector _securityPostureCollector = securityPostureCollector
+        ?? throw new ArgumentNullException(nameof(securityPostureCollector));
 
     private readonly TimeProvider _timeProvider = timeProvider
         ?? throw new ArgumentNullException(nameof(timeProvider));
@@ -78,13 +82,24 @@ public sealed class WindowsInventoryCollector(
             _logger.LogWarning(ex, "Software collection failed; omitting the section this snapshot.");
         }
 
+        InventorySecurityPosture? posture = null;
+        try
+        {
+            posture = await _securityPostureCollector.CollectAsync(cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Security posture collection failed; omitting the section this snapshot.");
+        }
+
         return new InventoryReport(
             hardware,
             interfaces,
             loggedOnUser,
             _timeProvider.GetUtcNow(),
             localAccounts,
-            software);
+            software,
+            posture);
     }
 
     private InventoryHardware CollectHardware()

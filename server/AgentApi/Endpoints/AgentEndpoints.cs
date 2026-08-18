@@ -316,6 +316,18 @@ public static class AgentEndpoints
             }
         }
 
+        if (report.SecurityPosture is { } posture)
+        {
+            // Bounds guard against a hostile agent sending absurd values.
+            if (posture.DefenderSignatureAgeDays is < 0 or > 3650
+                || posture.LocalAdministratorCount is < 0 or > 100000
+                || posture.TpmSpecVersion is { Length: > 32 }
+                || posture.BitLockerSystemDriveStatus is { Length: > 32 })
+            {
+                return "Security posture values are out of range.";
+            }
+        }
+
         if (report.LocalAccounts is { } accounts)
         {
             if (accounts.Users is { Count: > Infrastructure.Devices.DeviceInventoryService.MaxLocalUsers })

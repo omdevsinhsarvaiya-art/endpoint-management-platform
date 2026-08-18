@@ -16,7 +16,27 @@ public sealed record InventoryReport(
     string? LoggedOnUser,
     DateTimeOffset CollectedAt,
     InventoryLocalAccounts? LocalAccounts = null,
-    IReadOnlyList<InventorySoftware>? Software = null);
+    IReadOnlyList<InventorySoftware>? Software = null,
+    InventorySecurityPosture? SecurityPosture = null);
+
+/// <summary>
+/// Security posture snapshot. Every field is nullable: a value the agent could not
+/// read (often because it needs elevation the agent lacks) is reported as null, not
+/// guessed. The server treats null as "unknown", distinct from false.
+/// </summary>
+public sealed record InventorySecurityPosture(
+    bool? DefenderAntivirusEnabled,
+    bool? DefenderRealtimeProtectionEnabled,
+    int? DefenderSignatureAgeDays,
+    bool? FirewallDomainEnabled,
+    bool? FirewallPrivateEnabled,
+    bool? FirewallPublicEnabled,
+    bool? SecureBootEnabled,
+    bool? TpmPresent,
+    bool? TpmEnabled,
+    string? TpmSpecVersion,
+    string? BitLockerSystemDriveStatus,
+    int? LocalAdministratorCount);
 
 /// <summary>One installed application, read from the Windows uninstall registry.</summary>
 /// <param name="Name">Display name (required).</param>

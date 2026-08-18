@@ -4,6 +4,7 @@ import { AppShell } from './components/AppShell'
 import { DashboardPage } from './pages/DashboardPage'
 import { DeviceDetailPage } from './pages/DeviceDetailPage'
 import { DevicesPage } from './pages/DevicesPage'
+import { SecurityPage } from './pages/SecurityPage'
 import { SoftwarePage } from './pages/SoftwarePage'
 import { LoginPage } from './pages/LoginPage'
 import { PlaceholderPage } from './pages/PlaceholderPage'
@@ -51,10 +52,7 @@ function AuthGate() {
             path="updates"
             element={<PlaceholderPage title="Updates" phase="Phase 8 (Windows Update visibility)" />}
           />
-          <Route
-            path="security"
-            element={<PlaceholderPage title="Security" phase="Phase 12 (security posture)" />}
-          />
+          <Route path="security" element={<SecurityPage />} />
           <Route
             path="tasks"
             element={<PlaceholderPage title="Tasks" phase="Phase 10 (approved task system)" />}

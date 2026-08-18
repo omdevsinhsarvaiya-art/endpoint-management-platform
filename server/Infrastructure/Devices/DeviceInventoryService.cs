@@ -120,6 +120,11 @@ public sealed class DeviceInventoryService(
             await ApplySoftwareAsync(device, software, now, cancellationToken);
         }
 
+        if (report.SecurityPosture is { } posture)
+        {
+            await ApplySecurityPostureAsync(device, posture, now, cancellationToken);
+        }
+
         device.RecordInventory(report.LoggedOnUser, now);
 
         await _dbContext.SaveChangesAsync(cancellationToken);
@@ -216,6 +221,28 @@ public sealed class DeviceInventoryService(
                 Truncate(app.Architecture, 16),
                 now));
         }
+    }
+
+    private async Task ApplySecurityPostureAsync(
+        Device device,
+        InventorySecurityPosture posture,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var row = await _dbContext.DeviceSecurityPosture
+            .SingleOrDefaultAsync(p => p.DeviceId == device.Id, cancellationToken);
+
+        if (row is null)
+        {
+            row = new DeviceSecurityPosture(device.Id);
+            _dbContext.DeviceSecurityPosture.Add(row);
+        }
+
+        row.Apply(
+            posture.DefenderAntivirusEnabled, posture.DefenderRealtimeProtectionEnabled, posture.DefenderSignatureAgeDays,
+            posture.FirewallDomainEnabled, posture.FirewallPrivateEnabled, posture.FirewallPublicEnabled,
+            posture.SecureBootEnabled, posture.TpmPresent, posture.TpmEnabled, posture.TpmSpecVersion,
+            posture.BitLockerSystemDriveStatus, posture.LocalAdministratorCount, now);
     }
 
     private static string? Truncate(string? value, int maxLength)
