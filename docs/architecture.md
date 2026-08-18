@@ -178,6 +178,16 @@ are reverted automatically.
   Windows uninstall registry (read-only), ingested with the inventory snapshot,
   device Software tab plus a fleet-wide Software page (search, publisher filter,
   per-title install counts). Verified live with this laptop's 26 real titles.
+- **Phase 8 (Windows Update visibility): complete.** Update history and
+  reboot-pending state read via the Windows Update Agent (WUA) COM API
+  (late-bound, no interop assembly) plus the reboot-pending registry keys -
+  read-only, offline (local history store, never an online scan), no shell
+  (ADR-0005). Ingested with the inventory snapshot (replace-wholesale, capped
+  at 200 entries); failed-update count derived from Failed/Aborted results.
+  Device Updates tab + fleet Updates page (reboot-pending and failed-update
+  rollups). Verified live: this laptop's 26 real update-history entries
+  (KB5121003, Defender intelligence updates, WindowsAppRuntime), reboot not
+  pending, 2 genuine failed installs correctly counted.
 - **Phase 12 (security posture): complete.** Defender/firewall/Secure Boot/TPM/
   BitLocker/local-admin-count read (read-only WMI + registry), null = "unknown"
   (never a false negative), compliance score over readable checks only, device

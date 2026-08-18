@@ -250,6 +250,18 @@ public static class DeviceEndpoints
             .AsNoTracking()
             .SingleOrDefaultAsync(p => p.DeviceId == deviceId, cancellationToken);
 
+        var updateStatus = await dbContext.DeviceUpdateStatus
+            .AsNoTracking()
+            .SingleOrDefaultAsync(u => u.DeviceId == deviceId, cancellationToken);
+
+        var updateHistory = await dbContext.DeviceUpdateHistory
+            .AsNoTracking()
+            .Where(h => h.DeviceId == deviceId)
+            .OrderByDescending(h => h.Date)
+            .Take(100)
+            .Select(h => new { h.Title, h.Date, h.Operation, h.Result })
+            .ToListAsync(cancellationToken);
+
         var services = await dbContext.DeviceServices
             .AsNoTracking()
             .Where(sv => sv.DeviceId == deviceId)
@@ -326,6 +338,13 @@ public static class DeviceEndpoints
             Software = software,
             Services = services,
             Processes = processes,
+            WindowsUpdate = updateStatus is null ? null : new
+            {
+                updateStatus.RebootRequired,
+                updateStatus.FailedUpdateCount,
+                updateStatus.CollectedAt,
+                History = updateHistory,
+            },
             SecurityPosture = posture is null ? null : new
             {
                 posture.DefenderAntivirusEnabled,

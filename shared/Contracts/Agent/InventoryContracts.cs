@@ -19,7 +19,24 @@ public sealed record InventoryReport(
     IReadOnlyList<InventorySoftware>? Software = null,
     InventorySecurityPosture? SecurityPosture = null,
     IReadOnlyList<InventoryService>? Services = null,
-    IReadOnlyList<InventoryProcess>? Processes = null);
+    IReadOnlyList<InventoryProcess>? Processes = null,
+    InventoryWindowsUpdate? WindowsUpdate = null);
+
+/// <summary>Windows Update status: recent history plus the reboot-required flag.</summary>
+public sealed record InventoryWindowsUpdate(
+    bool RebootRequired,
+    IReadOnlyList<InventoryUpdateHistoryEntry> History);
+
+/// <summary>One entry from the Windows Update history.</summary>
+/// <param name="Title">Update title (KB / product).</param>
+/// <param name="Date">When the operation ran (UTC).</param>
+/// <param name="Operation">"Installation", "Uninstallation" or "Other".</param>
+/// <param name="Result">"Succeeded", "SucceededWithErrors", "Failed", "Aborted" or "InProgress".</param>
+public sealed record InventoryUpdateHistoryEntry(
+    string Title,
+    DateTimeOffset? Date,
+    string Operation,
+    string Result);
 
 /// <summary>One Windows service, as reported by the agent.</summary>
 public sealed record InventoryService(

@@ -32,6 +32,7 @@ public sealed class WindowsInventoryCollector(
     ISoftwareCollector softwareCollector,
     ISecurityPostureCollector securityPostureCollector,
     IServiceProcessCollector serviceProcessCollector,
+    IWindowsUpdateCollector windowsUpdateCollector,
     TimeProvider timeProvider,
     ILogger<WindowsInventoryCollector> logger) : IInventoryCollector
 {
@@ -49,6 +50,9 @@ public sealed class WindowsInventoryCollector(
 
     private readonly IServiceProcessCollector _serviceProcessCollector = serviceProcessCollector
         ?? throw new ArgumentNullException(nameof(serviceProcessCollector));
+
+    private readonly IWindowsUpdateCollector _windowsUpdateCollector = windowsUpdateCollector
+        ?? throw new ArgumentNullException(nameof(windowsUpdateCollector));
 
     /// <summary>Cap on the process snapshot carried with inventory.</summary>
     private const int MaxProcessesInInventory = 60;
@@ -111,6 +115,16 @@ public sealed class WindowsInventoryCollector(
             _logger.LogWarning(ex, "Service/process collection failed; omitting the section this snapshot.");
         }
 
+        InventoryWindowsUpdate? windowsUpdate = null;
+        try
+        {
+            windowsUpdate = await _windowsUpdateCollector.CollectAsync(cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Windows Update collection failed; omitting the section this snapshot.");
+        }
+
         return new InventoryReport(
             hardware,
             interfaces,
@@ -120,7 +134,8 @@ public sealed class WindowsInventoryCollector(
             software,
             posture,
             services,
-            processes);
+            processes,
+            windowsUpdate);
     }
 
     private InventoryHardware CollectHardware()

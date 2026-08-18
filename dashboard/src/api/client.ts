@@ -186,6 +186,20 @@ export interface DeviceDetail {
   securityPosture: SecurityPosture | null
   services: DeviceServiceRow[]
   processes: DeviceProcessRow[]
+  windowsUpdate: DeviceUpdateDetail | null
+}
+
+export interface DeviceUpdateHistoryRow {
+  title: string
+  date: string | null
+  operation: string
+  result: string
+}
+export interface DeviceUpdateDetail {
+  rebootRequired: boolean
+  failedUpdateCount: number
+  collectedAt: string
+  history: DeviceUpdateHistoryRow[]
 }
 
 export interface DeviceServiceRow {
@@ -447,4 +461,23 @@ export function getReadiness(): Promise<HealthReport> {
   return fetch('/api/health/ready', { headers: { Accept: 'application/json' } }).then(
     async (response) => (await response.json()) as HealthReport,
   )
+}
+
+export interface DeviceUpdateSummaryRow {
+  deviceId: string
+  hostname: string
+  rebootRequired: boolean
+  failedUpdateCount: number
+  collectedAt: string
+}
+export interface UpdateOverview {
+  summary: {
+    devicesReporting: number
+    rebootPending: number
+    withFailedUpdates: number
+  }
+  devices: DeviceUpdateSummaryRow[]
+}
+export function getUpdateOverview(): Promise<UpdateOverview> {
+  return request<UpdateOverview>('/admin/v1/updates/overview')
 }

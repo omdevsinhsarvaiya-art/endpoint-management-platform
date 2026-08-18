@@ -10,7 +10,7 @@ import {
   type DeviceTaskItem,
 } from '../api/client'
 
-type Tab = 'overview' | 'hardware' | 'network' | 'users' | 'groups' | 'software' | 'security' | 'services' | 'processes' | 'actions' | 'tasks'
+type Tab = 'overview' | 'hardware' | 'network' | 'users' | 'groups' | 'software' | 'security' | 'updates' | 'services' | 'processes' | 'actions' | 'tasks'
 
 function formatBytes(bytes: number | null): string {
   if (bytes == null) return '—'
@@ -99,6 +99,7 @@ export function DeviceDetailPage() {
     { key: 'groups', label: `Groups${device.localGroups.length ? ` (${device.localGroups.length})` : ''}` },
     { key: 'software', label: `Software${device.software.length ? ` (${device.software.length})` : ''}` },
     { key: 'security', label: 'Security' },
+    { key: 'updates', label: `Updates${device.windowsUpdate?.history.length ? ` (${device.windowsUpdate.history.length})` : ''}` },
     { key: 'services', label: `Services${device.services.length ? ` (${device.services.length})` : ''}` },
     { key: 'processes', label: `Processes${device.processes.length ? ` (${device.processes.length})` : ''}` },
     { key: 'actions', label: 'Actions' },
@@ -426,6 +427,60 @@ export function DeviceDetailPage() {
                     </tr>
                   </tbody>
                 </table>
+              </>
+            )
+          })()}
+        </div>
+      )}
+
+      {tab === 'updates' && (
+        <div className="card">
+          {!device.windowsUpdate && (
+            <div className="empty-state">
+              <div className="title">No update data yet</div>
+              <div>Refresh inventory and wait for the agent's next heartbeat. History is read from the local Windows Update store.</div>
+            </div>
+          )}
+          {device.windowsUpdate && (() => {
+            const u = device.windowsUpdate
+            return (
+              <>
+                <div style={{ display: 'flex', gap: 24, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
+                  <div>
+                    <span style={{ color: 'var(--color-text-muted)', marginRight: 8 }}>Reboot pending</span>
+                    {u.rebootRequired ? <span className="badge warn">Yes</span> : <span className="badge ok">No</span>}
+                  </div>
+                  <div>
+                    <span style={{ color: 'var(--color-text-muted)', marginRight: 8 }}>Failed updates</span>
+                    {u.failedUpdateCount > 0 ? <span className="badge crit">{u.failedUpdateCount}</span> : <span className="badge neutral">0</span>}
+                  </div>
+                  <div style={{ color: 'var(--color-text-muted)', fontSize: 12.5 }}>
+                    Reported {new Date(u.collectedAt).toLocaleString()}
+                  </div>
+                </div>
+                {u.history.length === 0
+                  ? <div className="loading">No update history recorded.</div>
+                  : (
+                    <div style={{ maxHeight: 520, overflowY: 'auto' }}>
+                      <table className="table">
+                        <thead><tr><th>Update</th><th>Operation</th><th>Result</th><th>Date</th></tr></thead>
+                        <tbody>
+                          {u.history.map((h, i) => (
+                            <tr key={i}>
+                              <td style={{ fontWeight: 600 }}>{h.title}</td>
+                              <td>{h.operation}</td>
+                              <td>
+                                {h.result === 'Succeeded' ? <span className="badge ok">Succeeded</span>
+                                  : h.result === 'Failed' || h.result === 'Aborted' ? <span className="badge crit">{h.result}</span>
+                                  : <span className="badge neutral">{h.result}</span>}
+                              </td>
+                              <td style={{ color: 'var(--color-text-muted)', fontSize: 12 }}>{h.date ? new Date(h.date).toLocaleString() : '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
               </>
             )
           })()}

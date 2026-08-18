@@ -414,6 +414,11 @@ public static class AgentEndpoints
             return "Too many processes.";
         }
 
+        if (report.WindowsUpdate?.History is { Count: > Infrastructure.Devices.DeviceInventoryService.MaxUpdateHistory })
+        {
+            return "Too many update history entries.";
+        }
+
         if (report.LocalAccounts is { } accounts)
         {
             if (accounts.Users is { Count: > Infrastructure.Devices.DeviceInventoryService.MaxLocalUsers })

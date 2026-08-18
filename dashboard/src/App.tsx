@@ -8,6 +8,7 @@ import { SecurityPage } from './pages/SecurityPage'
 import { GroupsPage } from './pages/GroupsPage'
 import { PoliciesPage } from './pages/PoliciesPage'
 import { SoftwarePage } from './pages/SoftwarePage'
+import { UpdatesPage } from './pages/UpdatesPage'
 import { LoginPage } from './pages/LoginPage'
 import { PlaceholderPage } from './pages/PlaceholderPage'
 
@@ -44,10 +45,7 @@ function AuthGate() {
           <Route path="groups" element={<GroupsPage />} />
           <Route path="software" element={<SoftwarePage />} />
           <Route path="policies" element={<PoliciesPage />} />
-          <Route
-            path="updates"
-            element={<PlaceholderPage title="Updates" phase="Phase 8 (Windows Update visibility)" />}
-          />
+          <Route path="updates" element={<UpdatesPage />} />
           <Route path="security" element={<SecurityPage />} />
           <Route
             path="tasks"

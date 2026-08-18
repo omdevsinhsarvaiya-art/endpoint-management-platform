@@ -159,6 +159,7 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<Groups.DeviceGroupService>();
         services.AddScoped<Devices.SoftwareReadService>();
         services.AddScoped<Devices.SecurityReadService>();
+        services.AddScoped<Devices.UpdateReadService>();
 
         return services;
     }

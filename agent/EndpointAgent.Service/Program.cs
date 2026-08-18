@@ -67,6 +67,7 @@ public static class Program
             builder.Services.AddSingleton<ILocalAccountsCollector, WindowsLocalAccountsCollector>();
             builder.Services.AddSingleton<ISoftwareCollector, WindowsSoftwareCollector>();
             builder.Services.AddSingleton<ISecurityPostureCollector, WindowsSecurityPostureCollector>();
+            builder.Services.AddSingleton<IWindowsUpdateCollector, WindowsUpdateCollector>();
             builder.Services.AddSingleton<WindowsServiceProcessProvider>();
             builder.Services.AddSingleton<IServiceProcessCollector>(sp => sp.GetRequiredService<WindowsServiceProcessProvider>());
             builder.Services.AddSingleton<IServiceProcessControl>(sp => sp.GetRequiredService<WindowsServiceProcessProvider>());

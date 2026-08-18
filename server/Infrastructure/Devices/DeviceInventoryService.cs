@@ -40,6 +40,7 @@ public sealed class DeviceInventoryService(
     public const int MaxSoftwareEntries = 8192;
     public const int MaxServices = 2048;
     public const int MaxProcesses = 500;
+    public const int MaxUpdateHistory = 200;
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -130,6 +131,11 @@ public sealed class DeviceInventoryService(
         if (report.Services is { } || report.Processes is { })
         {
             await ApplyServicesProcessesAsync(device, report.Services, report.Processes, now, cancellationToken);
+        }
+
+        if (report.WindowsUpdate is { } windowsUpdate)
+        {
+            await ApplyWindowsUpdateAsync(device, windowsUpdate, now, cancellationToken);
         }
 
         device.RecordInventory(report.LoggedOnUser, now);
@@ -295,6 +301,39 @@ public sealed class DeviceInventoryService(
                     device.Id, proc.ProcessId, Truncate(proc.Name, 256)!,
                     Math.Max(0, proc.WorkingSetBytes), Truncate(proc.ExecutablePath, 512), now));
             }
+        }
+    }
+
+    private async Task ApplyWindowsUpdateAsync(
+        Device device, InventoryWindowsUpdate update, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var history = (update.History ?? []).Take(MaxUpdateHistory).ToArray();
+        var failedCount = history.Count(h => h.Result is "Failed" or "Aborted");
+
+        var status = await _dbContext.DeviceUpdateStatus
+            .SingleOrDefaultAsync(u => u.DeviceId == device.Id, cancellationToken);
+        if (status is null)
+        {
+            status = new DeviceUpdateStatus(device.Id);
+            _dbContext.DeviceUpdateStatus.Add(status);
+        }
+
+        status.Apply(update.RebootRequired, failedCount, now);
+
+        var existing = await _dbContext.DeviceUpdateHistory
+            .Where(h => h.DeviceId == device.Id).ToListAsync(cancellationToken);
+        _dbContext.DeviceUpdateHistory.RemoveRange(existing);
+
+        foreach (var h in history)
+        {
+            if (string.IsNullOrWhiteSpace(h.Title))
+            {
+                continue;
+            }
+
+            _dbContext.DeviceUpdateHistory.Add(new DeviceUpdateHistoryEntry(
+                device.Id, Truncate(h.Title, 384)!, h.Date,
+                Truncate(h.Operation, 32) ?? "Other", Truncate(h.Result, 32) ?? "Unknown", now));
         }
     }
 
