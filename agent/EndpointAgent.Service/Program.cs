@@ -66,6 +66,16 @@ public static class Program
             builder.Services.AddSingleton<IDeviceCredentialStore, DpapiDeviceCredentialStore>();
             builder.Services.AddSingleton<ILocalAccountsCollector, WindowsLocalAccountsCollector>();
             builder.Services.AddSingleton<IInventoryCollector, WindowsInventoryCollector>();
+            builder.Services.AddSingleton<IDeviceControl, WindowsDeviceControl>();
+
+            // Task pipeline: dispatcher + one executor per supported task type.
+            builder.Services.AddSingleton<EndpointAgent.Core.Tasks.TaskDispatcher>();
+            builder.Services.AddSingleton<EndpointAgent.Core.Tasks.ITaskExecutor, EndpointAgent.Core.Tasks.PingTaskExecutor>();
+            builder.Services.AddSingleton<EndpointAgent.Core.Tasks.ITaskExecutor, EndpointAgent.Core.Tasks.RefreshInventoryTaskExecutor>();
+            builder.Services.AddSingleton<EndpointAgent.Core.Tasks.ITaskExecutor, EndpointAgent.Core.Tasks.RestartTaskExecutor>();
+            builder.Services.AddSingleton<EndpointAgent.Core.Tasks.ITaskExecutor, EndpointAgent.Core.Tasks.ShutdownTaskExecutor>();
+            builder.Services.AddSingleton<EndpointAgent.Core.Tasks.ITaskExecutor, EndpointAgent.Core.Tasks.LockTaskExecutor>();
+            builder.Services.AddSingleton<EndpointAgent.Core.Tasks.ITaskExecutor, EndpointAgent.Core.Tasks.SignOutTaskExecutor>();
 
             builder.Services.AddHttpClient<IAgentApiClient, AgentApiClient>((serviceProvider, client) =>
                 {

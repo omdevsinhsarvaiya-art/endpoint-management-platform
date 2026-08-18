@@ -168,3 +168,9 @@ are reverted automatically.
   typed-task delivery channel, per the phase's own safety requirements. The
   read/write split is structural — `ILocalAccountsCollector` is read-only and a
   separate mutation abstraction will be introduced with its own tests.
+- **Phase 5 (device actions) + Phase 10 task-framework core: complete.**
+  Typed, pull-based, per-permission, audited task pipeline (ADR-0010);
+  restart/shutdown/lock/sign-out as typed tasks via Win32 IDeviceControl;
+  dashboard Actions + Tasks tabs. Pipeline verified live with the benign
+  Ping type; destructive executors unit-tested, not live-fired (need an
+  elevated Windows host).

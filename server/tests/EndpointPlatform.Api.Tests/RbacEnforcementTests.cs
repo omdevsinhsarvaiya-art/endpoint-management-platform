@@ -299,4 +299,35 @@ public sealed class RbacEnforcementTests(AdminApiPostgresFixture fixture)
 
         (await Normalize(wrongPassword)).ShouldBe(await Normalize(unknown));
     }
+
+    [Fact]
+    public async Task Auditor_cannot_queue_a_device_restart()
+    {
+        var token = await _fixture.SignInAsync(AdminApiPostgresFixture.AuditorEmail);
+        using var client = _fixture.CreateClientFor(token);
+
+        var response = await client.PostAsync(
+            new Uri($"/admin/v1/devices/{Guid.CreateVersion7()}/actions/restart", UriKind.Relative), content: null);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.Forbidden,
+            "restart is a high-impact action an auditor must never perform");
+    }
+
+    [Fact]
+    public async Task Helpdesk_can_lock_but_cannot_shut_down_a_device()
+    {
+        var token = await _fixture.SignInAsync(AdminApiPostgresFixture.HelpdeskEmail);
+        using var client = _fixture.CreateClientFor(token);
+
+        // Helpdesk holds device.lock but not device.shutdown. Both target a
+        // non-existent device; lock reaches the handler (404), shutdown is blocked
+        // at authorization (403) - the status distinguishes the two.
+        var lockResp = await client.PostAsync(
+            new Uri($"/admin/v1/devices/{Guid.CreateVersion7()}/actions/lock", UriKind.Relative), content: null);
+        lockResp.StatusCode.ShouldBe(HttpStatusCode.NotFound);
+
+        var shutdownResp = await client.PostAsync(
+            new Uri($"/admin/v1/devices/{Guid.CreateVersion7()}/actions/shutdown", UriKind.Relative), content: null);
+        shutdownResp.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
+    }
 }

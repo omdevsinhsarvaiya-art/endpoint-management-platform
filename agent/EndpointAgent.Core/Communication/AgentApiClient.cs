@@ -91,6 +91,49 @@ public sealed class AgentApiClient(HttpClient httpClient, ILogger<AgentApiClient
         return await SendAsync<InventoryResponse>(message, "inventory", cancellationToken);
     }
 
+    public async Task<AgentApiResult<AgentTaskListResponse>> ClaimTasksAsync(
+        DeviceCredential credential,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(credential);
+
+        using var message = new HttpRequestMessage(
+            HttpMethod.Get,
+            AgentProtocol.RoutePrefix + AgentProtocol.Routes.Tasks);
+
+        AddProtocolHeaders(message, AgentVersion());
+        message.Headers.Add(AgentProtocol.Headers.Credential, credential.ToHeaderValue());
+        message.Headers.Add(AgentProtocol.Headers.DeviceId, credential.DeviceId.ToString());
+
+        return await SendAsync<AgentTaskListResponse>(message, "claim-tasks", cancellationToken);
+    }
+
+    public async Task<AgentApiResult<Unit>> PostTaskResultAsync(
+        Guid taskId,
+        AgentTaskResult result,
+        DeviceCredential credential,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+        ArgumentNullException.ThrowIfNull(credential);
+
+        using var message = new HttpRequestMessage(
+            HttpMethod.Post,
+            $"{AgentProtocol.RoutePrefix}{AgentProtocol.Routes.Tasks}/{taskId}{AgentProtocol.Routes.TaskResultSuffix}")
+        {
+            Content = JsonContent.Create(result),
+        };
+
+        AddProtocolHeaders(message, AgentVersion());
+        message.Headers.Add(AgentProtocol.Headers.Credential, credential.ToHeaderValue());
+        message.Headers.Add(AgentProtocol.Headers.DeviceId, credential.DeviceId.ToString());
+
+        return await SendNoContentAsync(message, "task-result", cancellationToken);
+    }
+
+    private static string AgentVersion() =>
+        typeof(AgentApiClient).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
+
     private static void AddProtocolHeaders(HttpRequestMessage message, string agentVersion)
     {
         message.Headers.Add(AgentProtocol.Headers.ProtocolVersion, AgentProtocol.Version.ToString());
@@ -156,4 +199,49 @@ public sealed class AgentApiClient(HttpClient httpClient, ILogger<AgentApiClient
             return AgentApiResult<T>.Transient();
         }
     }
+
+    private async Task<AgentApiResult<Unit>> SendNoContentAsync(
+        HttpRequestMessage message,
+        string operation,
+        CancellationToken cancellationToken)
+    {
+        HttpResponseMessage response;
+
+        try
+        {
+            response = await _httpClient.SendAsync(message, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            _logger.LogWarning("Agent {Operation} request failed to reach the server: {Reason}",
+                operation, ex.GetType().Name);
+            return AgentApiResult<Unit>.Transient();
+        }
+
+        using (response)
+        {
+            if (response.IsSuccessStatusCode)
+            {
+                return AgentApiResult<Unit>.Success(Unit.Value);
+            }
+
+            if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+            {
+                return AgentApiResult<Unit>.Unauthorized();
+            }
+
+            if ((int)response.StatusCode is >= 400 and < 500)
+            {
+                _logger.LogWarning("Agent {Operation} rejected: HTTP {Status}.", operation, (int)response.StatusCode);
+                return AgentApiResult<Unit>.Rejected();
+            }
+
+            return AgentApiResult<Unit>.Transient();
+        }
+    }
+
 }

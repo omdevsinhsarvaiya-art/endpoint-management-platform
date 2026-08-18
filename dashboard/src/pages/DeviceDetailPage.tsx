@@ -1,12 +1,16 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
+import { useAuth } from '../auth/AuthContext'
 import {
   getDevice,
+  getDeviceTasks,
+  queueDeviceAction,
   requestInventoryRefresh,
   type DeviceDetail,
+  type DeviceTaskItem,
 } from '../api/client'
 
-type Tab = 'overview' | 'hardware' | 'network' | 'users' | 'groups'
+type Tab = 'overview' | 'hardware' | 'network' | 'users' | 'groups' | 'actions' | 'tasks'
 
 function formatBytes(bytes: number | null): string {
   if (bytes == null) return '—'
@@ -26,7 +30,11 @@ function formatTimestamp(value: string | null): string {
 
 export function DeviceDetailPage() {
   const { deviceId } = useParams<{ deviceId: string }>()
+  const { hasPermission } = useAuth()
   const [device, setDevice] = useState<DeviceDetail | null>(null)
+  const [tasks, setTasks] = useState<DeviceTaskItem[]>([])
+  const [confirm, setConfirm] = useState<null | 'restart' | 'shutdown' | 'lock' | 'signout'>(null)
+  const [actionMsg, setActionMsg] = useState<string | null>(null)
   const [tab, setTab] = useState<Tab>('overview')
   const [error, setError] = useState<string | null>(null)
   const [refreshRequested, setRefreshRequested] = useState(false)
@@ -34,12 +42,29 @@ export function DeviceDetailPage() {
   const load = useCallback(async () => {
     if (!deviceId) return
     try {
-      setDevice(await getDevice(deviceId))
+      const [d, t] = await Promise.all([
+        getDevice(deviceId),
+        getDeviceTasks(deviceId).catch(() => [] as DeviceTaskItem[]),
+      ])
+      setDevice(d)
+      setTasks(t)
       setError(null)
     } catch {
       setError('Could not load this device.')
     }
   }, [deviceId])
+
+  async function runAction(action: 'restart' | 'shutdown' | 'lock' | 'signout') {
+    if (!deviceId) return
+    setConfirm(null)
+    try {
+      await queueDeviceAction(deviceId, action)
+      setActionMsg(`Queued "${action}". The device runs it on its next check-in; watch the Tasks tab.`)
+      await load()
+    } catch {
+      setActionMsg(`Could not queue "${action}".`)
+    }
+  }
 
   useEffect(() => {
     void load()
@@ -72,11 +97,40 @@ export function DeviceDetailPage() {
     { key: 'network', label: 'Network' },
     { key: 'users', label: `Users${device.localUsers.length ? ` (${device.localUsers.length})` : ''}` },
     { key: 'groups', label: `Groups${device.localGroups.length ? ` (${device.localGroups.length})` : ''}` },
+    { key: 'actions', label: 'Actions' },
+    { key: 'tasks', label: `Tasks${tasks.length ? ` (${tasks.length})` : ''}` },
+  ]
+
+  const actionButtons: { key: 'restart' | 'shutdown' | 'lock' | 'signout'; label: string; perm: string; danger?: boolean }[] = [
+    { key: 'lock', label: 'Lock screen', perm: 'device.lock' },
+    { key: 'signout', label: 'Sign out user', perm: 'device.sign_out_user', danger: true },
+    { key: 'restart', label: 'Restart', perm: 'device.restart', danger: true },
+    { key: 'shutdown', label: 'Shut down', perm: 'device.shutdown', danger: true },
   ]
 
   return (
     <>
       {error && <div className="error-banner">{error}</div>}
+      {actionMsg && <div className="error-banner" style={{ background: 'var(--color-ok-bg)', color: 'var(--color-ok)', borderColor: '#bbf7d0' }}>{actionMsg}</div>}
+
+      {confirm && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 }}>
+          <div className="card" style={{ width: 420, padding: 24 }}>
+            <h2 style={{ marginTop: 0 }}>Confirm {confirm}</h2>
+            <p style={{ color: 'var(--color-text-muted)', fontSize: 14 }}>
+              This queues a <strong>{confirm}</strong> task for <strong>{device.hostname}</strong>. The device
+              performs it on its next check-in. This action is audited.
+            </p>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 20 }}>
+              <button type="button" onClick={() => setConfirm(null)}>Cancel</button>
+              <button type="button" onClick={() => void runAction(confirm)}
+                style={{ background: 'var(--color-crit)', color: '#fff', border: 'none', borderRadius: 6, padding: '7px 14px', fontWeight: 600, cursor: 'pointer' }}>
+                Yes, {confirm}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
@@ -286,6 +340,68 @@ export function DeviceDetailPage() {
                         ? g.members.map((m) => m.name).join(', ')
                         : '—'}
                     </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {tab === 'actions' && (
+        <div className="card">
+          <h2>Device actions</h2>
+          <p style={{ color: 'var(--color-text-muted)', fontSize: 13.5, marginTop: 0 }}>
+            Each action is delivered as a typed task the device pulls on its next check-in. Buttons you
+            lack permission for are hidden; the server enforces this regardless.
+          </p>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 12 }}>
+            {actionButtons.filter((a) => hasPermission(a.perm)).map((a) => (
+              <button key={a.key} type="button"
+                onClick={() => (a.key === 'lock' ? void runAction('lock') : setConfirm(a.key))}
+                style={{
+                  padding: '9px 16px', borderRadius: 6, font: 'inherit', fontWeight: 600, cursor: 'pointer',
+                  border: a.danger ? '1px solid #fca5a5' : '1px solid var(--color-border)',
+                  color: a.danger ? 'var(--color-crit)' : 'var(--color-text)',
+                  background: 'var(--color-surface)',
+                }}>
+                {a.label}
+              </button>
+            ))}
+            {actionButtons.filter((a) => hasPermission(a.perm)).length === 0 && (
+              <div className="loading">Your role grants no device actions.</div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {tab === 'tasks' && (
+        <div className="card">
+          {!tasks.length && (
+            <div className="empty-state">
+              <div className="title">No tasks yet</div>
+              <div>Queue an action from the Actions tab to see it here.</div>
+            </div>
+          )}
+          {!!tasks.length && (
+            <table className="table">
+              <thead>
+                <tr><th>Task</th><th>Status</th><th>Queued by</th><th>Queued</th><th>Result</th></tr>
+              </thead>
+              <tbody>
+                {tasks.map((t) => (
+                  <tr key={t.id}>
+                    <td style={{ fontWeight: 600 }}>{t.type}</td>
+                    <td>
+                      <span className={
+                        t.status === 'Succeeded' ? 'badge ok'
+                          : t.status === 'Failed' || t.status === 'Expired' ? 'badge crit'
+                          : t.status === 'Cancelled' ? 'badge neutral'
+                          : 'badge warn'}>{t.status}</span>
+                    </td>
+                    <td>{t.createdByDisplay}</td>
+                    <td>{new Date(t.createdAt).toLocaleString()}</td>
+                    <td style={{ color: 'var(--color-text-muted)', fontSize: 12.5 }}>{t.resultMessage ?? '—'}</td>
                   </tr>
                 ))}
               </tbody>

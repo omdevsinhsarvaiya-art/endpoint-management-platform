@@ -46,5 +46,11 @@ public static class AgentProtocol
         public const string Enroll = "/enroll";
         public const string Heartbeat = "/heartbeat";
         public const string Inventory = "/inventory";
+
+        /// <summary>Agent claims queued tasks (GET) here.</summary>
+        public const string Tasks = "/tasks";
+
+        /// <summary>Agent posts a task result to {RoutePrefix}/tasks/{id}/result.</summary>
+        public const string TaskResultSuffix = "/result";
     }
 }

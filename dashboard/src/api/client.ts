@@ -184,6 +184,37 @@ export interface DeviceDetail {
   localGroups: DeviceLocalGroup[]
 }
 
+export interface DeviceTaskItem {
+  id: string
+  type: string
+  status: string
+  createdByDisplay: string
+  createdAt: string
+  deliveredAt: string | null
+  completedAt: string | null
+  resultMessage: string | null
+}
+
+export function getDeviceTasks(deviceId: string): Promise<DeviceTaskItem[]> {
+  return request<DeviceTaskItem[]>(`/admin/v1/devices/${encodeURIComponent(deviceId)}/tasks`)
+}
+
+export async function queueDeviceAction(
+  deviceId: string,
+  action: 'restart' | 'shutdown' | 'lock' | 'signout',
+): Promise<void> {
+  const response = await fetch(
+    `/api/admin/v1/devices/${encodeURIComponent(deviceId)}/actions/${action}`,
+    { method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' } },
+  )
+  if (response.status === 401) {
+    sessionExpiredEvent.dispatchEvent(new Event('expired'))
+  }
+  if (!response.ok) {
+    throw new ApiError(response.status, `${action} failed`, response.headers.get('X-Correlation-Id'))
+  }
+}
+
 export function getDevice(deviceId: string): Promise<DeviceDetail> {
   return request<DeviceDetail>(`/admin/v1/devices/${encodeURIComponent(deviceId)}`)
 }

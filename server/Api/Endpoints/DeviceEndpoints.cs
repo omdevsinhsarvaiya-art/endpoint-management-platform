@@ -2,7 +2,9 @@ using System.Text.Json;
 using EndpointPlatform.Api.Security;
 using EndpointPlatform.Domain.Auditing;
 using EndpointPlatform.Infrastructure.Auditing;
+using EndpointPlatform.Domain.Tasks;
 using EndpointPlatform.Infrastructure.Devices;
+using EndpointPlatform.Infrastructure.Tasks;
 using EndpointPlatform.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
@@ -33,7 +35,80 @@ public static class DeviceEndpoints
             .WithName("RequestDeviceInventoryRefresh")
             .RequirePermission(Domain.Authorization.Permissions.Device.RefreshInventory);
 
+        group.MapPost("/{deviceId:guid}/actions/restart", (Guid deviceId, HttpContext ctx, DeviceTaskService svc, CancellationToken ct)
+                => QueueActionAsync(deviceId, DeviceTaskType.RestartDevice,
+                    new TaskPayloads.RestartOrShutdown(30, "Your IT administrator initiated a restart."), ctx, svc, ct))
+            .WithName("RestartDevice")
+            .RequirePermission(Domain.Authorization.Permissions.Device.Restart);
+
+        group.MapPost("/{deviceId:guid}/actions/shutdown", (Guid deviceId, HttpContext ctx, DeviceTaskService svc, CancellationToken ct)
+                => QueueActionAsync(deviceId, DeviceTaskType.ShutdownDevice,
+                    new TaskPayloads.RestartOrShutdown(30, "Your IT administrator initiated a shutdown."), ctx, svc, ct))
+            .WithName("ShutdownDevice")
+            .RequirePermission(Domain.Authorization.Permissions.Device.Shutdown);
+
+        group.MapPost("/{deviceId:guid}/actions/lock", (Guid deviceId, HttpContext ctx, DeviceTaskService svc, CancellationToken ct)
+                => QueueActionAsync(deviceId, DeviceTaskType.LockDevice, null, ctx, svc, ct))
+            .WithName("LockDevice")
+            .RequirePermission(Domain.Authorization.Permissions.Device.Lock);
+
+        group.MapPost("/{deviceId:guid}/actions/signout", (Guid deviceId, HttpContext ctx, DeviceTaskService svc, CancellationToken ct)
+                => QueueActionAsync(deviceId, DeviceTaskType.SignOutUser, null, ctx, svc, ct))
+            .WithName("SignOutUser")
+            .RequirePermission(Domain.Authorization.Permissions.Device.SignOutUser);
+
+        group.MapGet("/{deviceId:guid}/tasks", ListTasksAsync)
+            .WithName("ListDeviceTasks")
+            .RequirePermission(Domain.Authorization.Permissions.Task.View);
+
         return endpoints;
+    }
+
+    private static async Task<IResult> QueueActionAsync(
+        Guid deviceId,
+        DeviceTaskType type,
+        object? payload,
+        HttpContext httpContext,
+        DeviceTaskService taskService,
+        CancellationToken cancellationToken)
+    {
+        var actor = AdminActor.Required(httpContext.User);
+
+        var task = await taskService.QueueAsync(
+            actor.OrganizationId, deviceId, type, payload, actor.UserId, actor.Email, cancellationToken);
+
+        return task is null
+            ? Results.NotFound()
+            : Results.Accepted($"/admin/v1/devices/{deviceId}/tasks", new { taskId = task.Id, status = task.Status.ToString() });
+    }
+
+    private static async Task<IResult> ListTasksAsync(
+        Guid deviceId,
+        HttpContext httpContext,
+        EndpointPlatformDbContext dbContext,
+        CancellationToken cancellationToken)
+    {
+        var organizationId = AdminActor.Required(httpContext.User).OrganizationId;
+
+        var tasks = await dbContext.DeviceTasks
+            .AsNoTracking()
+            .Where(t => t.DeviceId == deviceId && t.OrganizationId == organizationId)
+            .OrderByDescending(t => t.CreatedAt)
+            .Take(100)
+            .Select(t => new
+            {
+                t.Id,
+                Type = t.Type.ToString(),
+                Status = t.Status.ToString(),
+                t.CreatedByDisplay,
+                t.CreatedAt,
+                t.DeliveredAt,
+                t.CompletedAt,
+                t.ResultMessage,
+            })
+            .ToListAsync(cancellationToken);
+
+        return Results.Ok(tasks);
     }
 
     private static async Task<IResult> ListAsync(

@@ -154,6 +154,7 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<Enrollment.AgentAuthenticationService>();
         services.AddScoped<Devices.DeviceReadService>();
         services.AddScoped<Devices.DeviceInventoryService>();
+        services.AddScoped<Tasks.DeviceTaskService>();
 
         return services;
     }

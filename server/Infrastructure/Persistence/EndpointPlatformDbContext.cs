@@ -2,6 +2,7 @@ using EndpointPlatform.Domain.Auditing;
 using EndpointPlatform.Domain.Devices;
 using EndpointPlatform.Domain.Enrollment;
 using EndpointPlatform.Domain.Identity;
+using EndpointPlatform.Domain.Tasks;
 using Microsoft.EntityFrameworkCore;
 
 namespace EndpointPlatform.Infrastructure.Persistence;
@@ -54,6 +55,8 @@ public sealed class EndpointPlatformDbContext(DbContextOptions<EndpointPlatformD
     public DbSet<DeviceLocalUser> DeviceLocalUsers => Set<DeviceLocalUser>();
 
     public DbSet<DeviceLocalGroup> DeviceLocalGroups => Set<DeviceLocalGroup>();
+
+    public DbSet<DeviceTask> DeviceTasks => Set<DeviceTask>();
 
     public DbSet<EnrollmentToken> EnrollmentTokens => Set<EnrollmentToken>();
 

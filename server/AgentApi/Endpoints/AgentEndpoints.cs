@@ -3,6 +3,7 @@ using EndpointPlatform.Contracts.Agent;
 using EndpointPlatform.Infrastructure.Configuration;
 using EndpointPlatform.Infrastructure.Enrollment;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
 namespace EndpointPlatform.AgentApi.Endpoints;
@@ -38,7 +39,78 @@ public static class AgentEndpoints
         group.MapPost(AgentProtocol.Routes.Inventory, InventoryAsync)
             .WithName("AgentInventory");
 
+        group.MapGet(AgentProtocol.Routes.Tasks, ClaimTasksAsync)
+            .WithName("AgentClaimTasks");
+
+        group.MapPost(AgentProtocol.Routes.Tasks + "/{taskId:guid}" + AgentProtocol.Routes.TaskResultSuffix,
+                PostTaskResultAsync)
+            .WithName("AgentPostTaskResult");
+
         return endpoints;
+    }
+
+    private static async Task<IResult> ClaimTasksAsync(
+        [FromHeader(Name = AgentProtocol.Headers.Credential)] string? credentialHeader,
+        [FromHeader(Name = AgentProtocol.Headers.ProtocolVersion)] int? protocolVersion,
+        AgentAuthenticationService authenticationService,
+        Infrastructure.Tasks.DeviceTaskService taskService,
+        CancellationToken cancellationToken)
+    {
+        if (protocolVersion != AgentProtocol.Version)
+        {
+            return Results.Problem(title: "Unsupported agent protocol version.",
+                statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        var auth = await authenticationService.AuthenticateAsync(credentialHeader, cancellationToken);
+        if (!auth.Success)
+        {
+            return Results.Unauthorized();
+        }
+
+        var claimed = await taskService.ClaimForDeviceAsync(auth.Device!.Id, cancellationToken);
+
+        var tasks = claimed
+            .Select(t => new AgentTask(t.Id, t.Type.ToString(), t.PayloadJson))
+            .ToArray();
+
+        return Results.Ok(new AgentTaskListResponse(tasks));
+    }
+
+    private static async Task<IResult> PostTaskResultAsync(
+        Guid taskId,
+        [FromBody] AgentTaskResult result,
+        [FromHeader(Name = AgentProtocol.Headers.Credential)] string? credentialHeader,
+        [FromHeader(Name = AgentProtocol.Headers.ProtocolVersion)] int? protocolVersion,
+        AgentAuthenticationService authenticationService,
+        Infrastructure.Tasks.DeviceTaskService taskService,
+        CancellationToken cancellationToken)
+    {
+        if (protocolVersion != AgentProtocol.Version)
+        {
+            return Results.Problem(title: "Unsupported agent protocol version.",
+                statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        var auth = await authenticationService.AuthenticateAsync(credentialHeader, cancellationToken);
+        if (!auth.Success)
+        {
+            return Results.Unauthorized();
+        }
+
+        if (result.Message is { Length: > 1024 })
+        {
+            return Results.Problem(title: "Result message too long.",
+                statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        // A device may only report results for its OWN tasks: the task id is scoped
+        // to the authenticated device, so a stolen credential cannot forge outcomes
+        // for another machine.
+        var applied = await taskService.CompleteAsync(
+            auth.Device!.Id, taskId, result.Succeeded, result.Message, result.ResultJson, cancellationToken);
+
+        return applied ? Results.NoContent() : Results.NotFound();
     }
 
     private static async Task<IResult> EnrollAsync(
@@ -130,10 +202,15 @@ public static class AgentEndpoints
         // are the audited operations.
         await dbContext.SaveChangesAsync(cancellationToken);
 
+        var tasksPending = await dbContext.DeviceTasks
+            .AnyAsync(t => t.DeviceId == device.Id
+                           && t.Status == Domain.Tasks.DeviceTaskStatus.Queued, cancellationToken);
+
         return Results.Ok(new HeartbeatResponse(
             now,
             agentServerOptions.Value.HeartbeatIntervalSeconds,
-            InventoryRequested: device.IsInventoryRefreshPending));
+            InventoryRequested: device.IsInventoryRefreshPending,
+            TasksPending: tasksPending));
     }
 
     private static async Task<IResult> InventoryAsync(

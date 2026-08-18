@@ -27,6 +27,24 @@ public interface IAgentApiClient
         InventoryReport report,
         DeviceCredential credential,
         CancellationToken cancellationToken = default);
+
+    /// <summary>Claims queued tasks for this device.</summary>
+    Task<AgentApiResult<AgentTaskListResponse>> ClaimTasksAsync(
+        DeviceCredential credential,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Reports the result of a completed task.</summary>
+    Task<AgentApiResult<Unit>> PostTaskResultAsync(
+        Guid taskId,
+        AgentTaskResult result,
+        DeviceCredential credential,
+        CancellationToken cancellationToken = default);
+}
+
+/// <summary>Placeholder for a response body-less call (204 No Content).</summary>
+public sealed record Unit
+{
+    public static readonly Unit Value = new();
 }
 
 /// <summary>

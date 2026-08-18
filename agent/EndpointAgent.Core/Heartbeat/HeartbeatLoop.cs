@@ -30,6 +30,7 @@ public sealed class HeartbeatLoop(
     IAgentApiClient apiClient,
     ISystemInfoProvider systemInfoProvider,
     IInventoryCollector inventoryCollector,
+    EndpointAgent.Core.Tasks.TaskDispatcher taskDispatcher,
     IOptions<AgentOptions> agentOptions,
     IOptions<EnrollmentOptions> enrollmentOptions,
     TimeProvider timeProvider,
@@ -50,6 +51,9 @@ public sealed class HeartbeatLoop(
 
     private readonly IInventoryCollector _inventoryCollector = inventoryCollector
         ?? throw new ArgumentNullException(nameof(inventoryCollector));
+
+    private readonly EndpointAgent.Core.Tasks.TaskDispatcher _taskDispatcher = taskDispatcher
+        ?? throw new ArgumentNullException(nameof(taskDispatcher));
 
     private readonly AgentOptions _agentOptions = agentOptions?.Value
         ?? throw new ArgumentNullException(nameof(agentOptions));
@@ -135,6 +139,11 @@ public sealed class HeartbeatLoop(
                         await UploadInventoryAsync(credential, stoppingToken);
                     }
 
+                    if (response.TasksPending)
+                    {
+                        await RunTasksAsync(credential, stoppingToken);
+                    }
+
                     await DelayAsync(interval, stoppingToken);
                     continue;
                 }
@@ -177,6 +186,27 @@ public sealed class HeartbeatLoop(
     /// Collects and uploads a full inventory snapshot. Failure is non-fatal: the
     /// server keeps the request pending, so the next heartbeat retries naturally.
     /// </summary>
+    /// <summary>
+    /// Claims and runs any queued tasks. Failure is non-fatal: unclaimed tasks stay
+    /// queued and the next heartbeat retries, and a per-task failure is reported to
+    /// the server rather than crashing the loop.
+    /// </summary>
+    private async Task RunTasksAsync(DeviceCredential credential, CancellationToken stoppingToken)
+    {
+        try
+        {
+            await _taskDispatcher.RunPendingAsync(credential, stoppingToken);
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Task dispatch failed; queued tasks will be retried on the next heartbeat.");
+        }
+    }
+
     private async Task UploadInventoryAsync(DeviceCredential credential, CancellationToken stoppingToken)
     {
         try
