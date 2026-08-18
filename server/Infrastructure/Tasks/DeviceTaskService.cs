@@ -131,6 +131,48 @@ public sealed class DeviceTaskService(
         return delivered;
     }
 
+    /// <summary>
+    /// Expires tasks whose deadline has passed while still Queued or Delivered,
+    /// across all devices. Called by a background sweeper so that tasks for an
+    /// offline device (which never polls) still transition to Expired rather than
+    /// lingering as Queued forever. Returns the number expired.
+    /// </summary>
+    public async Task<int> SweepExpiredAsync(int batchSize, CancellationToken cancellationToken = default)
+    {
+        var now = _timeProvider.GetUtcNow();
+
+        var stale = await _dbContext.DeviceTasks
+            .Where(t =>
+                (t.Status == DeviceTaskStatus.Queued || t.Status == DeviceTaskStatus.Delivered)
+                && t.ExpiresAt <= now)
+            .OrderBy(t => t.ExpiresAt)
+            .Take(batchSize)
+            .ToListAsync(cancellationToken);
+
+        if (stale.Count == 0)
+        {
+            return 0;
+        }
+
+        var expired = 0;
+        foreach (var task in stale)
+        {
+            if (task.TryExpire(now))
+            {
+                expired++;
+            }
+        }
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        if (expired > 0)
+        {
+            _logger.LogInformation("Task expiry sweep expired {Count} task(s).", expired);
+        }
+
+        return expired;
+    }
+
     /// <summary>Applies an agent-reported result. Returns false if the task is not awaiting one.</summary>
     public async Task<bool> CompleteAsync(
         Guid deviceId,

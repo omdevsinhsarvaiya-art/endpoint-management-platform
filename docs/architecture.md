@@ -178,6 +178,15 @@ are reverted automatically.
   Windows uninstall registry (read-only), ingested with the inventory snapshot,
   device Software tab plus a fleet-wide Software page (search, publisher filter,
   per-title install counts). Verified live with this laptop's 26 real titles.
+- **Phase 15 (hardening / reporting / scale): complete.** Background task-expiry
+  sweeper (Admin host, batched, backed by the `device_tasks(expires_at)` index)
+  so tasks for offline devices still expire rather than firing late. Consolidated
+  fleet report endpoint `/admin/v1/reports/summary` (device health, security and
+  patch rollups, policy compliance, task throughput, active packages) surfaced on
+  the dashboard. Hot query paths were indexed from the initial schema (verified:
+  device lookup, task claim/expiry, audit composites). Operations runbook
+  ([operations.md](operations.md)) covers backup/restore, credential and token
+  rotation, offboarding, background jobs, scale and observability.
 - **Phase 14 (offboarding): complete.** Offboarding a device is a *logical*,
   reversible operation: it revokes every active credential and retires the device
   (blocking heartbeat, inventory, tasks and re-enrollment), audited under

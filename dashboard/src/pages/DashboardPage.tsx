@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
 import {
   getDeviceCounts,
+  getFleetReport,
   getReadiness,
   getServiceInfo,
   type DeviceCounts,
+  type FleetReport,
   type HealthReport,
   type ServiceInfo,
 } from '../api/client'
@@ -17,6 +19,17 @@ const PLACEHOLDER_STATS = [
   { label: 'Pending Updates', value: '—' },
   { label: 'Security Alerts', value: '—' },
 ]
+
+function ReportItem({ label, value, tone }: { label: string; value: string; tone?: 'ok' | 'warn' | 'crit' }) {
+  const color =
+    tone === 'ok' ? 'var(--color-ok, #16a34a)' : tone === 'warn' ? 'var(--color-warn, #b8860b)' : tone === 'crit' ? 'var(--color-crit, #c0392b)' : 'var(--color-text)'
+  return (
+    <div style={{ padding: '10px 12px', border: '1px solid var(--color-border)', borderRadius: 8 }}>
+      <div style={{ color: 'var(--color-text-muted)', fontSize: 12 }}>{label}</div>
+      <div style={{ fontSize: 22, fontWeight: 700, color }}>{value}</div>
+    </div>
+  )
+}
 
 function statusBadgeClass(status: string): string {
   switch (status) {
@@ -33,6 +46,7 @@ export function DashboardPage() {
   const [serviceInfo, setServiceInfo] = useState<ServiceInfo | null>(null)
   const [health, setHealth] = useState<HealthReport | null>(null)
   const [counts, setCounts] = useState<DeviceCounts | null>(null)
+  const [report, setReport] = useState<FleetReport | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -41,15 +55,17 @@ export function DashboardPage() {
 
     async function load() {
       try {
-        const [info, readiness, deviceCounts] = await Promise.all([
+        const [info, readiness, deviceCounts, fleetReport] = await Promise.all([
           getServiceInfo(),
           getReadiness(),
           getDeviceCounts(),
+          getFleetReport().catch(() => null),
         ])
         if (!cancelled) {
           setServiceInfo(info)
           setHealth(readiness)
           setCounts(deviceCounts)
+          setReport(fleetReport)
           setError(null)
         }
       } catch {
@@ -81,18 +97,41 @@ export function DashboardPage() {
     { label: 'Retired', value: counts ? String(counts.retired) : '—' },
   ]
 
+  const reportStats = report
+    ? [
+        { label: 'Reboot Pending', value: String(report.updates.rebootPending) },
+        { label: 'Needs Attention', value: String(report.security.needsAttention + report.security.critical) },
+      ]
+    : PLACEHOLDER_STATS
+
   return (
     <>
       {error && <div className="error-banner">{error}</div>}
 
       <div className="stat-grid">
-        {[...deviceStats, ...PLACEHOLDER_STATS].map((stat) => (
+        {[...deviceStats, ...reportStats].map((stat) => (
           <div key={stat.label} className="card stat-card">
             <div className="stat-label">{stat.label}</div>
             <div className="stat-value">{stat.value}</div>
           </div>
         ))}
       </div>
+
+      {report && (
+        <div className="card card-section">
+          <h2>Fleet report</h2>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
+            <ReportItem label="Avg security score" value={report.security.averageScore == null ? '—' : `${report.security.averageScore}%`} />
+            <ReportItem label="Devices w/ failed updates" value={String(report.updates.withFailedUpdates)} tone={report.updates.withFailedUpdates > 0 ? 'crit' : undefined} />
+            <ReportItem label="Enabled policies" value={String(report.policies.enabledPolicies)} />
+            <ReportItem label="Non-compliant results" value={String(report.policies.nonCompliantResults)} tone={report.policies.nonCompliantResults > 0 ? 'warn' : undefined} />
+            <ReportItem label="Tasks queued" value={String(report.tasks.queued)} />
+            <ReportItem label="Tasks succeeded" value={String(report.tasks.succeeded)} tone="ok" />
+            <ReportItem label="Tasks failed" value={String(report.tasks.failed)} tone={report.tasks.failed > 0 ? 'crit' : undefined} />
+            <ReportItem label="Active packages" value={String(report.activePackages)} />
+          </div>
+        </div>
+      )}
 
       <div className="card card-section">
         <h2>Platform status</h2>

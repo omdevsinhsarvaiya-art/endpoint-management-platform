@@ -1,0 +1,94 @@
+using EndpointPlatform.Domain.Devices;
+using EndpointPlatform.Domain.Identity;
+using EndpointPlatform.Domain.Tasks;
+using EndpointPlatform.Infrastructure.Auditing;
+using EndpointPlatform.Infrastructure.Hosting;
+using EndpointPlatform.Infrastructure.Tasks;
+using EndpointPlatform.Infrastructure.Tests.Persistence;
+using Microsoft.AspNetCore.Http;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
+
+namespace EndpointPlatform.Infrastructure.Tests.Tasks;
+
+/// <summary>A minimal settable clock, so we do not depend on a time-testing package.</summary>
+file sealed class TestClock(DateTimeOffset start) : TimeProvider
+{
+    private DateTimeOffset _now = start;
+    public override DateTimeOffset GetUtcNow() => _now;
+    public void Advance(TimeSpan by) => _now += by;
+}
+
+/// <summary>
+/// Phase 15: the background sweep expires tasks whose deadline passed while the
+/// device was offline, without touching still-valid or already-terminal tasks.
+/// </summary>
+[Collection(PostgresCollection.Name)]
+public sealed class TaskExpirySweepTests(PostgresFixture fixture)
+{
+    private readonly PostgresFixture _fixture = fixture;
+
+    private static AuditWriter Audit(Infrastructure.Persistence.EndpointPlatformDbContext db, TimeProvider time) =>
+        new(db, time, new CorrelationIdAccessor(), new HttpContextAccessor());
+
+    [Fact]
+    public async Task The_sweep_expires_only_overdue_non_terminal_tasks()
+    {
+        var start = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
+        var time = new TestClock(start);
+
+        await using var db = _fixture.CreateDbContext();
+        var org = new Organization("S", ("s" + Guid.CreateVersion7().ToString("N")).Substring(0, 18));
+        db.Organizations.Add(org);
+        var token = new Domain.Enrollment.EnrollmentToken(org.Id, "t",
+            Guid.CreateVersion7().ToString("N") + Guid.CreateVersion7().ToString("N"),
+            Guid.CreateVersion7(), "a@b", start.AddHours(1), 9);
+        db.EnrollmentTokens.Add(token);
+        var device = Device.Enroll(org.Id, "SW", "m-" + Guid.CreateVersion7().ToString("N"), "1", null, token.Id, start);
+        db.Devices.Add(device);
+        await db.SaveChangesAsync();
+
+        // An overdue queued task and a still-valid one.
+        var overdue = DeviceTask.Create(org.Id, device.Id, DeviceTaskType.Ping, null, Guid.CreateVersion7(), "admin", start, TimeSpan.FromMinutes(5));
+        var fresh = DeviceTask.Create(org.Id, device.Id, DeviceTaskType.Ping, null, Guid.CreateVersion7(), "admin", start, TimeSpan.FromHours(2));
+        db.DeviceTasks.AddRange(overdue, fresh);
+        await db.SaveChangesAsync();
+
+        // Advance past the overdue task's 5-minute deadline but not the 2-hour one.
+        time.Advance(TimeSpan.FromMinutes(10));
+
+        var service = new DeviceTaskService(db, Audit(db, time), time, NullLogger<DeviceTaskService>.Instance);
+        var expired = await service.SweepExpiredAsync(batchSize: 500);
+
+        expired.ShouldBe(1);
+
+        await using var verify = _fixture.CreateDbContext();
+        (await verify.DeviceTasks.SingleAsync(t => t.Id == overdue.Id)).Status.ShouldBe(DeviceTaskStatus.Expired);
+        (await verify.DeviceTasks.SingleAsync(t => t.Id == fresh.Id)).Status.ShouldBe(DeviceTaskStatus.Queued);
+    }
+
+    [Fact]
+    public async Task A_second_sweep_finds_nothing_to_do()
+    {
+        var start = new DateTimeOffset(2026, 2, 1, 12, 0, 0, TimeSpan.Zero);
+        var time = new TestClock(start);
+
+        await using var db = _fixture.CreateDbContext();
+        var org = new Organization("S2", ("t" + Guid.CreateVersion7().ToString("N")).Substring(0, 18));
+        db.Organizations.Add(org);
+        var token = new Domain.Enrollment.EnrollmentToken(org.Id, "t",
+            Guid.CreateVersion7().ToString("N") + Guid.CreateVersion7().ToString("N"),
+            Guid.CreateVersion7(), "a@b", start.AddHours(1), 9);
+        db.EnrollmentTokens.Add(token);
+        var device = Device.Enroll(org.Id, "SW2", "m-" + Guid.CreateVersion7().ToString("N"), "1", null, token.Id, start);
+        db.Devices.Add(device);
+        db.DeviceTasks.Add(DeviceTask.Create(org.Id, device.Id, DeviceTaskType.Ping, null, Guid.CreateVersion7(), "admin", start, TimeSpan.FromMinutes(1)));
+        await db.SaveChangesAsync();
+
+        time.Advance(TimeSpan.FromMinutes(5));
+        var service = new DeviceTaskService(db, Audit(db, time), time, NullLogger<DeviceTaskService>.Instance);
+
+        (await service.SweepExpiredAsync(500)).ShouldBe(1);
+        (await service.SweepExpiredAsync(500)).ShouldBe(0, "an already-expired task must not be swept twice");
+    }
+}

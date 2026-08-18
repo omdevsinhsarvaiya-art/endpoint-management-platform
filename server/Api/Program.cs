@@ -53,6 +53,9 @@ public sealed class Program
             builder.Services.AddPlatformHosting();
             builder.Services.AddEndpointPlatformInfrastructure(builder.Configuration, builder.Environment);
 
+            // Management-plane background jobs run in the Admin host only.
+            builder.Services.AddHostedService<EndpointPlatform.Infrastructure.Tasks.TaskExpirySweeper>();
+
             // --- Authentication and authorization (Phase 3) -------------------
             builder.Services.AddOptions<AdminAuthOptions>()
                 .Bind(builder.Configuration.GetSection(AdminAuthOptions.SectionName))
@@ -159,6 +162,7 @@ public sealed class Program
             app.MapPackageEndpoints();
             app.MapSecurityEndpoints();
             app.MapUpdateEndpoints();
+            app.MapReportEndpoints();
             app.MapPolicyEndpoints();
             app.MapGroupEndpoints();
 

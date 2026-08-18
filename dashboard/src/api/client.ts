@@ -557,3 +557,16 @@ export async function offboardDevice(deviceId: string): Promise<void> {
 export async function reactivateDevice(deviceId: string): Promise<void> {
   await request(`/admin/v1/devices/${encodeURIComponent(deviceId)}/reactivate`, { method: 'POST' })
 }
+
+export interface FleetReport {
+  devices: { total: number; online: number; offline: number; retired: number }
+  security: { devicesReporting: number; averageScore: number | null; needsAttention: number; critical: number }
+  updates: { devicesReporting: number; rebootPending: number; withFailedUpdates: number }
+  policies: { enabledPolicies: number; nonCompliantResults: number }
+  tasks: { queued: number; delivered: number; succeeded: number; failed: number; expired: number; cancelled: number }
+  activePackages: number
+}
+
+export function getFleetReport(): Promise<FleetReport> {
+  return request<FleetReport>('/admin/v1/reports/summary')
+}
