@@ -481,3 +481,71 @@ export interface UpdateOverview {
 export function getUpdateOverview(): Promise<UpdateOverview> {
   return request<UpdateOverview>('/admin/v1/updates/overview')
 }
+
+export interface PackageRow {
+  id: string
+  name: string
+  version: string
+  publisher: string | null
+  type: string
+  sha256: string
+  fileName: string
+  sizeBytes: number
+  msiProductCode: string
+  requiredSignerSubject: string | null
+  isWithdrawn: boolean
+  createdByDisplay: string
+  createdAt: string
+}
+
+export function getPackages(): Promise<PackageRow[]> {
+  return request<PackageRow[]>('/admin/v1/packages/')
+}
+
+/** SHA-256 of a file as lowercase hex, computed in the browser. */
+export async function sha256Hex(file: File): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer())
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('')
+}
+
+export interface NewPackageMeta {
+  name: string
+  version: string
+  publisher?: string
+  msiProductCode: string
+  requiredSignerSubject?: string
+}
+
+export async function uploadPackage(file: File, meta: NewPackageMeta): Promise<void> {
+  const sha256 = await sha256Hex(file)
+  const form = new FormData()
+  form.append('file', file, file.name)
+  form.append('name', meta.name)
+  form.append('version', meta.version)
+  if (meta.publisher) form.append('publisher', meta.publisher)
+  form.append('sha256', sha256)
+  form.append('msiProductCode', meta.msiProductCode)
+  if (meta.requiredSignerSubject) form.append('requiredSignerSubject', meta.requiredSignerSubject)
+
+  const r = await fetch('/api/admin/v1/packages/', {
+    method: 'POST',
+    headers: { 'X-Requested-With': 'XMLHttpRequest' },
+    body: form,
+  })
+  if (r.status === 401) sessionExpiredEvent.dispatchEvent(new Event('expired'))
+  if (!r.ok) throw new ApiError(r.status, 'Package upload failed', r.headers.get('X-Correlation-Id'))
+}
+
+export async function withdrawPackage(packageId: string): Promise<void> {
+  await request(`/admin/v1/packages/${encodeURIComponent(packageId)}/withdraw`, { method: 'POST' })
+}
+
+export async function deployPackageToDevice(packageId: string, deviceId: string): Promise<void> {
+  await request(`/admin/v1/packages/${encodeURIComponent(packageId)}/deploy`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ deviceId }),
+  })
+}

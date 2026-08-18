@@ -26,4 +26,31 @@ public static class TaskPayloads
     /// against a PID being reused by the OS between listing and termination.
     /// </param>
     public sealed record TerminateProcess(int ProcessId, string ExpectedImageName);
+
+    /// <summary>
+    /// Everything the agent needs to install an approved package, self-contained so
+    /// the install decision never depends on a second lookup. The agent downloads
+    /// the package content, verifies it against <paramref name="Sha256"/> and
+    /// <paramref name="RequiredSignerSubject"/>, and installs it through the Windows
+    /// Installer service only if both pins hold.
+    /// </summary>
+    /// <param name="PackageId">Package to download from the Agent API.</param>
+    /// <param name="Sha256">Lowercase-hex content hash the downloaded bytes must match.</param>
+    /// <param name="MsiProductCode">
+    /// MSI ProductCode (braced GUID). Backs idempotency (already-installed is a
+    /// success) and post-install verification.
+    /// </param>
+    /// <param name="RequiredSignerSubject">
+    /// Substring the Authenticode signer subject must contain, or null to accept any
+    /// trusted signature. Never accepts an unsigned file.
+    /// </param>
+    /// <param name="PackageName">Display name, for logging and the result message.</param>
+    /// <param name="Version">Display version.</param>
+    public sealed record InstallPackage(
+        Guid PackageId,
+        string Sha256,
+        string MsiProductCode,
+        string? RequiredSignerSubject,
+        string PackageName,
+        string Version);
 }

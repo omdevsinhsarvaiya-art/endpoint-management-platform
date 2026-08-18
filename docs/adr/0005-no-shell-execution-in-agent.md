@@ -53,3 +53,34 @@ loosened:
 `Process.Start` (for approved-script execution) remains forbidden until the
 signed-script pipeline exists, at which point the scan is tightened to allow
 exactly that one reviewed call site.
+
+## Amendment (Phase 11): MSI installation via the Windows Installer service
+
+Phase 11 gives the agent a real software-install capability. This is the one
+capability that appears to reopen the door ADR-0005 closes, so the boundary is
+drawn deliberately:
+
+- Installation is driven by **`MsiInstallProduct` (msi.dll)**, product detection
+  by **`MsiQueryProductState`**, and there is **no process launch and no shell**.
+  `Process.Start` remains absent from every agent source file (the
+  `AgentSafetyTests` scan is unchanged and still passes). MSI is a data format
+  consumed by a Windows service, not a command line the agent composes.
+- The capability is **closed to signed MSI**. The package type enum has one
+  member (`WindowsInstaller`); there is no `.exe`, no script, no arbitrary
+  installer. Widening it is a reviewed code change, not configuration.
+- **Two independent pins** gate every install, both verified on the agent:
+  1. the content **SHA-256**, checked against the pin in the task payload before
+     a byte reaches the installer; and
+  2. the **Authenticode signer**, verified via `WinVerifyTrust` plus a signer
+     -subject match, refusing an unsigned or untrusted file outright.
+  A server tricked into serving the wrong bytes, or a network tamperer, cannot
+  get anything installed: the hash check fails first, the signature check second.
+- Installs are **idempotent by ProductCode** and reboots are **suppressed** (an
+  install that wants one is reported, never performed). The privileged install
+  runs as LocalSystem; the Admin API only ever stores content and queues intent,
+  both audited (`software.deploy`, marked high-risk).
+
+This does not reintroduce arbitrary execution: the agent cannot be made to run
+anything other than a hash-pinned, signature-verified MSI that an administrator
+holding `software.deploy` explicitly registered and deployed. The
+`Process.Start`/PowerShell bans, and their enforcement test, are unchanged.

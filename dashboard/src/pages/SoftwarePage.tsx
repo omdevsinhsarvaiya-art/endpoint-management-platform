@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { PackagesPanel } from './PackagesPanel'
 import {
   getSoftwarePublishers,
   getSoftwareTitles,
@@ -43,6 +44,8 @@ export function SoftwarePage() {
   return (
     <>
       {error && <div className="error-banner">{error}</div>}
+
+      <PackagesPanel />
 
       <div className="card">
         <div style={{ display: 'flex', gap: 12, marginBottom: 14, flexWrap: 'wrap' }}>

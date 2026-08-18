@@ -58,5 +58,11 @@ public static class AgentProtocol
 
         /// <summary>Agent posts compliance to {RoutePrefix}/policies/compliance.</summary>
         public const string PolicyComplianceSuffix = "/compliance";
+
+        /// <summary>Agent downloads package content from {RoutePrefix}/packages/{id}/content.</summary>
+        public const string Packages = "/packages";
+
+        /// <summary>Suffix for the package content stream.</summary>
+        public const string PackageContentSuffix = "/content";
     }
 }

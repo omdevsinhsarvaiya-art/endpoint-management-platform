@@ -159,6 +159,68 @@ public sealed class AgentApiClient(HttpClient httpClient, ILogger<AgentApiClient
         return await SendNoContentAsync(message, "post-compliance", cancellationToken);
     }
 
+    public async Task<AgentApiResult<Unit>> DownloadPackageAsync(
+        Guid packageId, Stream destination, DeviceCredential credential,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(destination);
+        ArgumentNullException.ThrowIfNull(credential);
+
+        using var message = new HttpRequestMessage(
+            HttpMethod.Get,
+            AgentProtocol.RoutePrefix + AgentProtocol.Routes.Packages + "/" + packageId + AgentProtocol.Routes.PackageContentSuffix);
+        AddProtocolHeaders(message, AgentVersion());
+        message.Headers.Add(AgentProtocol.Headers.Credential, credential.ToHeaderValue());
+        message.Headers.Add(AgentProtocol.Headers.DeviceId, credential.DeviceId.ToString());
+
+        HttpResponseMessage response;
+        try
+        {
+            response = await _httpClient.SendAsync(
+                message, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            _logger.LogWarning("Agent package download failed to reach the server: {Reason}", ex.GetType().Name);
+            return AgentApiResult<Unit>.Transient();
+        }
+
+        using (response)
+        {
+            if (response.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                return AgentApiResult<Unit>.Unauthorized();
+            }
+
+            if ((int)response.StatusCode is >= 400 and < 500)
+            {
+                return AgentApiResult<Unit>.Rejected();
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                return AgentApiResult<Unit>.Transient();
+            }
+
+            try
+            {
+                await using var source = await response.Content.ReadAsStreamAsync(cancellationToken);
+                await source.CopyToAsync(destination, cancellationToken);
+            }
+            catch (Exception ex) when (ex is HttpRequestException or IOException or TaskCanceledException)
+            {
+                _logger.LogWarning("Agent package download stream failed: {Reason}", ex.GetType().Name);
+                return AgentApiResult<Unit>.Transient();
+            }
+
+            return AgentApiResult<Unit>.Success(Unit.Value);
+        }
+    }
+
     private static string AgentVersion() =>
         typeof(AgentApiClient).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
 

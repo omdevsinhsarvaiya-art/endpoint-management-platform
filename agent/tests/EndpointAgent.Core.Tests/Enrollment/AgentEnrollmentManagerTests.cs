@@ -156,6 +156,10 @@ public sealed class AgentEnrollmentManagerTests
         public Task<AgentApiResult<Unit>> PostComplianceAsync(
             AgentPolicyComplianceReport report, DeviceCredential credential, CancellationToken cancellationToken = default) =>
             Task.FromResult(AgentApiResult<Unit>.Success(Unit.Value));
+
+        public Task<AgentApiResult<Unit>> DownloadPackageAsync(
+            Guid packageId, Stream destination, DeviceCredential credential, CancellationToken cancellationToken = default) =>
+            Task.FromResult(AgentApiResult<Unit>.Success(Unit.Value));
     }
 
     private sealed class FakeSystemInfo : ISystemInfoProvider

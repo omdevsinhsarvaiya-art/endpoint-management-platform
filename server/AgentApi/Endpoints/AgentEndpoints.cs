@@ -52,7 +52,50 @@ public static class AgentEndpoints
         group.MapPost(AgentProtocol.Routes.Policies + AgentProtocol.Routes.PolicyComplianceSuffix, PostComplianceAsync)
             .WithName("AgentPostCompliance");
 
+        group.MapGet(
+                AgentProtocol.Routes.Packages + "/{packageId:guid}" + AgentProtocol.Routes.PackageContentSuffix,
+                GetPackageContentAsync)
+            .WithName("AgentGetPackageContent");
+
         return endpoints;
+    }
+
+    private static async Task<IResult> GetPackageContentAsync(
+        Guid packageId,
+        [FromHeader(Name = AgentProtocol.Headers.Credential)] string? credentialHeader,
+        [FromHeader(Name = AgentProtocol.Headers.ProtocolVersion)] int? protocolVersion,
+        AgentAuthenticationService authenticationService,
+        Infrastructure.Software.SoftwarePackageService packageService,
+        Infrastructure.Software.IPackageContentStore contentStore,
+        CancellationToken cancellationToken)
+    {
+        if (protocolVersion != AgentProtocol.Version)
+        {
+            return Results.Problem(title: "Unsupported agent protocol version.", statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        var auth = await authenticationService.AuthenticateAsync(credentialHeader, cancellationToken);
+        if (!auth.Success)
+        {
+            return Results.Unauthorized();
+        }
+
+        // The package must belong to the device's organization and not be withdrawn.
+        var package = await packageService.GetDeployableAsync(
+            auth.Device!.OrganizationId, packageId, cancellationToken);
+        if (package is null)
+        {
+            return Results.NotFound();
+        }
+
+        var stream = await contentStore.OpenReadAsync(package.Sha256, cancellationToken);
+        if (stream is null)
+        {
+            return Results.NotFound();
+        }
+
+        // The agent re-hashes and re-verifies the signer; these headers are hints, not trust.
+        return Results.File(stream, "application/octet-stream", package.FileName, enableRangeProcessing: false);
     }
 
     private static async Task<IResult> GetPoliciesAsync(

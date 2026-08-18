@@ -84,6 +84,11 @@ public static class InfrastructureServiceCollectionExtensions
             .ValidateDataAnnotations()
             .ValidateOnStart();
 
+        services.AddOptions<Software.PackageStorageOptions>()
+            .Bind(configuration.GetSection(Software.PackageStorageOptions.SectionName))
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
+
         return services;
     }
 
@@ -160,6 +165,8 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<Devices.SoftwareReadService>();
         services.AddScoped<Devices.SecurityReadService>();
         services.AddScoped<Devices.UpdateReadService>();
+        services.AddSingleton<Software.IPackageContentStore, Software.FileSystemPackageContentStore>();
+        services.AddScoped<Software.SoftwarePackageService>();
 
         return services;
     }

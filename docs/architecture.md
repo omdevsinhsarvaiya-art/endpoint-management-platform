@@ -178,6 +178,19 @@ are reverted automatically.
   Windows uninstall registry (read-only), ingested with the inventory snapshot,
   device Software tab plus a fleet-wide Software page (search, publisher filter,
   per-title install counts). Verified live with this laptop's 26 real titles.
+- **Phase 11 (software deployment): complete.** Approved MSI packages, deployed
+  as typed `InstallPackage` tasks. Content-addressed package store (SHA-256 on
+  write); the agent pulls the bytes, re-verifies the hash and the Authenticode
+  signer (`WinVerifyTrust` + signer-subject pin), and installs through the
+  Windows Installer service (`MsiInstallProduct`) - no process launch, no shell
+  (ADR-0005 amendment). Idempotent by MSI ProductCode; reboots suppressed;
+  `software.deploy` is high-risk and audited. Dashboard Packages panel (browser
+  -computed SHA-256, register/deploy/withdraw). Verified live: an `InstallPackage`
+  task for an already-present ProductCode was pulled, detected via the real
+  `MsiQueryProductState`, and reported "already installed" - the full pipeline
+  end-to-end with zero machine change. The install/download/signature paths are
+  unit- and integration-tested; the real MSI detection and unsigned-file refusal
+  are verified live; an actual install is never fired on the dev laptop.
 - **Phase 8 (Windows Update visibility): complete.** Update history and
   reboot-pending state read via the Windows Update Agent (WUA) COM API
   (late-bound, no interop assembly) plus the reboot-pending registry keys -

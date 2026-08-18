@@ -76,6 +76,7 @@ public static class Program
             builder.Services.AddSingleton<EndpointAgent.Core.Policies.PolicyRunner>();
             builder.Services.AddSingleton<IInventoryCollector, WindowsInventoryCollector>();
             builder.Services.AddSingleton<IDeviceControl, WindowsDeviceControl>();
+            builder.Services.AddSingleton<IPackageInstaller, WindowsMsiPackageInstaller>();
 
             // Task pipeline: dispatcher + one executor per supported task type.
             builder.Services.AddSingleton<EndpointAgent.Core.Tasks.TaskDispatcher>();
@@ -87,6 +88,7 @@ public static class Program
             builder.Services.AddSingleton<EndpointAgent.Core.Tasks.ITaskExecutor, EndpointAgent.Core.Tasks.SignOutTaskExecutor>();
             builder.Services.AddSingleton<EndpointAgent.Core.Tasks.ITaskExecutor, EndpointAgent.Core.Tasks.ControlServiceTaskExecutor>();
             builder.Services.AddSingleton<EndpointAgent.Core.Tasks.ITaskExecutor, EndpointAgent.Core.Tasks.TerminateProcessTaskExecutor>();
+            builder.Services.AddSingleton<EndpointAgent.Core.Tasks.ITaskExecutor, EndpointAgent.Core.Tasks.InstallPackageExecutor>();
 
             builder.Services.AddHttpClient<IAgentApiClient, AgentApiClient>((serviceProvider, client) =>
                 {

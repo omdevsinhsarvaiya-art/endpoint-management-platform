@@ -94,5 +94,8 @@ public sealed class TaskDispatcherTests
             throw new NotSupportedException();
         public Task<AgentApiResult<Unit>> PostComplianceAsync(AgentPolicyComplianceReport r, DeviceCredential c, CancellationToken ct = default) =>
             throw new NotSupportedException();
+
+        public Task<AgentApiResult<Unit>> DownloadPackageAsync(Guid packageId, Stream destination, DeviceCredential c, CancellationToken ct = default) =>
+            throw new NotSupportedException();
     }
 }

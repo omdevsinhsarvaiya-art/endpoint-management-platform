@@ -1,5 +1,6 @@
 using EndpointPlatform.Domain.Auditing;
 using EndpointPlatform.Domain.Devices;
+using EndpointPlatform.Domain.Software;
 using EndpointPlatform.Domain.Enrollment;
 using EndpointPlatform.Domain.Identity;
 using EndpointPlatform.Domain.Groups;
@@ -69,6 +70,8 @@ public sealed class EndpointPlatformDbContext(DbContextOptions<EndpointPlatformD
     public DbSet<DeviceServiceEntry> DeviceServices => Set<DeviceServiceEntry>();
 
     public DbSet<DeviceProcessEntry> DeviceProcesses => Set<DeviceProcessEntry>();
+
+    public DbSet<SoftwarePackage> SoftwarePackages => Set<SoftwarePackage>();
 
     public DbSet<Policy> Policies => Set<Policy>();
 

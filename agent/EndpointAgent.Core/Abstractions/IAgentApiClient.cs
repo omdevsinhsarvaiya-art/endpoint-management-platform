@@ -50,6 +50,17 @@ public interface IAgentApiClient
         AgentPolicyComplianceReport report,
         DeviceCredential credential,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Streams a package's installer bytes to <paramref name="destination"/>. The
+    /// caller is responsible for verifying the content hash and signer afterwards -
+    /// this transfer is not a trust boundary.
+    /// </summary>
+    Task<AgentApiResult<Unit>> DownloadPackageAsync(
+        Guid packageId,
+        Stream destination,
+        DeviceCredential credential,
+        CancellationToken cancellationToken = default);
 }
 
 /// <summary>Placeholder for a response body-less call (204 No Content).</summary>
