@@ -119,6 +119,12 @@ public sealed class RbacEnforcementTests(AdminApiPostgresFixture fixture)
                 new Uri($"/admin/v1/devices/{Guid.CreateVersion7()}/refresh-inventory", UriKind.Relative),
                 content: null))
             .StatusCode.ShouldBe(HttpStatusCode.Forbidden);
+
+        // Offboarding (device.retire) is destructive; the gate must fire for an auditor.
+        (await client.PostAsync(
+                new Uri($"/admin/v1/devices/{Guid.CreateVersion7()}/offboard", UriKind.Relative),
+                content: null))
+            .StatusCode.ShouldBe(HttpStatusCode.Forbidden);
     }
 
     // ---------------------------------------------------- it administrator

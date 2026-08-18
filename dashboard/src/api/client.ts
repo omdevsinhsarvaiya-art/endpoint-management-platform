@@ -549,3 +549,11 @@ export async function deployPackageToDevice(packageId: string, deviceId: string)
     body: JSON.stringify({ deviceId }),
   })
 }
+
+export async function offboardDevice(deviceId: string): Promise<void> {
+  await request(`/admin/v1/devices/${encodeURIComponent(deviceId)}/offboard`, { method: 'POST' })
+}
+
+export async function reactivateDevice(deviceId: string): Promise<void> {
+  await request(`/admin/v1/devices/${encodeURIComponent(deviceId)}/reactivate`, { method: 'POST' })
+}

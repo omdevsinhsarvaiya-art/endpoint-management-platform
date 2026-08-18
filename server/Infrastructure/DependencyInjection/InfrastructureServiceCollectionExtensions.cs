@@ -165,6 +165,7 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<Devices.SoftwareReadService>();
         services.AddScoped<Devices.SecurityReadService>();
         services.AddScoped<Devices.UpdateReadService>();
+        services.AddScoped<Devices.DeviceLifecycleService>();
         services.AddSingleton<Software.IPackageContentStore, Software.FileSystemPackageContentStore>();
         services.AddScoped<Software.SoftwarePackageService>();
 

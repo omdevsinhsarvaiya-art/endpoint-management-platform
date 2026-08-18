@@ -4,7 +4,9 @@ import { useAuth } from '../auth/AuthContext'
 import {
   getDevice,
   getDeviceTasks,
+  offboardDevice,
   queueDeviceAction,
+  reactivateDevice,
   requestInventoryRefresh,
   type DeviceDetail,
   type DeviceTaskItem,
@@ -63,6 +65,32 @@ export function DeviceDetailPage() {
       await load()
     } catch {
       setActionMsg(`Could not queue "${action}".`)
+    }
+  }
+
+  async function onOffboard() {
+    if (!deviceId) return
+    if (!window.confirm(
+      'Offboard this device? Its credentials are revoked and it is retired: it can no longer check in, '
+      + 'receive tasks, or re-enroll until reactivated. This does not wipe the machine.',
+    )) return
+    try {
+      await offboardDevice(deviceId)
+      setActionMsg('Device offboarded: credentials revoked and device retired.')
+      await load()
+    } catch {
+      setActionMsg('Could not offboard the device.')
+    }
+  }
+
+  async function onReactivate() {
+    if (!deviceId) return
+    try {
+      await reactivateDevice(deviceId)
+      setActionMsg('Device reactivated. The machine must re-enroll to obtain a fresh credential.')
+      await load()
+    } catch {
+      setActionMsg('Could not reactivate the device.')
     }
   }
 
@@ -563,6 +591,27 @@ export function DeviceDetailPage() {
               <div className="loading">Your role grants no device actions.</div>
             )}
           </div>
+
+          {hasPermission('device.retire') && (
+            <div style={{ marginTop: 24, paddingTop: 16, borderTop: '1px solid var(--color-border)' }}>
+              <h3 style={{ margin: '0 0 4px' }}>Lifecycle</h3>
+              <p style={{ color: 'var(--color-text-muted)', fontSize: 13, marginTop: 0 }}>
+                Offboarding revokes the device's credentials and retires it — reversible via reactivation, which
+                requires the machine to re-enroll. It does not wipe the machine.
+              </p>
+              {device.status === 'Retired' ? (
+                <button type="button" onClick={() => void onReactivate()}
+                  style={{ padding: '9px 16px', borderRadius: 6, font: 'inherit', fontWeight: 600, cursor: 'pointer', border: '1px solid var(--color-border)', background: 'var(--color-surface)' }}>
+                  Reactivate device
+                </button>
+              ) : (
+                <button type="button" onClick={() => void onOffboard()}
+                  style={{ padding: '9px 16px', borderRadius: 6, font: 'inherit', fontWeight: 600, cursor: 'pointer', border: '1px solid #fca5a5', color: 'var(--color-crit)', background: 'var(--color-surface)' }}>
+                  Offboard device
+                </button>
+              )}
+            </div>
+          )}
         </div>
       )}
 

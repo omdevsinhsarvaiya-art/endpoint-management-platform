@@ -69,7 +69,33 @@ public static class DeviceEndpoints
             .WithName("TerminateDeviceProcess")
             .RequirePermission(Domain.Authorization.Permissions.Task.Execute);
 
+        group.MapPost("/{deviceId:guid}/offboard", OffboardAsync)
+            .WithName("OffboardDevice")
+            .RequirePermission(Domain.Authorization.Permissions.Device.Retire);
+
+        group.MapPost("/{deviceId:guid}/reactivate", ReactivateAsync)
+            .WithName("ReactivateDevice")
+            .RequirePermission(Domain.Authorization.Permissions.Device.Retire);
+
         return endpoints;
+    }
+
+    private static async Task<IResult> OffboardAsync(
+        Guid deviceId, DeviceLifecycleService lifecycleService, HttpContext httpContext, CancellationToken cancellationToken)
+    {
+        var actor = AdminActor.Required(httpContext.User);
+        var result = await lifecycleService.OffboardAsync(
+            actor.OrganizationId, deviceId, actor.UserId, actor.Email, cancellationToken);
+        return result == DeviceLifecycleResult.NotFound ? Results.NotFound() : Results.NoContent();
+    }
+
+    private static async Task<IResult> ReactivateAsync(
+        Guid deviceId, DeviceLifecycleService lifecycleService, HttpContext httpContext, CancellationToken cancellationToken)
+    {
+        var actor = AdminActor.Required(httpContext.User);
+        var result = await lifecycleService.ReactivateAsync(
+            actor.OrganizationId, deviceId, actor.UserId, actor.Email, cancellationToken);
+        return result == DeviceLifecycleResult.NotFound ? Results.NotFound() : Results.NoContent();
     }
 
     public sealed record ControlServiceRequest(string ServiceName, string Action);

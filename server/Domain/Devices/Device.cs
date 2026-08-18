@@ -173,6 +173,13 @@ public sealed class Device : AuditableEntity
 
     public void Retire() => Status = DeviceStatus.Retired;
 
+    /// <summary>
+    /// Returns a retired device to service so it can enroll again. Offboarding
+    /// revokes the device's credentials; reactivation does not restore them - the
+    /// machine must re-enroll to obtain a fresh credential.
+    /// </summary>
+    public void Reactivate() => Status = DeviceStatus.Active;
+
     /// <summary>Whether the device counts as online given the staleness threshold.</summary>
     public bool IsOnline(DateTimeOffset now, TimeSpan staleAfter) =>
         Status == DeviceStatus.Active

@@ -178,6 +178,17 @@ are reverted automatically.
   Windows uninstall registry (read-only), ingested with the inventory snapshot,
   device Software tab plus a fleet-wide Software page (search, publisher filter,
   per-title install counts). Verified live with this laptop's 26 real titles.
+- **Phase 14 (offboarding): complete.** Offboarding a device is a *logical*,
+  reversible operation: it revokes every active credential and retires the device
+  (blocking heartbeat, inventory, tasks and re-enrollment), audited under
+  `device.retire`. Reactivation reverses it — the machine must re-enroll for a
+  fresh credential. There is deliberately **no destructive remote wipe**: an
+  irreversible wipe would need its own guarded, explicitly-confirmed agent-side
+  executor and is out of scope by design, not omission. Device detail Actions tab
+  gains an offboard/reactivate control. Verified against real PostgreSQL:
+  offboard revokes credentials + retires; a retired device is refused
+  re-enrollment; reactivation restores it and re-enrollment issues exactly one
+  fresh credential.
 - **Phase 11 (software deployment): complete.** Approved MSI packages, deployed
   as typed `InstallPackage` tasks. Content-addressed package store (SHA-256 on
   write); the agent pulls the bytes, re-verifies the hash and the Authenticode
