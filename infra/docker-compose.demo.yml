@@ -192,11 +192,10 @@ services:
     container_name: epp-demo-dashboard
     restart: unless-stopped
     ports:
-      # The origin port. TLS terminates in front of this host, so what the
-      # browser talks to is always https:// -- the session cookie is Secure and
-      # sign-in silently fails otherwise. Reaching this port directly over plain
-      # HTTP must therefore be prevented at the firewall, not here.
-      - "80:80"
+      # Loopback only. TLS terminates in the host's nginx, which holds the
+      # certificate and proxies here; binding this to 0.0.0.0 would publish an
+      # unencrypted copy of the whole dashboard alongside the HTTPS one.
+      - "127.0.0.1:8080:80"
     depends_on:
       admin-api:
         condition: service_healthy
