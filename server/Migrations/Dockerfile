@@ -32,7 +32,10 @@ COPY server/Migrations/ server/Migrations/
 RUN dotnet publish server/Migrations/EndpointPlatform.Migrations.csproj \
         -c Release -o /app --no-restore
 
-FROM mcr.microsoft.com/dotnet/runtime:10.0 AS runtime
+# aspnet, not runtime: this is a console app, but it references Infrastructure,
+# which carries a FrameworkReference on Microsoft.AspNetCore.App. On the plain
+# runtime image the host starts and then fails with "No frameworks were found".
+FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
 
 RUN useradd --system --uid 5003 --create-home appuser

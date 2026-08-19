@@ -1,0 +1,94 @@
+name: Deploy to AWS demo
+
+# ---------------------------------------------------------------------------
+# Pushes to main are built and released on the single-EC2 demo host.
+#
+# The runner never holds AWS credentials. It holds one SSH key whose
+# authorized_keys entry on the host pins command="/home/ubuntu/deploy.sh" and
+# disables port/agent/X11 forwarding and PTY allocation, so the key cannot open
+# a shell, read infra/.env, or touch anything else -- it can only ask for a
+# redeploy. The deployed commit is validated host-side: it must be a 40-hex SHA
+# already contained in origin/main, so no fork, branch or deleted ref is
+# deployable even if the key leaks.
+#
+# Required repository secrets:
+#   DEPLOY_SSH_KEY      private key of the dedicated deploy key pair
+#   DEPLOY_HOST         EC2 public IP or hostname
+#   DEPLOY_USER         SSH user on the host
+#   DEPLOY_KNOWN_HOSTS  the host's public key line, so host identity is verified
+# ---------------------------------------------------------------------------
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Never let two deploys interleave on one host. Queue rather than cancel: a
+# half-applied deploy that gets cancelled mid-build is worse than waiting.
+concurrency:
+  group: deploy-demo
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Build and release on EC2
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out the pushed commit
+        uses: actions/checkout@v4
+
+      - name: Configure SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          if [ -z "$DEPLOY_SSH_KEY" ] || [ -z "$DEPLOY_KNOWN_HOSTS" ]; then
+            echo "::error::DEPLOY_SSH_KEY and DEPLOY_KNOWN_HOSTS must be set as repository secrets."
+            exit 1
+          fi
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          # Pinned host key rather than StrictHostKeyChecking=no, so a hijacked
+          # DNS answer or a replaced instance cannot silently receive a deploy.
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Deploy ${{ github.sha }}
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          set -o pipefail
+          ssh -i ~/.ssh/deploy_key \
+              -o StrictHostKeyChecking=yes \
+              -o ConnectTimeout=20 \
+              "$DEPLOY_USER@$DEPLOY_HOST" \
+              "${{ github.sha }}" 2>&1 | tee deploy-output.log
+
+      - name: Summarise
+        if: always()
+        run: |
+          {
+            echo "### AWS demo deployment"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Commit | \`${{ github.sha }}\` |"
+            echo "| Result | ${{ job.status }} |"
+            echo ""
+            if [ -f deploy-output.log ]; then
+              echo "<details><summary>Deploy log</summary>"
+              echo ""
+              echo '```'
+              tail -40 deploy-output.log
+              echo '```'
+              echo ""
+              echo "</details>"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
