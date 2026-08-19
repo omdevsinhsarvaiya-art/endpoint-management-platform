@@ -35,6 +35,10 @@ COPY nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 80
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD wget --quiet --tries=1 --spider http://localhost/ || exit 1
+# 127.0.0.1, not localhost: inside the container `localhost` resolves to ::1
+# first while the server block listens on IPv4 only, so the probe was refused
+# even though the site served fine -- an unhealthy container that actually
+# works is the most misleading state to leave a demo in.
+    CMD wget --quiet --tries=1 --spider http://127.0.0.1/ || exit 1
 
 CMD ["nginx", "-g", "daemon off;"]

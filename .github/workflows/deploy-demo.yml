@@ -9,14 +9,20 @@ name: Deploy to AWS demo
 # opening port 22 to the internet. SSM needs no inbound port at all -- the
 # instance's own agent dials out and collects the command.
 #
-# There are no long-lived AWS credentials anywhere. The job mints a short-lived
-# OIDC token and assumes an IAM role whose trust policy is pinned to this
-# repository AND refs/heads/main, so a fork, a pull request, or any other branch
-# cannot assume it. The role can do exactly two things: send AWS-RunShellScript
-# to this one instance, and read the result back.
+# Credentials belong to a dedicated IAM user whose ONLY permission is
+# ssm:SendCommand against this one instance with AWS-RunShellScript, plus
+# reading the result back. It cannot start instances, read S3, touch IAM, or
+# reach any other resource -- the blast radius of a leak is "someone can
+# redeploy the demo".
 #
-# Required repository variables (not secrets -- these are not sensitive):
-#   AWS_ROLE_ARN     role for GitHub Actions to assume
+# OIDC would be preferable to long-lived keys and was implemented first, but
+# sts:AssumeRoleWithWebIdentity is refused on this account -- the same class of
+# restriction that blocks Route 53 domain registration and CloudFront here.
+# Revisit once the account is verified.
+#
+# Required repository secrets:
+#   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY   the deploy user's key
+# Required repository variables (not sensitive):
 #   AWS_REGION       region of the instance
 #   EC2_INSTANCE_ID  the demo instance
 # ---------------------------------------------------------------------------
@@ -34,7 +40,6 @@ concurrency:
 
 permissions:
   contents: read
-  id-token: write   # required to mint the OIDC token
 
 jobs:
   deploy:
@@ -43,12 +48,12 @@ jobs:
     timeout-minutes: 45
 
     steps:
-      - name: Assume the deploy role via OIDC
+      - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ vars.AWS_REGION }}
-          role-session-name: gha-deploy-${{ github.run_id }}
 
       - name: Deploy ${{ github.sha }}
         id: deploy
