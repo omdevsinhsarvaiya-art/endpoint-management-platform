@@ -125,6 +125,13 @@ services:
 
       ENDPOINTPLATFORM_PackageStorage__Directory: /var/lib/endpoint-platform/packages
       ASPNETCORE_ENVIRONMENT: Production
+
+      # Outside Development the host calls UseHttpsRedirection(). TLS terminates
+      # in front of this container, so without this the app sees plain http,
+      # redirects to https, and the browser loops forever. This is ASP.NET Core's
+      # built-in switch for exactly the container-behind-proxy case; it trusts
+      # X-Forwarded-Proto and X-Forwarded-For, which nginx sets.
+      ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"
     volumes:
       # Uploaded installer content. Without this, deployed packages vanish on
       # every container replacement.
@@ -159,15 +166,13 @@ services:
 
       ENDPOINTPLATFORM_PackageStorage__Directory: /var/lib/endpoint-platform/packages
       ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"
     volumes:
       # Read-only: agents download package content, they never write it.
       - demo-package-content:/var/lib/endpoint-platform/packages:ro
-    ports:
-      # The one application port reachable from the endpoint network. Bound to
-      # localhost so the host's TLS proxy fronts it — the agent enforces
-      # certificate validation in Release builds, so this must be HTTPS from the
-      # endpoint's point of view. Publish directly only in a closed lab.
-      - "127.0.0.1:8081:8081"
+    # No published port. The endpoint reaches this through nginx on the public
+    # HTTPS origin at /agent/, so 8081 is never exposed and the agent still only
+    # ever dials outbound.
     depends_on:
       postgres:
         condition: service_healthy
@@ -175,7 +180,7 @@ services:
         condition: service_healthy
       migrations:
         condition: service_completed_successfully
-    networks: [backend]
+    networks: [backend, frontend]
     security_opt:
       - no-new-privileges:true
 
@@ -187,10 +192,11 @@ services:
     container_name: epp-demo-dashboard
     restart: unless-stopped
     ports:
-      # The public entry point. Bound to localhost so the host's TLS terminator
-      # sits in front: the session cookie is Secure, so the browser-facing origin
-      # MUST be https:// or sign-in silently fails.
-      - "127.0.0.1:8080:80"
+      # The origin port. TLS terminates in front of this host, so what the
+      # browser talks to is always https:// -- the session cookie is Secure and
+      # sign-in silently fails otherwise. Reaching this port directly over plain
+      # HTTP must therefore be prevented at the firewall, not here.
+      - "80:80"
     depends_on:
       admin-api:
         condition: service_healthy
