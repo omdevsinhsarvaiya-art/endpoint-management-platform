@@ -89,6 +89,9 @@ public static class InfrastructureServiceCollectionExtensions
             .ValidateDataAnnotations()
             .ValidateOnStart();
 
+        services.AddOptions<Security.SecretProtectionOptions>()
+            .Bind(configuration.GetSection(Security.SecretProtectionOptions.SectionName));
+
         return services;
     }
 
@@ -167,6 +170,10 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<Devices.UpdateReadService>();
         services.AddScoped<Devices.DeviceLifecycleService>();
         services.AddScoped<Reporting.ReportReadService>();
+        services.AddScoped<Devices.LocalAccountManagementService>();
+        services.AddScoped<Security.DeviceScopeAuthorizer>();
+        services.AddSingleton<Security.ISecretProtector, Security.AesGcmSecretProtector>();
+        services.AddScoped<Security.EphemeralSecretStore>();
         services.AddSingleton<Software.IPackageContentStore, Software.FileSystemPackageContentStore>();
         services.AddScoped<Software.SoftwarePackageService>();
 

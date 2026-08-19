@@ -78,6 +78,23 @@ public sealed class PlatformUser : AuditableEntity
     /// </summary>
     public bool IsSystemAccount { get; private set; }
 
+    /// <summary>
+    /// Whether this administrator's authority spans every device in the organization.
+    /// </summary>
+    /// <remarks>
+    /// Deny-by-default: a new administrator has this false and no
+    /// <see cref="AdminDeviceScope"/> rows, so their permissions reach no device until
+    /// scope is granted explicitly. "No scope" therefore means "nothing", never
+    /// "everything" — the inverse would make every future account silently omnipotent.
+    /// </remarks>
+    public bool HasAllDeviceScope { get; private set; }
+
+    /// <summary>Grants authority over every device in the organization.</summary>
+    public void GrantAllDeviceScope() => HasAllDeviceScope = true;
+
+    /// <summary>Revokes organization-wide authority, leaving only explicit group scopes.</summary>
+    public void RevokeAllDeviceScope() => HasAllDeviceScope = false;
+
     public IReadOnlyCollection<PlatformUserRole> Roles => _roles.AsReadOnly();
 
     public void MarkAsSystemAccount() => IsSystemAccount = true;

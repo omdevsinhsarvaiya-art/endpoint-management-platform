@@ -12,6 +12,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Testcontainers.PostgreSql;
+using Testcontainers.Redis;
 
 namespace EndpointPlatform.Api.Tests;
 
@@ -35,6 +36,10 @@ public sealed class AdminApiPostgresFixture : IAsyncLifetime
         .WithPassword("test_owner_password_not_a_real_secret")
         .Build();
 
+    // A real Redis so the ephemeral-secret path (create user / reset password) is
+    // exercised end to end rather than short-circuited by an unreachable cache.
+    private readonly RedisContainer _redis = new RedisBuilder().Build();
+
     private WebApplicationFactory<Program>? _factory;
 
     public WebApplicationFactory<Program> Factory =>
@@ -43,6 +48,7 @@ public sealed class AdminApiPostgresFixture : IAsyncLifetime
     public async Task InitializeAsync()
     {
         await _container.StartAsync();
+        await _redis.StartAsync();
 
         await using (var dbContext = CreateDbContext())
         {
@@ -67,7 +73,7 @@ public sealed class AdminApiPostgresFixture : IAsyncLifetime
         }
 
         var connectionString = _container.GetConnectionString();
-        _factory = new AdminApiTestFactory(connectionString);
+        _factory = new AdminApiTestFactory(connectionString, _redis.GetConnectionString());
     }
 
     private static PlatformUser AddUser(
@@ -76,6 +82,11 @@ public sealed class AdminApiPostgresFixture : IAsyncLifetime
         var user = new PlatformUser(organizationId, email, email.Split('@')[0]);
         user.SetPasswordHash(PasswordHasher.Hash(Password), DateTimeOffset.UtcNow);
         user.AssignRole(roleId);
+
+        // These fixture accounts stand in for established operators, which the
+        // production migration grants organization-wide scope. Tests that exercise
+        // deny-by-default create their own unscoped administrator instead.
+        user.GrantAllDeviceScope();
         dbContext.PlatformUsers.Add(user);
         return user;
     }
@@ -88,6 +99,7 @@ public sealed class AdminApiPostgresFixture : IAsyncLifetime
         }
 
         await _container.DisposeAsync();
+        await _redis.DisposeAsync();
     }
 
     public EndpointPlatformDbContext CreateDbContext()
@@ -128,13 +140,13 @@ public sealed class AdminApiPostgresFixture : IAsyncLifetime
         return client;
     }
 
-    private sealed class AdminApiTestFactory(string connectionString) : WebApplicationFactory<Program>
+    private sealed class AdminApiTestFactory(string connectionString, string redisConnectionString) : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment(Environments.Development);
             builder.UseSetting("Database:ConnectionString", connectionString);
-            builder.UseSetting("Redis:ConnectionString", "127.0.0.1:1,abortConnect=false,connectTimeout=100");
+            builder.UseSetting("Redis:ConnectionString", redisConnectionString);
             builder.UseSetting("Redis:InstanceName", "endpointplatform:adminapitest:");
             builder.UseSetting("Cors:AllowedOrigins:0", "http://localhost:5173");
             // Every test request arrives from the same loopback address, so the

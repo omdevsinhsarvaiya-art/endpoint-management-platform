@@ -74,6 +74,87 @@ public sealed class LocalAccountsIngestionTests(AgentApiPostgresFixture fixture)
     }
 
     [Fact]
+    public async Task A_standard_users_group_membership_is_reconciled_from_windows_inventory()
+    {
+        // The dashboard shows "Groups: Users" only because Windows REPORTED that
+        // membership - never because a create task was marked successful. That is the
+        // whole point of reconciling: a create that silently joined no groups showed
+        // up as an account belonging to nothing, which is what exposed the defect.
+        var (deviceId, credential) = await EnrollAsync();
+        using var client = _fixture.Factory.CreateClient();
+
+        const string standardSid = "S-1-5-21-111-222-333-1010";
+        var accounts = new InventoryLocalAccounts(
+            [
+                new InventoryLocalUser(
+                    standardSid, "StandardUser1", "Standard User", null,
+                    Enabled: true, PasswordRequired: true, PasswordExpires: true, null,
+                    IsLocalAdministrator: false),
+            ],
+            [
+                new InventoryLocalGroup(
+                    "S-1-5-32-545", "Users", "Ordinary users",
+                    [new InventoryGroupMember("StandardUser1", standardSid, "User")]),
+                new InventoryLocalGroup(
+                    "S-1-5-32-544", "Administrators", "Full control",
+                    [new InventoryGroupMember("Administrator", "S-1-5-21-111-222-333-500", "User")]),
+            ]);
+
+        (await client.SendAsync(NewRequest(AgentProtocol.Routes.Inventory, ReportWith(accounts), credential)))
+            .StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        await using var dbContext = _fixture.CreateDbContext();
+
+        var user = await dbContext.DeviceLocalUsers
+            .SingleAsync(u => u.DeviceId == deviceId && u.Sid == standardSid);
+        user.IsLocalAdministrator.ShouldBeFalse("a standard user must not be reported as an administrator");
+
+        var usersGroup = await dbContext.DeviceLocalGroups
+            .SingleAsync(g => g.DeviceId == deviceId && g.Sid == "S-1-5-32-545");
+        // The dashboard derives "Groups: Users" from this reported membership.
+        usersGroup.MembersJson.ShouldContain(standardSid);
+
+        var administrators = await dbContext.DeviceLocalGroups
+            .SingleAsync(g => g.DeviceId == deviceId && g.Sid == "S-1-5-32-544");
+        administrators.MembersJson.ShouldNotContain(standardSid);
+    }
+
+    [Fact]
+    public async Task An_account_reported_in_no_groups_is_reconciled_as_exactly_that()
+    {
+        // The broken state must be representable and visible, not smoothed over. If
+        // inventory quietly implied Users membership, the original defect would have
+        // stayed hidden behind a dashboard that looked correct.
+        var (deviceId, credential) = await EnrollAsync();
+        using var client = _fixture.Factory.CreateClient();
+
+        const string orphanSid = "S-1-5-21-111-222-333-1011";
+        var accounts = new InventoryLocalAccounts(
+            [
+                new InventoryLocalUser(
+                    orphanSid, "GrouplessUser", null, null,
+                    Enabled: true, PasswordRequired: true, PasswordExpires: true, null,
+                    IsLocalAdministrator: false),
+            ],
+            [
+                new InventoryLocalGroup("S-1-5-32-545", "Users", null, []),
+            ]);
+
+        (await client.SendAsync(NewRequest(AgentProtocol.Routes.Inventory, ReportWith(accounts), credential)))
+            .StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        await using var dbContext = _fixture.CreateDbContext();
+
+        (await dbContext.DeviceLocalUsers
+            .AnyAsync(u => u.DeviceId == deviceId && u.Sid == orphanSid)).ShouldBeTrue();
+
+        var usersGroup = await dbContext.DeviceLocalGroups
+            .SingleAsync(g => g.DeviceId == deviceId && g.Sid == "S-1-5-32-545");
+        // Inventory must report the real membership, including its absence.
+        usersGroup.MembersJson.ShouldNotContain(orphanSid);
+    }
+
+    [Fact]
     public async Task Local_accounts_persist_with_admin_flags_and_membership()
     {
         var (deviceId, credential) = await EnrollAsync();

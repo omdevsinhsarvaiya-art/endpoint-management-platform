@@ -40,6 +40,7 @@ public static class Permissions
         public const string Disable = "user.disable";
         public const string ResetPassword = "user.reset_password";
         public const string ChangeType = "user.change_type";
+        public const string ForcePasswordChange = "user.force_password_change";
     }
 
     public static class Group
@@ -101,6 +102,7 @@ public static class Permissions
         new(LocalUser.Disable, "Local accounts", "Enable or disable a Windows local user", HighRisk: true),
         new(LocalUser.ResetPassword, "Local accounts", "Reset a Windows local user password", HighRisk: true),
         new(LocalUser.ChangeType, "Local accounts", "Change account type (standard/administrator)", HighRisk: true),
+        new(LocalUser.ForcePasswordChange, "Local accounts", "Force a password change at next logon", HighRisk: true),
 
         new(Group.View, "Groups", "View device groups and Windows local groups", HighRisk: false),
         new(Group.Manage, "Groups", "Create, modify and delete groups and memberships", HighRisk: true),

@@ -43,4 +43,35 @@ public enum DeviceTaskType
 
     /// <summary>Install an approved, hash-verified package (Phase 11).</summary>
     InstallPackage = 30,
+
+    // Local Windows account management (Phase 4 write side). Each acts on a real
+    // local user/group through account-management APIs on the agent - never a shell
+    // (ADR-0005). Targets are identified by SID (names are renameable).
+
+    /// <summary>Create a local Windows user. Password delivered out-of-band by secret reference.</summary>
+    CreateLocalUser = 40,
+
+    /// <summary>Delete a local Windows user (by SID).</summary>
+    DeleteLocalUser = 41,
+
+    /// <summary>Enable a local Windows user (clear the account-disabled flag).</summary>
+    EnableLocalUser = 42,
+
+    /// <summary>Disable a local Windows user (set the account-disabled flag).</summary>
+    DisableLocalUser = 43,
+
+    /// <summary>Reset a local user's password. Secret delivered out-of-band by reference.</summary>
+    ResetLocalUserPassword = 44,
+
+    /// <summary>Force a local user to change their password at next logon.</summary>
+    ForceLocalUserPasswordChange = 45,
+
+    /// <summary>Promote/demote a local user by adding/removing BUILTIN\Administrators membership.</summary>
+    ChangeLocalUserType = 46,
+
+    /// <summary>Add a local user (by SID) to a local group (by SID).</summary>
+    AddLocalUserToGroup = 47,
+
+    /// <summary>Remove a local user (by SID) from a local group (by SID).</summary>
+    RemoveLocalUserFromGroup = 48,
 }

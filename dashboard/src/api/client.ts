@@ -570,3 +570,163 @@ export interface FleetReport {
 export function getFleetReport(): Promise<FleetReport> {
   return request<FleetReport>('/admin/v1/reports/summary')
 }
+
+// ---- Windows local account management (Device -> Users / Groups) ----
+
+export interface LocalUserRow {
+  sid: string
+  name: string
+  fullName: string | null
+  description: string | null
+  enabled: boolean
+  passwordRequired: boolean
+  passwordExpires: boolean
+  lastLogon: string | null
+  isLocalAdministrator: boolean
+  collectedAt: string
+}
+
+export interface LocalGroupRow {
+  sid: string
+  name: string
+  description: string | null
+  memberCount: number
+  isAdministrators: boolean
+  members: { name: string; sid: string | null; memberType: string }[] | null
+  collectedAt: string
+}
+
+export function getLocalUsers(deviceId: string): Promise<LocalUserRow[]> {
+  return request<LocalUserRow[]>(`/admin/v1/devices/${encodeURIComponent(deviceId)}/local-users`)
+}
+
+export function getLocalGroups(deviceId: string): Promise<LocalGroupRow[]> {
+  return request<LocalGroupRow[]>(`/admin/v1/devices/${encodeURIComponent(deviceId)}/local-groups`)
+}
+
+/** Every mutation returns the queued task id so the UI can follow it to completion. */
+export interface QueuedTask { taskId: string; status: string }
+
+async function localAccountAction<T = QueuedTask>(
+  path: string,
+  method: 'POST' | 'DELETE',
+  body?: unknown,
+): Promise<T> {
+  const response = await fetch(`/api${path}`, {
+    method,
+    headers: {
+      Accept: 'application/json',
+      'X-Requested-With': 'XMLHttpRequest',
+      ...(body ? { 'Content-Type': 'application/json' } : {}),
+    },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  })
+
+  if (response.status === 401) sessionExpiredEvent.dispatchEvent(new Event('expired'))
+
+  if (!response.ok) {
+    // A safety rule (last administrator, protected account) answers 409 with a
+    // human-readable reason; surface it rather than a generic failure.
+    let detail: string | null = null
+    try {
+      const problem = await response.json()
+      detail = problem?.title ?? problem?.detail ?? null
+    } catch {
+      detail = null
+    }
+    throw new ApiError(response.status, detail ?? `Request failed with HTTP ${response.status}`,
+      response.headers.get('X-Correlation-Id'))
+  }
+
+  return (await response.json()) as T
+}
+
+export function changeAccountType(
+  deviceId: string, sid: string, accountType: 'Administrator' | 'StandardUser',
+): Promise<QueuedTask> {
+  return localAccountAction(
+    `/admin/v1/devices/${encodeURIComponent(deviceId)}/local-users/${encodeURIComponent(sid)}/change-account-type`,
+    'POST', { accountType })
+}
+
+export function setLocalUserEnabled(deviceId: string, sid: string, enabled: boolean): Promise<QueuedTask> {
+  return localAccountAction(
+    `/admin/v1/devices/${encodeURIComponent(deviceId)}/local-users/${encodeURIComponent(sid)}/${enabled ? 'enable' : 'disable'}`,
+    'POST')
+}
+
+export interface UserConfigurationProfile {
+  key: string
+  displayName: string
+  description: string
+  accountType: 'StandardUser' | 'Administrator'
+  enabled: boolean
+  mustChangePasswordAtNextLogon: boolean
+  additionalGroups: string[]
+  grantsAdministrator: boolean
+}
+
+export interface ProfileCatalog {
+  profiles: UserConfigurationProfile[]
+  /**
+   * Groups that may be assigned on THIS device: the policy allow-list intersected
+   * with the groups the device reported. Not every Windows edition has every group
+   * in the policy, so this is what the operator may actually pick.
+   */
+  permittedAdditionalGroups: string[]
+  /** The unfiltered policy allow-list, so the UI can explain what is missing and why. */
+  policyAdditionalGroups: string[]
+  /** False when the device has never reported its groups; the full allow-list is offered then. */
+  deviceGroupsKnown: boolean
+  /** Whether this operator may create an administrator. The server re-checks on submit. */
+  canGrantAdministrator: boolean
+}
+
+export function getUserProfiles(deviceId: string): Promise<ProfileCatalog> {
+  return request<ProfileCatalog>(`/admin/v1/devices/${encodeURIComponent(deviceId)}/local-user-profiles`)
+}
+
+export interface CreateLocalUserBody {
+  username: string
+  fullName?: string
+  description?: string
+  password: string
+  enabled: boolean
+  mustChangePasswordAtNextLogon: boolean
+  accountType: 'StandardUser' | 'Administrator'
+  additionalGroups: string[]
+  profileKey?: string
+}
+
+export function createLocalUser(deviceId: string, body: CreateLocalUserBody): Promise<QueuedTask> {
+  return localAccountAction(`/admin/v1/devices/${encodeURIComponent(deviceId)}/local-users`, 'POST', body)
+}
+
+export function deleteLocalUser(deviceId: string, sid: string): Promise<QueuedTask> {
+  return localAccountAction(
+    `/admin/v1/devices/${encodeURIComponent(deviceId)}/local-users/${encodeURIComponent(sid)}`, 'DELETE')
+}
+
+export function resetLocalUserPassword(deviceId: string, sid: string, password: string): Promise<QueuedTask> {
+  return localAccountAction(
+    `/admin/v1/devices/${encodeURIComponent(deviceId)}/local-users/${encodeURIComponent(sid)}/reset-password`,
+    'POST', { password })
+}
+
+export function forceLocalUserPasswordChange(deviceId: string, sid: string): Promise<QueuedTask> {
+  return localAccountAction(
+    `/admin/v1/devices/${encodeURIComponent(deviceId)}/local-users/${encodeURIComponent(sid)}/force-password-change`,
+    'POST')
+}
+
+export function addLocalGroupMember(deviceId: string, groupSid: string, memberSid: string): Promise<QueuedTask> {
+  return localAccountAction(
+    `/admin/v1/devices/${encodeURIComponent(deviceId)}/local-groups/${encodeURIComponent(groupSid)}/members`,
+    'POST', { memberSid })
+}
+
+export function removeLocalGroupMember(deviceId: string, groupSid: string, memberSid: string): Promise<QueuedTask> {
+  return localAccountAction(
+    `/admin/v1/devices/${encodeURIComponent(deviceId)}/local-groups/${encodeURIComponent(groupSid)}/members/${encodeURIComponent(memberSid)}`,
+    'DELETE')
+}

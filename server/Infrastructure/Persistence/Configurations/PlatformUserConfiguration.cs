@@ -42,6 +42,7 @@ internal sealed class PlatformUserConfiguration : IEntityTypeConfiguration<Platf
 
         builder.Property(u => u.FailedSignInCount).IsRequired();
         builder.Property(u => u.IsSystemAccount).IsRequired();
+        builder.Property(u => u.HasAllDeviceScope).IsRequired();
         builder.Property(u => u.CreatedAt).IsRequired();
         builder.Property(u => u.UpdatedAt).IsRequired();
 

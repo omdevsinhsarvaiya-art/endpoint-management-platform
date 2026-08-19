@@ -73,6 +73,8 @@ public sealed class EndpointPlatformDbContext(DbContextOptions<EndpointPlatformD
 
     public DbSet<SoftwarePackage> SoftwarePackages => Set<SoftwarePackage>();
 
+    public DbSet<AdminDeviceScope> AdminDeviceScopes => Set<AdminDeviceScope>();
+
     public DbSet<Policy> Policies => Set<Policy>();
 
     public DbSet<PolicyVersion> PolicyVersions => Set<PolicyVersion>();

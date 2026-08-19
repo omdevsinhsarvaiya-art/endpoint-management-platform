@@ -59,6 +59,12 @@ public static class AgentProtocol
         /// <summary>Agent posts compliance to {RoutePrefix}/policies/compliance.</summary>
         public const string PolicyComplianceSuffix = "/compliance";
 
+        /// <summary>
+        /// Agent redeems a one-time secret reference at {RoutePrefix}/secrets/redeem.
+        /// Used for local-account passwords, which never travel in a persisted task payload.
+        /// </summary>
+        public const string SecretRedeem = "/secrets/redeem";
+
         /// <summary>Agent downloads package content from {RoutePrefix}/packages/{id}/content.</summary>
         public const string Packages = "/packages";
 

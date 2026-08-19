@@ -221,6 +221,24 @@ public sealed class AgentApiClient(HttpClient httpClient, ILogger<AgentApiClient
         }
     }
 
+    public async Task<AgentApiResult<RedeemSecretResponse>> RedeemSecretAsync(
+        string secretReference, DeviceCredential credential, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(secretReference);
+        ArgumentNullException.ThrowIfNull(credential);
+
+        using var message = new HttpRequestMessage(
+            HttpMethod.Post, AgentProtocol.RoutePrefix + AgentProtocol.Routes.SecretRedeem)
+        {
+            Content = JsonContent.Create(new RedeemSecretRequest(secretReference)),
+        };
+        AddProtocolHeaders(message, AgentVersion());
+        message.Headers.Add(AgentProtocol.Headers.Credential, credential.ToHeaderValue());
+        message.Headers.Add(AgentProtocol.Headers.DeviceId, credential.DeviceId.ToString());
+
+        return await SendAsync<RedeemSecretResponse>(message, "redeem-secret", cancellationToken);
+    }
+
     private static string AgentVersion() =>
         typeof(AgentApiClient).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
 

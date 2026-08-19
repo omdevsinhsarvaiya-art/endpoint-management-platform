@@ -159,7 +159,7 @@ are reverted automatically.
   passwords, opaque revocable sessions (HttpOnly cookie + Bearer), permission
   policies on every admin endpoint, denial auditing, lockout and login rate
   limiting, operator bootstrap command, dashboard sign-in. See ADR-0009.
-- **Phase 4 (local user/group management) — READ SIDE complete.** Local
+- **Phase 4 (read side, superseded by the entry above): complete.** Local
   users/groups/membership collected via System.DirectoryServices.AccountManagement
   (SID-keyed, admin flag via well-known S-1-5-32-544 membership), ingested with
   the inventory snapshot, Users/Groups tabs on the device page.
@@ -178,6 +178,26 @@ are reverted automatically.
   Windows uninstall registry (read-only), ingested with the inventory snapshot,
   device Software tab plus a fleet-wide Software page (search, publisher filter,
   per-title install counts). Verified live with this laptop's 26 real titles.
+- **Phase 4 (local user/group management) — COMPLETE (read + write).** Windows
+  local accounts are now fully manageable, not just observable. Nine typed tasks
+  (create/delete/enable/disable/reset-password/force-password-change/change-type/
+  add-to-group/remove-from-group) run through the existing pipeline to
+  `WindowsLocalAccountControl`, which calls netapi32 account-management APIs
+  (`NetUserAdd`, `NetUserDel`, `NetUserSetInfo`, `NetLocalGroupAddMembers`,
+  `NetLocalGroupDelMembers`) — no shell, no process launch, ADR-0005 intact and
+  its scan unchanged. **Administrator status is real Windows state**: promotion
+  adds the account to `BUILTIN\Administrators` (SID S-1-5-32-544) and demotion
+  removes it; the dashboard reconciles against reported inventory rather than
+  assuming success. Targets are addressed by SID (names are renameable).
+  Passwords never persist: they go to an AES-GCM-sealed, 15-minute, one-time
+  Redis entry and the task carries only a device-bound reference the agent
+  redeems once (atomic GETDEL). Safety rules (built-in Administrator protected;
+  last enabled administrator cannot be deleted/disabled/demoted) are enforced
+  server-side against inventory AND re-checked by the agent against live Windows
+  state. Authorization is permission AND device scope — new administrators are
+  deny-by-default; pre-existing ones were migrated to organization-wide scope.
+  Device Users/Groups tabs gained full management UI with explicit confirmation.
+  See [ADR-0011](adr/0011-local-account-management.md).
 - **Phase 15 (hardening / reporting / scale): complete.** Background task-expiry
   sweeper (Admin host, batched, backed by the `device_tasks(expires_at)` index)
   so tasks for offline devices still expire rather than firing late. Consolidated

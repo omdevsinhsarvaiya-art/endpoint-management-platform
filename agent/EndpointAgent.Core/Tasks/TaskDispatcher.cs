@@ -75,7 +75,26 @@ public sealed class TaskDispatcher
         catch (Exception ex)
         {
             _logger.LogError(ex, "Task {TaskId} ({Type}) threw.", task.TaskId, task.Type);
-            return new AgentTaskResult(false, $"Execution failed: {ex.GetType().Name}.", null);
+
+            // Carry the exception's message, not just its type. An operator reading
+            // "Execution failed: Win32Exception." in the dashboard learns nothing and
+            // has to go digging through agent logs on the endpoint; the message
+            // usually names the actual problem ("Access denied", "password does not
+            // meet complexity requirements"). Exception messages from these paths
+            // describe the Windows failure, never the values passed in, so this does
+            // not leak a password into the result.
+            var detail = ex.Message.Trim();
+            var message = string.IsNullOrEmpty(detail)
+                ? $"Execution failed: {ex.GetType().Name}."
+                : $"Execution failed: {detail}";
+
+            // The result column is bounded server-side; keep well inside it.
+            if (message.Length > 500)
+            {
+                message = message[..500];
+            }
+
+            return new AgentTaskResult(false, message, null);
         }
     }
 }

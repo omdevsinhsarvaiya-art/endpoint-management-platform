@@ -57,7 +57,45 @@ public static class AgentEndpoints
                 GetPackageContentAsync)
             .WithName("AgentGetPackageContent");
 
+        group.MapPost(AgentProtocol.Routes.SecretRedeem, RedeemSecretAsync)
+            .WithName("AgentRedeemSecret");
+
         return endpoints;
+    }
+
+    /// <summary>
+    /// Exchanges a one-time secret reference for its plaintext, exactly once.
+    /// </summary>
+    /// <remarks>
+    /// The reference is bound to the issuing device and deleted atomically on read, so
+    /// a replay - or a reference stolen from a persisted task row - yields nothing. The
+    /// secret is never logged here, and the failure response is deliberately uniform so
+    /// it cannot distinguish "expired" from "someone else's".
+    /// </remarks>
+    private static async Task<IResult> RedeemSecretAsync(
+        [FromBody] RedeemSecretRequest request,
+        [FromHeader(Name = AgentProtocol.Headers.Credential)] string? credentialHeader,
+        [FromHeader(Name = AgentProtocol.Headers.ProtocolVersion)] int? protocolVersion,
+        AgentAuthenticationService authenticationService,
+        Infrastructure.Security.EphemeralSecretStore secretStore,
+        CancellationToken cancellationToken)
+    {
+        if (protocolVersion != AgentProtocol.Version)
+        {
+            return Results.Problem(title: "Unsupported agent protocol version.", statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        var auth = await authenticationService.AuthenticateAsync(credentialHeader, cancellationToken);
+        if (!auth.Success)
+        {
+            return Results.Unauthorized();
+        }
+
+        var secret = await secretStore.RedeemAsync(auth.Device!.Id, request.SecretReference, cancellationToken);
+
+        return secret is null
+            ? Results.Problem(title: "Secret reference is not redeemable.", statusCode: StatusCodes.Status404NotFound)
+            : Results.Ok(new RedeemSecretResponse(secret));
     }
 
     private static async Task<IResult> GetPackageContentAsync(

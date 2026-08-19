@@ -52,6 +52,15 @@ public interface IAgentApiClient
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Redeems a one-time secret reference (local-account passwords). The server
+    /// deletes the secret atomically on read, so this succeeds at most once.
+    /// </summary>
+    Task<AgentApiResult<RedeemSecretResponse>> RedeemSecretAsync(
+        string secretReference,
+        DeviceCredential credential,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Streams a package's installer bytes to <paramref name="destination"/>. The
     /// caller is responsible for verifying the content hash and signer afterwards -
     /// this transfer is not a trust boundary.

@@ -40,6 +40,19 @@ public static class DeviceTaskCatalog
             new(DeviceTaskType.ControlService, Permissions.Task.Execute, HighRisk: true, 900),
             new(DeviceTaskType.TerminateProcess, Permissions.Task.Execute, HighRisk: true, 600),
             new(DeviceTaskType.InstallPackage, Permissions.Software.Deploy, HighRisk: true, 7200),
+
+            // Local account management (Phase 4 write side). All high-risk, interactive TTL:
+            // an account change requested an hour ago should not fire when a laptop finally
+            // reappears - the operator would re-issue it.
+            new(DeviceTaskType.CreateLocalUser, Permissions.LocalUser.Create, HighRisk: true, 900),
+            new(DeviceTaskType.DeleteLocalUser, Permissions.LocalUser.Delete, HighRisk: true, 900),
+            new(DeviceTaskType.EnableLocalUser, Permissions.LocalUser.Disable, HighRisk: true, 900),
+            new(DeviceTaskType.DisableLocalUser, Permissions.LocalUser.Disable, HighRisk: true, 900),
+            new(DeviceTaskType.ResetLocalUserPassword, Permissions.LocalUser.ResetPassword, HighRisk: true, 900),
+            new(DeviceTaskType.ForceLocalUserPasswordChange, Permissions.LocalUser.ForcePasswordChange, HighRisk: true, 900),
+            new(DeviceTaskType.ChangeLocalUserType, Permissions.LocalUser.ChangeType, HighRisk: true, 900),
+            new(DeviceTaskType.AddLocalUserToGroup, Permissions.Group.Manage, HighRisk: true, 900),
+            new(DeviceTaskType.RemoveLocalUserFromGroup, Permissions.Group.Manage, HighRisk: true, 900),
         }.ToFrozenDictionary(d => d.Type);
 
     public static DeviceTaskDefinition Require(DeviceTaskType type) =>

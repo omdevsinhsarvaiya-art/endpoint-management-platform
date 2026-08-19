@@ -160,6 +160,10 @@ public sealed class AgentEnrollmentManagerTests
         public Task<AgentApiResult<Unit>> DownloadPackageAsync(
             Guid packageId, Stream destination, DeviceCredential credential, CancellationToken cancellationToken = default) =>
             Task.FromResult(AgentApiResult<Unit>.Success(Unit.Value));
+
+        public Task<AgentApiResult<RedeemSecretResponse>> RedeemSecretAsync(
+            string secretReference, DeviceCredential credential, CancellationToken cancellationToken = default) =>
+            Task.FromResult(AgentApiResult<RedeemSecretResponse>.Success(new RedeemSecretResponse("unused")));
     }
 
     private sealed class FakeSystemInfo : ISystemInfoProvider

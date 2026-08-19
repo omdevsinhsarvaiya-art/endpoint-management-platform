@@ -95,6 +95,35 @@ A destructive remote wipe is intentionally not implemented: it would require its
 own guarded, explicitly-confirmed agent-side executor (see the Phase 14 note in
 [architecture.md](architecture.md) and [ADR-0005](adr/0005-no-shell-execution-in-agent.md)).
 
+## Local account management
+
+Managing Windows local accounts (including Standard User <-> Administrator)
+requires the agent to hold administrator privilege on the endpoint.
+
+- **Installed as a service** the agent runs as **LocalSystem**, which satisfies
+  this. No configuration change is needed.
+- **Run interactively for development** it inherits the launching user's token, so
+  it must be started from an elevated shell. An unelevated agent reports a genuine
+  access-denied failure on the task rather than silently doing nothing.
+- Do **not** weaken UAC, VBS or HVCI to make this work. Elevation of the service
+  identity is the supported path.
+
+Passwords for create-user and reset-password never reach PostgreSQL. They are held
+in Redis under `endpointplatform:secret:`, AES-GCM sealed, for 15 minutes, and are
+redeemed exactly once by the target device. Set `SecretProtection:Key` (base64
+32-byte) in configuration so in-flight secrets survive a restart and work across
+instances; without it a process-local key is generated and unredeemed secrets are
+invalidated by a restart (the task fails safely and can be re-issued).
+
+If Redis is unavailable, create-user and reset-password are **refused** rather than
+downgraded — every other local-account operation is unaffected.
+
+**Device scope**: an administrator's permissions apply only to devices within their
+assigned scope. New administrators start with no scope and reach nothing until
+granted either specific device groups or organization-wide scope. Administrators
+that predate this model were migrated to organization-wide scope by the
+`LocalAccountManagementAndDeviceScope` migration.
+
 ## Background jobs
 
 - **Task expiry sweeper** (Admin host) runs every minute and expires tasks whose
