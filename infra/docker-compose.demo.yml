@@ -1,0 +1,211 @@
+name: endpoint-platform-demo
+
+# ---------------------------------------------------------------------------
+# AWS DEMO stack — the whole management plane on one host.
+#
+#   docker compose -f infra/docker-compose.demo.yml --env-file infra/.env up -d --build
+#
+# This is a DEMONSTRATION topology, not a production one. It is one EC2 host
+# running Docker Compose: no orchestrator, no managed database, no autoscaling,
+# no multi-AZ. That is the point — it is the smallest thing that shows the whole
+# platform working end to end.
+#
+# Differences from infra/docker-compose.yml (the local dev stack):
+#   - the applications run as containers here; locally they run on the host
+#   - PostgreSQL and Redis publish NO ports; they are internal-only
+#   - the migration job runs to completion before either API starts
+#
+# The Windows agent is NOT here and must never be. It manages local Windows
+# accounts through netapi32 and needs real Windows elevation, so it stays a
+# native Windows service on each managed endpoint, dialling this host outbound
+# over HTTPS. See docs/deployment.md.
+#
+# Every credential comes from infra/.env, which is git-ignored.
+# ---------------------------------------------------------------------------
+
+services:
+
+  # --- backing services: internal only, never published -------------------
+
+  postgres:
+    image: postgres:17.6-alpine
+    container_name: epp-demo-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_SUPERUSER:?set POSTGRES_SUPERUSER in infra/.env}
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:?set POSTGRES_SUPERUSER_PASSWORD in infra/.env}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in infra/.env}
+      APP_DB_USER: ${POSTGRES_APP_USER:?set POSTGRES_APP_USER in infra/.env}
+      APP_DB_PASSWORD: ${POSTGRES_APP_PASSWORD:?set POSTGRES_APP_PASSWORD in infra/.env}
+      POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256 --auth-local=scram-sha-256"
+    # Deliberately NO ports: reachable only by the APIs on the internal network.
+    # A database published to a public EC2 host is found by scanners in minutes.
+    volumes:
+      - demo-postgres-data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\" -q"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+
+  redis:
+    image: redis:8.2-alpine
+    container_name: epp-demo-redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD:?set REDIS_PASSWORD in infra/.env}
+      --appendonly no
+      --save ""
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD}
+    # No ports, same reasoning as PostgreSQL. Redis holds the in-flight sealed
+    # account secrets; it must never be reachable from outside this network.
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    security_opt:
+      - no-new-privileges:true
+
+  # --- migration job: runs once, then exits -------------------------------
+
+  migrations:
+    build:
+      context: ..
+      dockerfile: server/Migrations/Dockerfile
+    image: endpoint-platform/migrations:demo
+    container_name: epp-demo-migrations
+    restart: "no"
+    environment:
+      # The ONLY component given the owner credential. The APIs never hold it.
+      ENDPOINTPLATFORM_Database__ConnectionString: >-
+        Host=postgres;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_SUPERUSER};Password=${POSTGRES_SUPERUSER_PASSWORD}
+      ENDPOINTPLATFORM_Database__RuntimeRoleName: ${POSTGRES_APP_USER}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [backend]
+    security_opt:
+      - no-new-privileges:true
+
+  # --- applications --------------------------------------------------------
+
+  admin-api:
+    build:
+      context: ..
+      dockerfile: server/Api/Dockerfile
+    image: endpoint-platform/admin-api:demo
+    container_name: epp-demo-admin-api
+    restart: unless-stopped
+    environment:
+      # RESTRICTED role: no DDL, insert-only on the audit table.
+      ENDPOINTPLATFORM_Database__ConnectionString: >-
+        Host=postgres;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_APP_USER};Password=${POSTGRES_APP_PASSWORD}
+      ENDPOINTPLATFORM_Redis__ConnectionString: "redis:6379,password=${REDIS_PASSWORD}"
+
+      # MUST match the Agent API exactly. This host seals the ephemeral account
+      # secrets that the Agent API redeems; two different keys fail at redemption
+      # time with a misleading Redis-shaped error, not at startup.
+      ENDPOINTPLATFORM_SecretProtection__Key: ${SECRET_PROTECTION_KEY:?set SECRET_PROTECTION_KEY in infra/.env}
+
+      # The public origin. The Admin API refuses to start without it.
+      ENDPOINTPLATFORM_Cors__AllowedOrigins__0: ${PUBLIC_ORIGIN:?set PUBLIC_ORIGIN in infra/.env, e.g. https://demo.example.com}
+
+      ENDPOINTPLATFORM_PackageStorage__Directory: /var/lib/endpoint-platform/packages
+      ASPNETCORE_ENVIRONMENT: Production
+    volumes:
+      # Uploaded installer content. Without this, deployed packages vanish on
+      # every container replacement.
+      - demo-package-content:/var/lib/endpoint-platform/packages
+    # No published port: reached only through nginx, which keeps the dashboard
+    # and this API on one origin (required by the __Host- session cookie).
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
+    networks: [backend, frontend]
+    security_opt:
+      - no-new-privileges:true
+
+  agent-api:
+    build:
+      context: ..
+      dockerfile: server/AgentApi/Dockerfile
+    image: endpoint-platform/agent-api:demo
+    container_name: epp-demo-agent-api
+    restart: unless-stopped
+    environment:
+      ENDPOINTPLATFORM_Database__ConnectionString: >-
+        Host=postgres;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_APP_USER};Password=${POSTGRES_APP_PASSWORD}
+      ENDPOINTPLATFORM_Redis__ConnectionString: "redis:6379,password=${REDIS_PASSWORD}"
+
+      # Same key as the Admin API above. See the note there.
+      ENDPOINTPLATFORM_SecretProtection__Key: ${SECRET_PROTECTION_KEY:?set SECRET_PROTECTION_KEY in infra/.env}
+
+      ENDPOINTPLATFORM_PackageStorage__Directory: /var/lib/endpoint-platform/packages
+      ASPNETCORE_ENVIRONMENT: Production
+    volumes:
+      # Read-only: agents download package content, they never write it.
+      - demo-package-content:/var/lib/endpoint-platform/packages:ro
+    ports:
+      # The one application port reachable from the endpoint network. Bound to
+      # localhost so the host's TLS proxy fronts it — the agent enforces
+      # certificate validation in Release builds, so this must be HTTPS from the
+      # endpoint's point of view. Publish directly only in a closed lab.
+      - "127.0.0.1:8081:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
+    networks: [backend]
+    security_opt:
+      - no-new-privileges:true
+
+  dashboard:
+    build:
+      context: ../dashboard
+      dockerfile: Dockerfile
+    image: endpoint-platform/dashboard:demo
+    container_name: epp-demo-dashboard
+    restart: unless-stopped
+    ports:
+      # The public entry point. Bound to localhost so the host's TLS terminator
+      # sits in front: the session cookie is Secure, so the browser-facing origin
+      # MUST be https:// or sign-in silently fails.
+      - "127.0.0.1:8080:80"
+    depends_on:
+      admin-api:
+        condition: service_healthy
+    networks: [frontend]
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  # PostgreSQL and Redis live here and are not reachable from `frontend`.
+  backend:
+    driver: bridge
+  # nginx <-> Admin API only.
+  frontend:
+    driver: bridge
+
+volumes:
+  demo-postgres-data:
+  demo-package-content:

@@ -24,6 +24,43 @@ device inventory; authentication + RBAC + audit). See
 Prerequisites: .NET SDK 10.0.4xx, Node.js 24 LTS, Docker Desktop (Linux
 containers), Git. All commands from the repository root on Windows PowerShell.
 
+**Day to day, this is the whole thing:**
+
+```powershell
+.\scripts\run-local.ps1 -WithAgent      # start everything
+.\scripts\stop-local.ps1                # stop everything
+```
+
+`run-local.ps1` starts PostgreSQL + Redis, applies migrations, and opens a
+window each for the Admin API (5080), the Agent API (5081) and the dashboard
+(5173), then waits until all three report ready. Every credential is read from
+`infra/.env`, so nothing is ever typed on a command line.
+
+`-WithAgent` also starts the Windows agent and raises **one UAC prompt**.
+Managing local Windows accounts requires administrator privilege; nothing here
+bypasses that, and declining the prompt just leaves the agent out. Omit the
+switch if you are not testing local user or group management.
+
+Useful switches once things are already up:
+
+| Switch | Use it when |
+| --- | --- |
+| `-SkipInfra` | The containers are already healthy (fastest restart) |
+| `-SkipMigrations` | The schema is current |
+| `-WithAgent` | You are testing local user / group management |
+| `-Infra` (on `stop-local.ps1`) | You also want the containers stopped |
+
+Then sign in at **http://localhost:5173**. `stop-local.ps1` never deletes a
+Docker volume — the PostgreSQL volume holds the audit trail, the enrolled
+devices and your admin account.
+
+<details>
+<summary>Manual setup, and the one-time first run</summary>
+
+Step 1 is required once before `run-local.ps1` will work; the rest is what the
+script automates, useful when something breaks and you want to run a piece of it
+by hand.
+
 ```powershell
 # 1. Local infrastructure credentials (one-time; file is git-ignored)
 Copy-Item infra\.env.example infra\.env
@@ -53,6 +90,8 @@ dotnet run --project server\AgentApi\EndpointPlatform.AgentApi.csproj  # termina
 # 6. Dashboard
 cd dashboard; npm install; npm run dev     # http://localhost:5173
 ```
+
+</details>
 
 Health checks: `GET /health/live`, `GET /health/ready` on both APIs. Swagger
 UI at `/swagger` (Development only). Full instructions and troubleshooting:
