@@ -30,6 +30,7 @@ public static class Permissions
         public const string Enroll = "device.enroll";
         public const string Retire = "device.retire";
         public const string RefreshInventory = "device.refresh_inventory";
+        public const string Rename = "device.rename";
     }
 
     public static class LocalUser
@@ -95,6 +96,9 @@ public static class Permissions
         new(Device.Enroll, "Devices", "Approve or complete device enrollment", HighRisk: true),
         new(Device.Retire, "Devices", "Retire a device and revoke its credential", HighRisk: true),
         new(Device.RefreshInventory, "Devices", "Request an out-of-band inventory refresh", HighRisk: false),
+        // Labelling only. It cannot rename Windows, move a device between
+        // organizations, or alter how the machine authenticates.
+        new(Device.Rename, "Devices", "Set the console display name for a device", HighRisk: false),
 
         new(LocalUser.View, "Local accounts", "View Windows local users on a device", HighRisk: false),
         new(LocalUser.Create, "Local accounts", "Create a Windows local user", HighRisk: true),

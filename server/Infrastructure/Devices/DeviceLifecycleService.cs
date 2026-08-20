@@ -79,6 +79,49 @@ public sealed class DeviceLifecycleService(
         return DeviceLifecycleResult.Success;
     }
 
+    /// <summary>
+    /// Sets or clears the console display name for a device. Pass null or blank
+    /// to clear it, which restores the reported hostname as the shown name.
+    /// </summary>
+    /// <remarks>
+    /// This writes exactly one column. It does not rename Windows, does not touch
+    /// the machine identifier or the device id, does not revoke or reissue any
+    /// credential, and queues no task for the agent — nothing about this reaches
+    /// the endpoint at all. The audit entry records the label before and after so
+    /// a device that changed name in the console can still be traced back to the
+    /// machine it has always been.
+    /// </remarks>
+    public async Task<DeviceLifecycleResult> RenameAsync(
+        Guid organizationId, Guid deviceId, string? displayName, Guid actorId, string actorDisplay,
+        CancellationToken cancellationToken = default)
+    {
+        var device = await _dbContext.Devices.SingleOrDefaultAsync(
+            d => d.Id == deviceId && d.OrganizationId == organizationId, cancellationToken);
+        if (device is null)
+        {
+            return DeviceLifecycleResult.NotFound;
+        }
+
+        var previous = device.DisplayName;
+        device.Rename(displayName);
+
+        // Hostname is carried on both sides so the trail reads unambiguously even
+        // for a device whose label has changed several times.
+        var before = System.Text.Json.JsonSerializer.Serialize(
+            new { displayName = previous, hostname = device.Hostname });
+        var after = System.Text.Json.JsonSerializer.Serialize(
+            new { displayName = device.DisplayName, hostname = device.Hostname });
+
+        _auditWriter.Stage(organizationId, AuditActorType.PlatformUser, actorId, actorDisplay,
+            action: "device.rename", AuditResult.Success,
+            a => a.OnDevice(device.Id, device.Hostname)
+                  .Requiring(Permissions.Device.Rename)
+                  .WithStateChange(before, after));
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        return DeviceLifecycleResult.Success;
+    }
+
     /// <summary>Returns a retired device to service. The machine must re-enroll for a new credential.</summary>
     public async Task<DeviceLifecycleResult> ReactivateAsync(
         Guid organizationId, Guid deviceId, Guid actorId, string actorDisplay,

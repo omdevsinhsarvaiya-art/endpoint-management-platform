@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { getDevices, type DevicePage } from '../api/client'
+import { deviceName, getDevices, type DevicePage } from '../api/client'
 import { Icon } from '../components/Icon'
 
 const PAGE_SIZE = 25
@@ -61,8 +61,8 @@ export function DevicesPage() {
             <Icon name="search" size={15} className="search-icon" />
             <input
               type="search"
-              placeholder="Search by hostname…"
-              aria-label="Search devices by hostname"
+              placeholder="Search name or hostname…"
+              aria-label="Search devices by name or hostname"
               value={search}
               onChange={(event) => {
                 setPage(1)
@@ -85,7 +85,7 @@ export function DevicesPage() {
             <div className="title">No devices found</div>
             <div>
               {search ? (
-                'No hostname matches this search.'
+                'No device name or hostname matches this search.'
               ) : (
                 <>
                   Install the Windows agent on a PC, then approve it under{' '}
@@ -102,6 +102,7 @@ export function DevicesPage() {
               <table className="table">
                 <thead>
                   <tr>
+                    <th>Name</th>
                     <th>Hostname</th>
                     <th>Status</th>
                     <th>Operating system</th>
@@ -113,9 +114,13 @@ export function DevicesPage() {
                 <tbody>
                   {data.items.map((device) => (
                     <tr key={device.id}>
+                      {/* The administrator's label leads. The Windows hostname
+                          keeps its own column so the row still says which
+                          physical machine this is. */}
                       <td>
-                        <Link to={`/devices/${device.id}`}>{device.hostname}</Link>
+                        <Link to={`/devices/${device.id}`}>{deviceName(device)}</Link>
                       </td>
+                      <td className="muted">{device.hostname}</td>
                       <td>
                         {/* Retired is neutral rather than critical: it is an
                             intended end state, not a fault to be investigated. */}

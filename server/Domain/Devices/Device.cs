@@ -48,6 +48,32 @@ public sealed class Device : AuditableEntity
     public string Hostname { get; private set; }
 
     /// <summary>
+    /// An administrator's own label for this machine — "TAM0149", "HR-Laptop-01".
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Console-side only. Renaming a device here does not touch the Windows
+    /// computer name, and the agent keeps reporting the real hostname on every
+    /// heartbeat. The two are stored separately precisely so that an estate can
+    /// be labelled to match how the organization actually refers to its machines
+    /// without anyone having to rename Windows to make the console readable.
+    /// </para>
+    /// <para>
+    /// Null means "no label" and <see cref="Name"/> falls back to
+    /// <see cref="Hostname"/>. Blank input normalises to null rather than to an
+    /// empty string, so clearing the field restores the hostname instead of
+    /// leaving a device with no name at all.
+    /// </para>
+    /// </remarks>
+    public string? DisplayName { get; private set; }
+
+    /// <summary>
+    /// What a human should be shown for this device: the administrator's label if
+    /// one is set, otherwise the machine's real hostname. Never empty.
+    /// </summary>
+    public string Name => DisplayName ?? Hostname;
+
+    /// <summary>
     /// Stable machine identifier (SMBIOS UUID where available) used to detect
     /// re-enrollment of a known machine. NOT a secret and NOT authentication —
     /// it is spoofable by design and treated purely as a dedup hint.
@@ -150,6 +176,20 @@ public sealed class Device : AuditableEntity
         EnrolledAt = now;
         LastSeenAt = now;
     }
+
+    /// <summary>
+    /// Sets or clears the administrator's label for this device. Pass null or
+    /// blank to clear it and fall back to the reported hostname.
+    /// </summary>
+    /// <remarks>
+    /// Touches <see cref="DisplayName"/> and nothing else. <see cref="Hostname"/>,
+    /// <see cref="MachineIdentifier"/>, the device id and the enrollment lineage
+    /// are all left exactly as they were — renaming is a labelling operation, not
+    /// a change of identity, and nothing about how this machine authenticates or
+    /// how re-enrollment resolves it may move as a side effect.
+    /// </remarks>
+    public void Rename(string? displayName) =>
+        DisplayName = Guard.OptionalMaxLength(displayName, 128);
 
     /// <summary>Marks an administrator's request for a fresh inventory.</summary>
     public void RequestInventoryRefresh(DateTimeOffset now) => InventoryRequestedAt = now;

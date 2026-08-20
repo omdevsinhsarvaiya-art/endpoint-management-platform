@@ -77,6 +77,10 @@ public static class DeviceEndpoints
             .WithName("ReactivateDevice")
             .RequirePermission(Domain.Authorization.Permissions.Device.Retire);
 
+        group.MapPatch("/{deviceId:guid}/display-name", SetDisplayNameAsync)
+            .WithName("SetDeviceDisplayName")
+            .RequirePermission(Domain.Authorization.Permissions.Device.Rename);
+
         return endpoints;
     }
 
@@ -95,6 +99,35 @@ public static class DeviceEndpoints
         var actor = AdminActor.Required(httpContext.User);
         var result = await lifecycleService.ReactivateAsync(
             actor.OrganizationId, deviceId, actor.UserId, actor.Email, cancellationToken);
+        return result == DeviceLifecycleResult.NotFound ? Results.NotFound() : Results.NoContent();
+    }
+
+    /// <summary>
+    /// A null or blank <c>DisplayName</c> clears the label, which restores the
+    /// agent-reported hostname as the device's shown name.
+    /// </summary>
+    public sealed record SetDisplayNameRequest(string? DisplayName);
+
+    private static async Task<IResult> SetDisplayNameAsync(
+        Guid deviceId,
+        SetDisplayNameRequest request,
+        DeviceLifecycleService lifecycleService,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        // Bounded here as well as in the domain so an oversized label is a 400
+        // rather than a 500 from a guard exception.
+        if (request.DisplayName is { } proposed && proposed.Trim().Length > 128)
+        {
+            return Results.Problem(
+                title: "Display name must be at most 128 characters.",
+                statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        var actor = AdminActor.Required(httpContext.User);
+        var result = await lifecycleService.RenameAsync(
+            actor.OrganizationId, deviceId, request.DisplayName, actor.UserId, actor.Email, cancellationToken);
+
         return result == DeviceLifecycleResult.NotFound ? Results.NotFound() : Results.NoContent();
     }
 
@@ -305,7 +338,11 @@ public static class DeviceEndpoints
         return Results.Ok(new
         {
             device.Id,
+            // Hostname is what Windows calls itself; DisplayName is what this
+            // console calls it. Both are sent so the dashboard can lead with the
+            // label and still show which physical machine it refers to.
             device.Hostname,
+            device.DisplayName,
             device.OperatingSystem,
             device.AgentVersion,
             Status = device.Status.ToString(),

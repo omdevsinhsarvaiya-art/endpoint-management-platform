@@ -18,6 +18,11 @@ internal sealed class DeviceConfiguration : IEntityTypeConfiguration<Device>
             .HasMaxLength(253)
             .IsRequired();
 
+        // Nullable on purpose: "no label" is a real state, distinct from an empty
+        // one, and it is what makes the hostname fallback unambiguous.
+        builder.Property(d => d.DisplayName)
+            .HasMaxLength(128);
+
         builder.Property(d => d.MachineIdentifier)
             .HasMaxLength(128)
             .IsRequired();

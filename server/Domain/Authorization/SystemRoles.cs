@@ -45,6 +45,11 @@ public static class SystemRoles
         Permissions.Device.Enroll,
         Permissions.Device.Retire,
         Permissions.Device.RefreshInventory,
+        // Not granted to Helpdesk: renaming is harmless to the endpoint but a
+        // device that quietly changes name in the console is confusing to
+        // everyone else looking at it, so it stays with the role that owns the
+        // estate's naming. Auditor is read-only and never gets it.
+        Permissions.Device.Rename,
         Permissions.LocalUser.View,
         Permissions.LocalUser.Create,
         Permissions.LocalUser.Delete,

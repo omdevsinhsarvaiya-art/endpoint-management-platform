@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
 import { DeviceUsersPanel } from './DeviceUsersPanel'
 import { DeviceGroupsPanel } from './DeviceGroupsPanel'
 import {
   getDevice,
   getDeviceTasks,
+  deviceName,
   offboardDevice,
   queueDeviceAction,
   reactivateDevice,
@@ -14,10 +15,28 @@ import {
   type DeviceTaskItem,
 } from '../api/client'
 
-import { Icon } from '../components/Icon'
+import { Icon, type IconName } from '../components/Icon'
 import { ConfirmDialog } from '../components/ConfirmDialog'
+import { EditDeviceNameDialog } from './EditDeviceNameDialog'
+
+/** One navigation card in the device feature grid. */
+interface FeatureSpec {
+  key: Tab
+  label: string
+  icon: IconName
+  desc: string
+  /** Omitted where the device has not reported anything to count. */
+  count?: number
+}
 
 type Tab = 'overview' | 'hardware' | 'network' | 'users' | 'groups' | 'software' | 'security' | 'updates' | 'services' | 'processes' | 'actions' | 'tasks'
+
+const MODULES: Tab[] = ['overview', 'hardware', 'network', 'users', 'groups', 'software',
+  'security', 'updates', 'services', 'processes', 'actions', 'tasks']
+
+function isModule(value: string | null): value is Tab {
+  return value !== null && (MODULES as string[]).includes(value)
+}
 
 type ActionKey = 'restart' | 'shutdown' | 'lock' | 'signout'
 
@@ -45,6 +64,17 @@ function formatTimestamp(value: string | null): string {
   return value ? new Date(value).toLocaleString() : '—'
 }
 
+/** "20 seconds ago". Falls back to an absolute date once it stops being useful. */
+function relativeSince(value: string | null): string {
+  if (!value) return 'never'
+  const seconds = Math.floor((Date.now() - new Date(value).getTime()) / 1000)
+  if (seconds < 5) return 'just now'
+  if (seconds < 60) return `${seconds} seconds ago`
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} minutes ago`
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)} hours ago`
+  return new Date(value).toLocaleDateString()
+}
+
 /**
  * The "we have not heard from the machine yet" state, which every inventory tab
  * needs. Says what to do about it rather than only reporting absence.
@@ -68,7 +98,22 @@ export function DeviceDetailPage() {
   const [tasks, setTasks] = useState<DeviceTaskItem[]>([])
   const [confirm, setConfirm] = useState<null | 'restart' | 'shutdown' | 'lock' | 'signout'>(null)
   const [actionMsg, setActionMsg] = useState<string | null>(null)
-  const [tab, setTab] = useState<Tab>('overview')
+  const [editingName, setEditingName] = useState(false)
+
+  // The open module lives in the query string rather than component state, so
+  // Back returns to the feature grid instead of leaving the device entirely,
+  // and a link to a specific module can be shared. No module in the URL means
+  // the grid — which is the landing view, not a tab that happens to be first.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const moduleParam = searchParams.get('m')
+  const tab: Tab | null = isModule(moduleParam) ? moduleParam : null
+
+  const openModule = useCallback(
+    (next: Tab) => setSearchParams({ m: next }),
+    [setSearchParams],
+  )
+  const closeModule = useCallback(() => setSearchParams({}), [setSearchParams])
+
   const [error, setError] = useState<string | null>(null)
   const [refreshRequested, setRefreshRequested] = useState(false)
 
@@ -155,20 +200,32 @@ export function DeviceDetailPage() {
     return <div className="loading">Loading device…</div>
   }
 
-  const tabs: { key: Tab; label: string; count?: number }[] = [
-    { key: 'overview', label: 'Overview' },
-    { key: 'hardware', label: 'Hardware' },
-    { key: 'network', label: 'Network', count: device.networkInterfaces.length },
-    { key: 'users', label: 'Users', count: device.localUsers.length },
-    { key: 'groups', label: 'Groups', count: device.localGroups.length },
-    { key: 'software', label: 'Software', count: device.software.length },
-    { key: 'security', label: 'Security' },
-    { key: 'updates', label: 'Updates', count: device.windowsUpdate?.history.length },
-    { key: 'services', label: 'Services', count: device.services.length },
-    { key: 'processes', label: 'Processes', count: device.processes.length },
-    { key: 'actions', label: 'Actions' },
-    { key: 'tasks', label: 'Tasks', count: tasks.length },
+  // Counts come from the loaded inventory only. A module whose count the device
+  // has not reported shows a description instead of a fabricated zero — "0
+  // services" would be a claim about the machine, not an absence of data.
+  const features: FeatureSpec[] = [
+    { key: 'overview', label: 'Overview', icon: 'devices', desc: 'device status' },
+    { key: 'hardware', label: 'Hardware', icon: 'software', desc: 'hardware info' },
+    { key: 'network', label: 'Network', icon: 'updates', desc: 'interfaces',
+      count: device.networkInterfaces.length },
+    { key: 'users', label: 'Users', icon: 'users', desc: 'local accounts',
+      count: device.localUsers.length },
+    { key: 'groups', label: 'Groups', icon: 'groups', desc: 'local groups',
+      count: device.localGroups.length },
+    { key: 'software', label: 'Software', icon: 'software', desc: 'installed SW',
+      count: device.software.length },
+    { key: 'security', label: 'Security', icon: 'security', desc: 'posture' },
+    { key: 'updates', label: 'Updates', icon: 'updates', desc: 'Windows Update',
+      count: device.windowsUpdate?.history.length },
+    { key: 'services', label: 'Services', icon: 'settings', desc: 'services',
+      count: device.services.length },
+    { key: 'processes', label: 'Processes', icon: 'tasks', desc: 'running procs',
+      count: device.processes.length },
+    { key: 'actions', label: 'Actions', icon: 'key', desc: 'device actions' },
+    { key: 'tasks', label: 'Tasks', icon: 'audit', desc: 'task history', count: tasks.length },
   ]
+
+  const openFeature = tab ? features.find((f) => f.key === tab) : undefined
 
   // Grouped by consequence. "Lock screen" is recoverable in a second; "Shut
   // down" needs someone physically present to undo. Presenting them as one flat
@@ -182,6 +239,7 @@ export function DeviceDetailPage() {
     { key: 'shutdown', label: 'Shut down', perm: 'device.shutdown', confirm: true },
   ]
 
+  const canRename = hasPermission('device.rename')
   const visibleSession = sessionActions.filter((a) => hasPermission(a.perm))
   const visiblePower = powerActions.filter((a) => hasPermission(a.perm))
 
@@ -213,6 +271,21 @@ export function DeviceDetailPage() {
         </div>
       )}
 
+      {editingName && (
+        <EditDeviceNameDialog
+          deviceId={device.id}
+          hostname={device.hostname}
+          currentDisplayName={device.displayName}
+          onCancel={() => setEditingName(false)}
+          onSaved={async () => {
+            setEditingName(false)
+            // Reload rather than patching local state: the server is what decides
+            // whether a blank cleared the label, so its answer is the truth.
+            await load()
+          }}
+        />
+      )}
+
       {confirm && (
         <ConfirmDialog
           title={`Confirm ${confirm}`}
@@ -232,16 +305,24 @@ export function DeviceDetailPage() {
         <div className="breadcrumb">
           <Link to="/devices">Devices</Link>
           <Icon name="chevron-right" size={12} />
-          <span>{device.hostname}</span>
+          <span>{deviceName(device)}</span>
         </div>
         <div className="detail-title">
-          <h1>{device.hostname}</h1>
+          {/* The administrator's label is the headline. The real hostname sits
+              in the facts strip below, so the machine is still identifiable. */}
+          <h1>{deviceName(device)}</h1>
           {device.status === 'Retired' ? (
             <span className="badge neutral">Retired</span>
           ) : (
             <span className="badge ok">Active</span>
           )}
           <span className="spacer" />
+          {canRename && (
+            <button type="button" className="btn-sm" onClick={() => setEditingName(true)}>
+              <Icon name="edit" size={14} />
+              Edit Name
+            </button>
+          )}
           <button
             type="button"
             onClick={() => void onRefreshInventory()}
@@ -256,6 +337,14 @@ export function DeviceDetailPage() {
           </button>
         </div>
         <div className="detail-facts">
+          {/* Shown only when a label is set: without one the heading already
+              is the hostname, and repeating it says nothing. */}
+          {device.displayName && (
+            <span className="fact">
+              <span className="fact-label">Hostname</span>
+              <span className="fact-value">{device.hostname}</span>
+            </span>
+          )}
           <span className="fact">
             <span className="fact-label">OS</span>
             <span className="fact-value">{device.operatingSystem ?? '—'}</span>
@@ -270,31 +359,69 @@ export function DeviceDetailPage() {
           </span>
           <span className="fact">
             <span className="fact-label">Last seen</span>
-            <span className="fact-value">{formatTimestamp(device.lastSeenAt)}</span>
+            {/* Relative, because "is this machine reachable right now" is the
+                question being asked. The exact timestamp is on the tooltip and
+                in Overview for when it matters. */}
+            <span className="fact-value" title={formatTimestamp(device.lastSeenAt)}>
+              {relativeSince(device.lastSeenAt)}
+            </span>
           </span>
         </div>
       </div>
 
-      <div className="tabs" role="tablist" aria-label="Device sections">
-        {tabs.map((t) => (
-          <button
-            key={t.key}
-            type="button"
-            role="tab"
-            className="tab"
-            aria-selected={tab === t.key}
-            onClick={() => setTab(t.key)}
-          >
-            {t.label}
-            {t.count ? <span className="tab-count">{t.count}</span> : null}
+      {/* The feature grid IS the device navigation. When a module is open the
+          grid is replaced rather than kept above it, so the module gets the
+          whole content area and there is exactly one way back. */}
+      {!tab && (
+        <>
+          <h2 className="section-label">Device features</h2>
+          <div className="feature-grid">
+            {features.map((f) => (
+              <button
+                key={f.key}
+                type="button"
+                className="feature-card"
+                onClick={() => openModule(f.key)}
+              >
+                <span className="feature-icon">
+                  <Icon name={f.icon} size={17} />
+                </span>
+                <span className="feature-body">
+                  <span className="feature-name">{f.label}</span>
+                  {f.count !== undefined && <span className="feature-count">{f.count}</span>}
+                  <span className="feature-desc">{f.desc}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+
+      {openFeature && (
+        <div className="module-header">
+          <button type="button" className="btn-ghost btn-sm" onClick={closeModule}>
+            <Icon name="chevron-left" size={14} />
+            Device Menu
           </button>
-        ))}
-      </div>
+          <span className="back-divider" />
+          <h2>{openFeature.label}</h2>
+          {openFeature.count !== undefined && (
+            <span className="badge neutral plain">{openFeature.count}</span>
+          )}
+        </div>
+      )}
 
       {tab === 'overview' && (
         <div className="card">
           <h2>Identity</h2>
           <dl className="kv">
+            {/* Both, always, and labelled — this is the one place where an
+                administrator should be able to see exactly which name is the
+                console's and which one is the machine's. */}
+            <dt>Display name</dt>
+            <dd>
+              {device.displayName ?? <span className="muted">Not set — showing hostname</span>}
+            </dd>
             <dt>Hostname</dt>
             <dd>{device.hostname}</dd>
             <dt>Operating system</dt>

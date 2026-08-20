@@ -47,7 +47,13 @@ public sealed class DeviceReadService(
             // Parameterised by EF; the pattern characters in user input are treated
             // as literals only if escaped - escape them so "50%" matches literally.
             var escaped = term.Replace(@"\", @"\\").Replace("%", @"\%").Replace("_", @"\_");
-            query = query.Where(d => EF.Functions.ILike(d.Hostname, $"%{escaped}%", @"\"));
+            // Search both names. An administrator who labelled a machine "TAM0149"
+            // will search for that; one who knows it as LAPTOP-LVCHEQ2H will search
+            // for the hostname. Matching only one of them makes devices findable by
+            // whichever name the searcher happens not to be using.
+            query = query.Where(d =>
+                EF.Functions.ILike(d.Hostname, $"%{escaped}%", @"\")
+                || (d.DisplayName != null && EF.Functions.ILike(d.DisplayName, $"%{escaped}%", @"\")));
         }
 
         var totalCount = await query.CountAsync(cancellationToken);
@@ -64,6 +70,7 @@ public sealed class DeviceReadService(
             .Select(d => new DeviceListItem(
                 d.Id,
                 d.Hostname,
+                d.DisplayName,
                 d.OperatingSystem,
                 d.AgentVersion,
                 d.Status.ToString(),
@@ -109,7 +116,10 @@ public sealed class DeviceReadService(
 
 public sealed record DeviceListItem(
     Guid Id,
+    /// <summary>The Windows computer name, as reported by the agent.</summary>
     string Hostname,
+    /// <summary>The administrator's console label, or null when none is set.</summary>
+    string? DisplayName,
     string? OperatingSystem,
     string AgentVersion,
     string Status,

@@ -69,12 +69,21 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     )
   }
 
+  // A successful mutation may answer 204 with no body. Parsing that as JSON
+  // throws on an empty string, turning a success into a spurious failure.
+  if (response.status === 204 || response.headers.get('Content-Length') === '0') {
+    return undefined as T
+  }
+
   return (await response.json()) as T
 }
 
 export interface DeviceListItem {
   id: string
+  /** The Windows computer name, as reported by the agent. */
   hostname: string
+  /** The administrator's console label, or null when none is set. */
+  displayName: string | null
   operatingSystem: string | null
   agentVersion: string
   status: 'Active' | 'Retired'
@@ -168,7 +177,10 @@ export interface DeviceLocalGroup {
 
 export interface DeviceDetail {
   id: string
+  /** The Windows computer name, as reported by the agent. */
   hostname: string
+  /** The administrator's console label, or null when none is set. */
+  displayName: string | null
   operatingSystem: string | null
   agentVersion: string
   status: 'Active' | 'Retired'
@@ -781,4 +793,31 @@ export function rejectEnrollment(requestId: string): Promise<EnrollmentDecision>
     `/admin/v1/enrollments/${encodeURIComponent(requestId)}/reject`,
     { method: 'POST' },
   )
+}
+
+/**
+ * What a device should be called on screen: the administrator's label if one is
+ * set, otherwise the machine's real hostname. Mirrors the server's fallback so
+ * the two can never disagree.
+ */
+export function deviceName(device: { hostname: string; displayName: string | null }): string {
+  return device.displayName ?? device.hostname
+}
+
+/**
+ * Sets or clears the console display name for a device.
+ *
+ * Pass null or a blank string to clear it, which restores the hostname. This
+ * changes a label in this console only -- it does not rename Windows, and
+ * nothing about it reaches the endpoint.
+ */
+export async function setDeviceDisplayName(
+  deviceId: string,
+  displayName: string | null,
+): Promise<void> {
+  await request<void>(`/admin/v1/devices/${deviceId}/display-name`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ displayName }),
+  })
 }
