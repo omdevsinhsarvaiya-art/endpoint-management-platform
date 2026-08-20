@@ -730,3 +730,55 @@ export function removeLocalGroupMember(deviceId: string, groupSid: string, membe
     `/admin/v1/devices/${encodeURIComponent(deviceId)}/local-groups/${encodeURIComponent(groupSid)}/members/${encodeURIComponent(memberSid)}`,
     'DELETE')
 }
+
+// ---------------------------------------------------------------------------
+// Pending agent enrollment
+//
+// A Windows PC that has installed the MSI asks to be managed and then waits.
+// Nothing is issued until an administrator approves it here, so this is the
+// authorization gate for the whole enrollment flow.
+//
+// Everything below is identity and state. The proof secret, the sealed
+// enrollment token and the device credential are all server-side only and are
+// never sent to the browser -- there is deliberately no field for them here.
+// ---------------------------------------------------------------------------
+
+export interface PendingEnrollment {
+  /** SHA-256 the agent published. Identifies the request; it is not a credential. */
+  requestId: string
+  hostname: string
+  /** SMBIOS UUID. Lets an administrator tell a re-enrolling machine from a new one. */
+  machineIdentifier: string
+  operatingSystem: string | null
+  agentVersion: string
+  requestedAt: string
+  expiresAt: string
+  status: 'Pending' | 'Approved' | 'Rejected'
+  /** Display name of the deciding administrator, once decided. */
+  approvedBy: string | null
+}
+
+export interface EnrollmentDecision {
+  requestId: string
+  status: string
+  hostname: string
+  message: string
+}
+
+export function getPendingEnrollments(): Promise<PendingEnrollment[]> {
+  return request<PendingEnrollment[]>('/admin/v1/enrollments/pending')
+}
+
+export function approveEnrollment(requestId: string): Promise<EnrollmentDecision> {
+  return request<EnrollmentDecision>(
+    `/admin/v1/enrollments/${encodeURIComponent(requestId)}/approve`,
+    { method: 'POST' },
+  )
+}
+
+export function rejectEnrollment(requestId: string): Promise<EnrollmentDecision> {
+  return request<EnrollmentDecision>(
+    `/admin/v1/enrollments/${encodeURIComponent(requestId)}/reject`,
+    { method: 'POST' },
+  )
+}

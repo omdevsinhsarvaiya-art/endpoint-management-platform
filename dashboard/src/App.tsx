@@ -4,6 +4,7 @@ import { AppShell } from './components/AppShell'
 import { DashboardPage } from './pages/DashboardPage'
 import { DeviceDetailPage } from './pages/DeviceDetailPage'
 import { DevicesPage } from './pages/DevicesPage'
+import { PendingEnrollmentsPage } from './pages/PendingEnrollmentsPage'
 import { SecurityPage } from './pages/SecurityPage'
 import { GroupsPage } from './pages/GroupsPage'
 import { PoliciesPage } from './pages/PoliciesPage'
@@ -37,6 +38,7 @@ function AuthGate() {
         <Route element={<AppShell />}>
           <Route index element={<DashboardPage />} />
           <Route path="devices" element={<DevicesPage />} />
+          <Route path="enrollments" element={<PendingEnrollmentsPage />} />
           <Route path="devices/:deviceId" element={<DeviceDetailPage />} />
           <Route
             path="users"

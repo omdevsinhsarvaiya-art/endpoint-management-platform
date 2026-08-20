@@ -14,6 +14,9 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { to: '/', label: 'Dashboard' },
   { to: '/devices', label: 'Devices' },
+  // Directly under Devices: an administrator looking for a machine that has not
+  // appeared yet is already in this part of the navigation.
+  { to: '/enrollments', label: 'Pending Enrollments' },
   { to: '/users', label: 'Users' },
   { to: '/groups', label: 'Groups' },
   { to: '/software', label: 'Software' },
