@@ -1,0 +1,196 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<!--
+  Endpoint Platform Agent installer.
+
+  Produces EndpointPlatformAgent-<version>-x64.msi. Installs the self-contained
+  agent, registers it as a Windows Service that starts automatically and recovers
+  from crashes, and creates an ACL-protected state directory under ProgramData.
+
+  Deliberately NOT in this package:
+    - any enrollment token, credential or other secret. The MSI is a common,
+      universal binary: it is identical for every machine and every customer, so
+      it can be cached, mirrored and signed once. Enrolment happens after
+      install, gated by an administrator approving the machine in the dashboard.
+    - a UI wizard. Windows Installer's built-in progress is enough for a
+      double-click install and leaves no console window behind.
+
+  The published agent directory is passed in as $(AgentPublishDir) by the build.
+-->
+
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+
+  <Package Name="Endpoint Platform Agent"
+           Manufacturer="Endpoint Platform"
+           Version="$(var.ProductVersion)"
+           UpgradeCode="8f3c1d92-6b74-4a5e-9d21-7c4e8b0f5a63"
+           Scope="perMachine"
+           Compressed="yes"
+           InstallerVersion="500">
+
+    <!--
+      Same UpgradeCode across versions, so installing 1.1.0 over 1.0.0 is an
+      upgrade rather than a second copy. AfterInstallValidate schedules the
+      removal of the old version before the new files are laid down, which keeps
+      the service from being registered twice.
+    -->
+    <MajorUpgrade
+      Schedule="afterInstallValidate"
+      AllowSameVersionUpgrades="yes"
+      DowngradeErrorMessage="A newer version of the Endpoint Platform Agent is already installed." />
+
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <!-- x64 only: the agent P/Invokes 64-bit Windows account-management APIs. -->
+    <Launch Condition="VersionNT64" Message="The Endpoint Platform Agent requires 64-bit Windows." />
+
+    <!-- Windows 10 1809 / Server 2019 or later. -->
+    <Launch Condition="Installed OR (VersionNT &gt;= 603)"
+            Message="The Endpoint Platform Agent requires Windows 10 or Windows Server 2016 or later." />
+
+    <Property Id="ARPHELPLINK" Value="https://github.com/omdevsinhsarvaiya-art/endpoint-management-platform" />
+
+    <!--
+      The management server the agent talks to. Not a secret: it is a public URL,
+      so it is baked at build time rather than delivered as a per-download
+      artifact. An administrator can still override it for another deployment
+      with `msiexec /i ... SERVERBASEURL=https://…`, which is documented but not
+      required for the normal double-click install.
+    -->
+    <Property Id="SERVERBASEURL" Value="$(var.ServerBaseUrl)" Secure="yes" />
+
+    <ui:WixUI Id="WixUI_Minimal" />
+    <WixVariable Id="WixUILicenseRtf" Value="License.rtf" />
+
+    <Feature Id="Main" Title="Endpoint Platform Agent" Level="1" AllowAbsent="no">
+      <ComponentGroupRef Id="AgentBinaries" />
+      <ComponentGroupRef Id="AgentServiceComponents" />
+      <ComponentGroupRef Id="AgentStateComponents" />
+    </Feature>
+  </Package>
+
+  <Fragment>
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="CompanyFolder" Name="EndpointPlatform">
+        <Directory Id="INSTALLFOLDER" Name="Agent" />
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="STATEFOLDER" Name="EndpointPlatformAgent">
+        <Directory Id="LOGFOLDER" Name="Logs" />
+      </Directory>
+    </StandardDirectory>
+  </Fragment>
+
+  <Fragment>
+    <!--
+      Service registration lives on the executable's own component, which is what
+      Windows Installer requires: the ServiceInstall is keyed to the file it runs.
+    -->
+    <ComponentGroup Id="AgentServiceComponents">
+      <Component Id="AgentServiceExe" Directory="INSTALLFOLDER" Bitness="always64" Guid="2b7a4e18-9c33-4f60-8a15-3d6e2f9b4c71">
+        <File Id="EndpointAgentServiceExe"
+              Source="$(var.AgentPublishDir)\EndpointAgent.Service.exe"
+              KeyPath="yes" />
+
+        <ServiceInstall Id="AgentServiceInstall"
+                        Name="EndpointPlatformAgent"
+                        DisplayName="Endpoint Platform Agent"
+                        Description="Reports inventory to the Endpoint Platform management server and applies management tasks it authorises. Communicates outbound over HTTPS only."
+                        Type="ownProcess"
+                        Start="auto"
+                        ErrorControl="normal"
+                        Account="LocalSystem"
+                        Vital="yes">
+
+          <!--
+            LocalSystem is required, not convenience: creating and modifying local
+            Windows accounts through netapi32 needs administrative privilege. The
+            server still authorises every action; the service decides nothing on
+            its own.
+          -->
+
+          <!--
+            Restart on crash, with a widening gap, and reset the counter daily.
+            Without this a transient fault leaves an endpoint silently unmanaged
+            until someone notices it stopped reporting.
+          -->
+          <util:ServiceConfig
+            FirstFailureActionType="restart"
+            SecondFailureActionType="restart"
+            ThirdFailureActionType="restart"
+            RestartServiceDelayInSeconds="60"
+            ResetPeriodInDays="1" />
+
+          <!--
+            No DelayedAutoStart. The MSI ServiceConfig table that would carry it is
+            documented by the Windows Installer SDK as "not [working] as expected",
+            and the problem it solves - starting before the network stack is ready -
+            is already handled properly: HeartbeatLoop retries with exponential
+            backoff from 30s to 5min, so an early start costs one retry, not a
+            failed enrolment.
+          -->
+        </ServiceInstall>
+
+        <!-- Start on install and upgrade; stop and remove on uninstall. -->
+        <ServiceControl Id="AgentServiceControl"
+                        Name="EndpointPlatformAgent"
+                        Start="install"
+                        Stop="both"
+                        Remove="uninstall"
+                        Wait="yes" />
+
+        <!-- Event Log source, so the service can write warnings where an
+             administrator already looks. Created here because registering a
+             source needs privileges the running service should not have. -->
+        <RegistryKey Root="HKLM" Key="SYSTEM\CurrentControlSet\Services\EventLog\Application\EndpointPlatformAgent">
+          <RegistryValue Type="string" Name="EventMessageFile"
+                         Value="[NETFRAMEWORK]v4.0.30319\EventLogMessages.dll" />
+          <RegistryValue Type="integer" Name="TypesSupported" Value="7" />
+        </RegistryKey>
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+
+  <Fragment>
+    <ComponentGroup Id="AgentStateComponents">
+      <!--
+        ProgramData inherits an ACE granting BUILTIN\Users write access. The agent's
+        state directory holds the DPAPI-protected device credential and the machine
+        configuration, so inheritance is broken and the DACL replaced with SYSTEM +
+        Administrators only.
+      -->
+      <Component Id="AgentStateFolder" Directory="STATEFOLDER" Bitness="always64" Guid="6d1f8c47-2e59-4b83-9a07-5f3c8e1d2b94">
+        <CreateFolder>
+          <util:PermissionEx User="SYSTEM" GenericAll="yes" />
+          <util:PermissionEx User="Administrators" GenericAll="yes" />
+        </CreateFolder>
+        <util:RemoveFolderEx On="uninstall" Property="STATEFOLDERPROP" />
+        <RegistryValue Root="HKLM" Key="SOFTWARE\EndpointPlatform\Agent"
+                       Name="StateDirectory" Type="string" Value="[STATEFOLDER]" KeyPath="yes" />
+      </Component>
+
+      <Component Id="AgentLogFolder" Directory="LOGFOLDER" Bitness="always64" Guid="9c4b2a06-7d18-4e52-b3f9-1a8d6c5e0f37">
+        <CreateFolder>
+          <util:PermissionEx User="SYSTEM" GenericAll="yes" />
+          <util:PermissionEx User="Administrators" GenericAll="yes" />
+        </CreateFolder>
+        <RegistryValue Root="HKLM" Key="SOFTWARE\EndpointPlatform\Agent"
+                       Name="LogDirectory" Type="string" Value="[LOGFOLDER]" KeyPath="yes" />
+      </Component>
+
+      <!--
+        Machine-wide configuration. Written by the installer so the service knows
+        which management server to contact; read after appsettings.json and
+        overridden only by environment variables. Contains NO secret - the server
+        URL is public information.
+      -->
+      <Component Id="AgentMachineConfig" Directory="STATEFOLDER" Bitness="always64" Guid="4a9e7f21-8b36-4c94-a5d2-0e7f1b3c6d85">
+        <File Id="AgentConfigJson" Name="agent.config.json" Source="agent.config.json" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+</Wix>

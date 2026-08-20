@@ -1,3 +1,6 @@
+using EndpointPlatform.Infrastructure.Configuration;
+using Microsoft.AspNetCore.RateLimiting;
+using System.Threading.RateLimiting;
 using System.Reflection;
 using EndpointPlatform.AgentApi.Endpoints;
 using EndpointPlatform.Contracts;
@@ -49,6 +52,34 @@ public sealed class Program
             builder.Services.AddPlatformHosting();
             builder.Services.AddEndpointPlatformInfrastructure(builder.Configuration, builder.Environment);
 
+            // The Agent API had NO rate limiting at all, including on the anonymous
+            // enrollment endpoint that already existed. Those endpoints are the only
+            // ones reachable without a credential, so they are the only ones an
+            // unauthenticated caller can flood.
+            builder.Services.AddRateLimiter(limiter =>
+            {
+                limiter.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+                limiter.AddPolicy(AgentEndpoints.EnrollmentRateLimitPolicy, httpContext =>
+                {
+                    // Read per-request so the bound is configurable per deployment;
+                    // sites behind NAT need a far looser limit than a single endpoint.
+                    var agentOptions = httpContext.RequestServices
+                        .GetRequiredService<Microsoft.Extensions.Options.IOptions<AgentServerOptions>>().Value;
+
+                    return RateLimitPartition.GetFixedWindowLimiter(
+                        httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                        _ => new FixedWindowRateLimiterOptions
+                        {
+                            PermitLimit = agentOptions.EnrollmentRequestsPerMinutePerAddress,
+                            Window = TimeSpan.FromMinutes(1),
+
+                            // No queue: a throttled agent must be told to back off, not
+                            // held open. It already retries with exponential backoff.
+                            QueueLimit = 0,
+                        });
+                });
+            });
+
             builder.Services.AddEndpointsApiExplorer();
             builder.Services.AddSwaggerGen(options =>
             {
@@ -71,6 +102,7 @@ public sealed class Program
                     ex is BadHttpRequestException bad ? bad.StatusCode : StatusCodes.Status500InternalServerError,
             });
             app.UseStatusCodePages();
+            app.UseRateLimiter();
 
             if (app.Environment.IsDevelopment())
             {

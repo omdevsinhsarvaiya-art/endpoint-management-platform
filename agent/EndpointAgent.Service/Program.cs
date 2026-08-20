@@ -1,4 +1,5 @@
 using System.Runtime.Versioning;
+using EndpointAgent.Core;
 using EndpointAgent.Core.Abstractions;
 using EndpointAgent.Core.Communication;
 using EndpointAgent.Core.Configuration;
@@ -9,6 +10,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Serilog;
+using Serilog.Events;
 
 namespace EndpointAgent.Service;
 
@@ -25,6 +27,25 @@ namespace EndpointAgent.Service;
 [SupportedOSPlatform("windows")]
 public static class Program
 {
+    /// <summary>
+    /// Whether the installer registered our Event Log source. Probing avoids the
+    /// sink throwing on a machine where the agent was started without installing
+    /// (a developer run), which would take the whole logging pipeline down.
+    /// </summary>
+    private static bool EventLogSourceExists()
+    {
+        try
+        {
+            return System.Diagnostics.EventLog.SourceExists("EndpointPlatformAgent");
+        }
+        catch (Exception)
+        {
+            // Reading the source registry requires privileges a non-elevated
+            // developer run may not have. Absence of proof, so: skip the sink.
+            return false;
+        }
+    }
+
     public static async Task<int> Main(string[] args)
     {
         Log.Logger = new LoggerConfiguration()
@@ -35,16 +56,60 @@ public static class Program
         {
             var builder = Host.CreateApplicationBuilder(args);
 
+            // Machine-wide configuration, written by the installer into the
+            // ACL-protected state directory. It is read AFTER appsettings.json so an
+            // installed agent overrides the build-time defaults, and BEFORE
+            // environment variables so a developer can still override locally
+            // without editing a protected file.
+            //
+            // Program Files is deliberately not the config location: the service
+            // account can write state but must not be able to rewrite its own
+            // binaries' directory.
+            builder.Configuration.AddJsonFile(
+                Path.Combine(AgentPaths.StateDirectory, "agent.config.json"),
+                optional: true,
+                reloadOnChange: false);
+
             // ENDPOINTAGENT_Agent__ServerBaseUrl, ENDPOINTAGENT_Enrollment__Token, ...
             builder.Configuration.AddEnvironmentVariables(prefix: "ENDPOINTAGENT_");
 
             builder.Services.AddWindowsService(options => options.ServiceName = "EndpointPlatformAgent");
 
-            builder.Services.AddSerilog((services, configuration) => configuration
-                .ReadFrom.Configuration(builder.Configuration)
-                .ReadFrom.Services(services)
-                .Enrich.FromLogContext()
-                .Enrich.WithMachineName());
+            builder.Services.AddSerilog((services, configuration) =>
+            {
+                configuration
+                    .ReadFrom.Configuration(builder.Configuration)
+                    .ReadFrom.Services(services)
+                    .Enrich.FromLogContext()
+                    .Enrich.WithMachineName();
+
+                // A Windows Service has no console, so the console sink configured in
+                // appsettings.json reaches nobody once this runs under the SCM. These
+                // two are the ones that actually matter in production, and they are
+                // configured here rather than in JSON so the paths come from
+                // AgentPaths instead of being duplicated as escaped strings.
+                configuration.WriteTo.File(
+                    Path.Combine(AgentPaths.LogDirectory, "agent-.log"),
+                    rollingInterval: RollingInterval.Day,
+                    retainedFileCountLimit: 14,
+                    fileSizeLimitBytes: 20 * 1024 * 1024,
+                    rollOnFileSizeLimit: true,
+                    shared: true,
+                    outputTemplate:
+                        "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {Message:lj}{NewLine}{Exception}");
+
+                // Warnings and errors also go where an administrator already looks.
+                // The event source is created by the installer, which runs elevated;
+                // creating it here would fail for a service that is not an admin.
+                if (OperatingSystem.IsWindows() && EventLogSourceExists())
+                {
+                    configuration.WriteTo.EventLog(
+                        source: "EndpointPlatformAgent",
+                        logName: "Application",
+                        manageEventSource: false,
+                        restrictedToMinimumLevel: LogEventLevel.Warning);
+                }
+            });
 
             builder.Services.AddOptions<AgentOptions>()
                 .Bind(builder.Configuration.GetSection(AgentOptions.SectionName))
@@ -64,6 +129,10 @@ public static class Program
             // Windows implementations of the platform-neutral abstractions.
             builder.Services.AddSingleton<ISystemInfoProvider, WindowsSystemInfoProvider>();
             builder.Services.AddSingleton<IDeviceCredentialStore, DpapiDeviceCredentialStore>();
+
+            // Survives service restart and reboot while a request waits for approval,
+            // so the agent resumes its request instead of orphaning one.
+            builder.Services.AddSingleton<IEnrollmentStateStore, DpapiEnrollmentStateStore>();
             builder.Services.AddSingleton<ILocalAccountsCollector, WindowsLocalAccountsCollector>();
             builder.Services.AddSingleton<ISoftwareCollector, WindowsSoftwareCollector>();
             builder.Services.AddSingleton<ISecurityPostureCollector, WindowsSecurityPostureCollector>();

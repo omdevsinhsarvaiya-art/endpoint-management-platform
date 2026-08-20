@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Options;
+using EndpointAgent.Core.Configuration;
 using EndpointAgent.Core.Abstractions;
 using EndpointAgent.Core.Enrollment;
 using EndpointPlatform.Contracts.Agent;
@@ -11,8 +13,204 @@ public sealed class AgentEnrollmentManagerTests
     private readonly FakeApiClient _api = new();
     private readonly FakeSystemInfo _systemInfo = new();
 
+    private readonly FakeEnrollmentStateStore _enrollmentState = new();
+
+    // --------------------------------------------- approval-gated enrollment
+
+    [Fact]
+    public async Task With_no_token_the_agent_asks_to_be_managed_instead_of_giving_up()
+    {
+        // The MSI ships no token, so "no credential and no token" is the normal state
+        // of a freshly installed agent, not a misconfiguration.
+        var result = await CreateManager().EnsureEnrolledAsync(enrollmentToken: null, "1.0.0");
+
+        result.ShouldBeNull("no credential is issued until an administrator approves");
+        _api.RequestCalls.ShouldBe(1);
+        _api.EnrollCalls.ShouldBe(0, "the token-based path must not be used");
+    }
+
+    [Fact]
+    public async Task The_request_carries_the_hash_and_never_the_secret()
+    {
+        await CreateManager().EnsureEnrolledAsync(null, "1.0.0");
+
+        var sent = _api.LastRequest.ShouldNotBeNull();
+        var stored = _enrollmentState.State.ShouldNotBeNull();
+
+        // Proof-of-possession: only the digest is transmitted.
+        sent.RequestId.Length.ShouldBe(64);
+        sent.RequestId.ShouldBe(stored.RequestId);
+        sent.RequestId.ShouldNotBe(stored.RequestSecret);
+
+        // The whole serialized request must not contain the secret anywhere.
+        System.Text.Json.JsonSerializer.Serialize(sent)
+            .ShouldNotContain(stored.RequestSecret);
+    }
+
+    [Fact]
+    public async Task The_agent_never_sends_an_organization()
+    {
+        await CreateManager().EnsureEnrolledAsync(null, "1.0.0");
+
+        // An unauthenticated caller must not be able to choose its tenant; the
+        // organization comes from the approving administrator.
+        System.Text.Json.JsonSerializer.Serialize(_api.LastRequest!)
+            .ShouldNotContain("rganization");
+    }
+
+    [Fact]
+    public async Task The_secret_is_persisted_before_the_request_is_sent()
+    {
+        // If the process dies between the two, a request would exist that nothing can
+        // claim — an entry an administrator could approve to no effect.
+        _api.RequestResult = AgentApiResult<EnrollmentRequestResponse>.Transient();
+
+        await CreateManager().EnsureEnrolledAsync(null, "1.0.0");
+
+        _enrollmentState.State.ShouldNotBeNull("state must survive a failed submission");
+    }
+
+    [Fact]
+    public async Task A_restart_resumes_the_same_request_rather_than_creating_another()
+    {
+        var manager = CreateManager();
+        await manager.EnsureEnrolledAsync(null, "1.0.0");
+        var firstId = _enrollmentState.State!.RequestId;
+
+        // Second pass stands in for a service restart or reboot: same persisted state.
+        await manager.EnsureEnrolledAsync(null, "1.0.0");
+
+        _api.RequestCalls.ShouldBe(1, "a resumed agent must not register a second request");
+        _enrollmentState.State!.RequestId.ShouldBe(firstId);
+        _api.ClaimCalls.ShouldBe(2, "it should poll the existing request instead");
+    }
+
+    [Fact]
+    public async Task State_belonging_to_another_machine_is_discarded()
+    {
+        // A state file copied from a different PC describes a request this agent
+        // cannot claim; honouring it would leave the machine polling forever.
+        _enrollmentState.State = new PendingEnrollmentState(
+            "someone-elses-secret", new string('a', 64), "https://server.test",
+            "a-different-machine", DateTimeOffset.UtcNow);
+
+        await CreateManager().EnsureEnrolledAsync(null, "1.0.0");
+
+        _api.RequestCalls.ShouldBe(1, "a fresh request must be made");
+        _enrollmentState.State!.MachineIdentifier.ShouldNotBe("a-different-machine");
+    }
+
+    [Fact]
+    public async Task An_approved_claim_stores_the_credential_and_clears_the_request()
+    {
+        var deviceId = Guid.CreateVersion7();
+        _api.ClaimResult = AgentApiResult<EnrollmentClaimResponse>.Success(
+            new EnrollmentClaimResponse(
+                "approved", deviceId, new string('k', 32), new string('s', 64), false, 0));
+
+        var result = await CreateManager().EnsureEnrolledAsync(null, "1.0.0");
+
+        result.ShouldNotBeNull();
+        result!.DeviceId.ShouldBe(deviceId);
+        _store.Stored.ShouldNotBeNull("the credential must be persisted");
+        _enrollmentState.State.ShouldBeNull("the finished request must not linger");
+    }
+
+    [Fact]
+    public async Task A_rejected_request_is_dropped_so_the_agent_stops_polling_it()
+    {
+        _api.ClaimResult = AgentApiResult<EnrollmentClaimResponse>.Success(
+            new EnrollmentClaimResponse("rejected", null, null, null, false, 0));
+
+        var result = await CreateManager().EnsureEnrolledAsync(null, "1.0.0");
+
+        result.ShouldBeNull();
+        _enrollmentState.State.ShouldBeNull();
+        _store.Stored.ShouldBeNull("a rejected machine must never receive a credential");
+    }
+
+    [Fact]
+    public async Task A_request_the_server_no_longer_knows_is_dropped()
+    {
+        // 403 covers unknown, already-claimed and expired — all indistinguishable by
+        // design, and all meaning "this request is dead".
+        _api.ClaimResult = AgentApiResult<EnrollmentClaimResponse>.Rejected();
+
+        await CreateManager().EnsureEnrolledAsync(null, "1.0.0");
+
+        _enrollmentState.State.ShouldBeNull("a dead request must not be polled forever");
+        _store.Stored.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task A_transient_failure_keeps_the_request_for_the_next_attempt()
+    {
+        _api.ClaimResult = AgentApiResult<EnrollmentClaimResponse>.Transient();
+
+        await CreateManager().EnsureEnrolledAsync(null, "1.0.0");
+
+        // A network blip is not a rejection: throwing the request away here would
+        // orphan whatever the administrator is looking at.
+        _enrollmentState.State.ShouldNotBeNull();
+    }
+
+    [Fact]
+    public async Task An_approval_without_a_complete_credential_is_refused()
+    {
+        _api.ClaimResult = AgentApiResult<EnrollmentClaimResponse>.Success(
+            new EnrollmentClaimResponse("approved", Guid.CreateVersion7(), null, null, false, 0));
+
+        var result = await CreateManager().EnsureEnrolledAsync(null, "1.0.0");
+
+        result.ShouldBeNull();
+        _store.Stored.ShouldBeNull("an incomplete credential must never be stored");
+    }
+
+    [Fact]
+    public async Task An_existing_credential_short_circuits_the_whole_protocol()
+    {
+        _store.Stored = new DeviceCredential(
+            Guid.CreateVersion7(), new string('a', 32), new string('b', 64));
+
+        var result = await CreateManager().EnsureEnrolledAsync(null, "1.0.0");
+
+        result.ShouldNotBeNull();
+        _api.RequestCalls.ShouldBe(0, "an enrolled machine must never re-enrol");
+        _api.ClaimCalls.ShouldBe(0);
+    }
+
+
     private AgentEnrollmentManager CreateManager() =>
-        new(_api, _store, _systemInfo, NullLogger<AgentEnrollmentManager>.Instance);
+        new(_api,
+            _store,
+            _enrollmentState,
+            _systemInfo,
+            Options.Create(new AgentOptions { ServerBaseUrl = "https://server.test" }),
+            NullLogger<AgentEnrollmentManager>.Instance);
+
+    /// <summary>In-memory stand-in for the DPAPI-protected pending-request store.</summary>
+    private sealed class FakeEnrollmentStateStore : IEnrollmentStateStore
+    {
+        public PendingEnrollmentState? State { get; set; }
+
+        public int ClearCalls { get; private set; }
+
+        public ValueTask<PendingEnrollmentState?> LoadAsync(CancellationToken cancellationToken = default) =>
+            ValueTask.FromResult(State);
+
+        public ValueTask SaveAsync(PendingEnrollmentState state, CancellationToken cancellationToken = default)
+        {
+            State = state;
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask ClearAsync(CancellationToken cancellationToken = default)
+        {
+            ClearCalls++;
+            State = null;
+            return ValueTask.CompletedTask;
+        }
+    }
 
     [Fact]
     public async Task An_existing_credential_is_returned_without_contacting_the_server()
@@ -118,6 +316,37 @@ public sealed class AgentEnrollmentManagerTests
 
     private sealed class FakeApiClient : IAgentApiClient
     {
+        public int RequestCalls { get; private set; }
+
+        public int ClaimCalls { get; private set; }
+
+        public EnrollmentRequestRequest? LastRequest { get; private set; }
+
+        public string? LastClaimSecret { get; private set; }
+
+        public AgentApiResult<EnrollmentRequestResponse> RequestResult { get; set; } =
+            AgentApiResult<EnrollmentRequestResponse>.Success(new EnrollmentRequestResponse("pending", 30));
+
+        public AgentApiResult<EnrollmentClaimResponse> ClaimResult { get; set; } =
+            AgentApiResult<EnrollmentClaimResponse>.Success(
+                new EnrollmentClaimResponse("pending", null, null, null, false, 30));
+
+        public Task<AgentApiResult<EnrollmentRequestResponse>> RequestEnrollmentAsync(
+            EnrollmentRequestRequest request, CancellationToken cancellationToken = default)
+        {
+            RequestCalls++;
+            LastRequest = request;
+            return Task.FromResult(RequestResult);
+        }
+
+        public Task<AgentApiResult<EnrollmentClaimResponse>> ClaimEnrollmentAsync(
+            EnrollmentClaimRequest request, CancellationToken cancellationToken = default)
+        {
+            ClaimCalls++;
+            LastClaimSecret = request.RequestSecret;
+            return Task.FromResult(ClaimResult);
+        }
+
         public int EnrollCalls { get; private set; }
 
         public EnrollRequest? LastEnrollRequest { get; private set; }

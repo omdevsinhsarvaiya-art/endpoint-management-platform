@@ -56,10 +56,9 @@ public sealed class DpapiDeviceCredentialStore : IDeviceCredentialStore
         ArgumentNullException.ThrowIfNull(options);
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
-        _stateDirectory = options.Value.StateDirectory
-            ?? Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-                "EndpointPlatformAgent");
+        // AgentPaths is the single definition; an override stays available so
+        // tests and side-by-side development agents can use their own state.
+        _stateDirectory = options.Value.StateDirectory ?? EndpointAgent.Core.AgentPaths.StateDirectory;
     }
 
     private string CredentialPath => Path.Combine(_stateDirectory, CredentialFileName);

@@ -1,0 +1,12 @@
+{
+  "//": [
+    "Machine-wide agent configuration, written by the installer.",
+    "Read after appsettings.json and overridden only by ENDPOINTAGENT_ environment",
+    "variables. Contains no secret: the server URL is public information, and the",
+    "device credential is stored separately, DPAPI-protected.",
+    "This directory is ACL-restricted to SYSTEM and Administrators."
+  ],
+  "Agent": {
+    "ServerBaseUrl": "__SERVER_BASE_URL__"
+  }
+}

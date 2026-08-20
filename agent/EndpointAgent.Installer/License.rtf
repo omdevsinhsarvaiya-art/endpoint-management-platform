@@ -1,0 +1,18 @@
+{\rtf1\ansi\deff0{\fonttbl{\f0\fnil\fcharset0 Segoe UI;}}
+\fs20
+\b Endpoint Platform Agent\b0\par
+\par
+This software is installed and operated under the terms agreed between your organisation and the operator of the Endpoint Platform management server it connects to.\par
+\par
+\b What this agent does\b0\par
+\par
+It reports hardware, software, update and local-account inventory to the management server, and applies management tasks that the server authorises. It runs as a Windows Service under the LocalSystem account, because creating and modifying local Windows accounts requires administrative privilege.\par
+\par
+\b Network\b0\par
+\par
+The agent makes outbound HTTPS connections to the management server only. It does not accept inbound connections, and it does not require this computer to share a network with the management server or with any other managed computer.\par
+\par
+\b What it does not do\b0\par
+\par
+It does not execute arbitrary commands, scripts or shell input from the server. Every action it can take is one of a fixed, published set of typed operations.\par
+}

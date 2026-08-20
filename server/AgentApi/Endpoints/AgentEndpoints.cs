@@ -1,5 +1,6 @@
 using EndpointPlatform.Contracts;
 using EndpointPlatform.Contracts.Agent;
+using EndpointPlatform.Domain.Enrollment;
 using EndpointPlatform.Infrastructure.Configuration;
 using EndpointPlatform.Infrastructure.Enrollment;
 using Microsoft.AspNetCore.Mvc;
@@ -31,7 +32,23 @@ public static class AgentEndpoints
 
         group.MapPost(AgentProtocol.Routes.Enroll, EnrollAsync)
             .WithName("EnrollAgent")
-            .AllowAnonymous(); // The enrollment token IS the credential here.
+            .AllowAnonymous() // The enrollment token IS the credential here.
+            .RequireRateLimiting(EnrollmentRateLimitPolicy);
+
+        // Approval-gated enrollment. Anonymous because a brand-new machine has no
+        // credential yet - but anonymous access stops here: neither endpoint reads or
+        // writes anything about a managed device, and neither grants management
+        // access. A pending request can only ever become a device when an
+        // authenticated administrator approves it.
+        group.MapPost(AgentProtocol.Routes.EnrollRequest, RequestEnrollmentAsync)
+            .WithName("RequestAgentEnrollment")
+            .AllowAnonymous()
+            .RequireRateLimiting(EnrollmentRateLimitPolicy);
+
+        group.MapPost(AgentProtocol.Routes.EnrollClaim, ClaimEnrollmentAsync)
+            .WithName("ClaimAgentEnrollment")
+            .AllowAnonymous()
+            .RequireRateLimiting(EnrollmentRateLimitPolicy);
 
         group.MapPost(AgentProtocol.Routes.Heartbeat, HeartbeatAsync)
             .WithName("AgentHeartbeat");
@@ -306,6 +323,157 @@ public static class AgentEndpoints
             outcome.CredentialKeyId!,
             outcome.CredentialSecret!,
             outcome.ReEnrolled));
+    }
+
+    /// <summary>
+    /// Name of the rate-limit policy guarding the anonymous enrollment endpoints.
+    /// </summary>
+    /// <remarks>
+    /// These are the only endpoints reachable without a credential, so they are the
+    /// only ones an unauthenticated caller can flood. 10 requests per minute per
+    /// The limit itself lives in AgentServerOptions because it must be tuned per
+    /// deployment: a site behind NAT presents one address for every machine on it.
+    /// </remarks>
+    public const string EnrollmentRateLimitPolicy = "agent-enrollment";
+
+    /// <summary>
+    /// An unenrolled machine asking to be managed.
+    /// </summary>
+    /// <remarks>
+    /// Accepts no organization and no secret. The organization is decided later by
+    /// the administrator who approves; the agent proves possession of its request
+    /// secret at claim time rather than presenting a bearer token now.
+    /// </remarks>
+    private static async Task<IResult> RequestEnrollmentAsync(
+        [FromBody] EnrollmentRequestRequest request,
+        [FromHeader(Name = AgentProtocol.Headers.ProtocolVersion)] int? protocolVersion,
+        PendingEnrollmentStore pendingStore,
+        TimeProvider timeProvider,
+        CancellationToken cancellationToken)
+    {
+        if (protocolVersion != AgentProtocol.Version)
+        {
+            return Results.Problem(
+                title: "Unsupported agent protocol version.",
+                statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        // A request id is a SHA-256 hex digest. Validating the shape keeps arbitrary
+        // client strings out of the Redis key space.
+        if (string.IsNullOrWhiteSpace(request.RequestId)
+            || request.RequestId.Length != 64
+            || !request.RequestId.All(char.IsAsciiHexDigitLower))
+        {
+            return Results.Problem(
+                title: "requestId must be a lowercase SHA-256 hex digest.",
+                statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        if (string.IsNullOrWhiteSpace(request.MachineIdentifier) || request.MachineIdentifier.Length > 128
+            || string.IsNullOrWhiteSpace(request.Hostname) || request.Hostname.Length > 253
+            || string.IsNullOrWhiteSpace(request.AgentVersion) || request.AgentVersion.Length > 64
+            || request.OperatingSystem?.Length > 256)
+        {
+            return Results.Problem(
+                title: "Enrollment request details are missing or too long.",
+                statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        var pending = new PendingEnrollment(
+            request.MachineIdentifier.Trim(),
+            request.Hostname.Trim(),
+            string.IsNullOrWhiteSpace(request.OperatingSystem) ? null : request.OperatingSystem.Trim(),
+            request.AgentVersion.Trim(),
+            timeProvider.GetUtcNow(),
+            PendingEnrollmentStatus.Pending);
+
+        var stored = await pendingStore.RequestAsync(request.RequestId, pending, cancellationToken);
+        if (!stored)
+        {
+            // Retryable, not a refusal: the agent should keep trying rather than give up.
+            return Results.Problem(
+                title: "Enrollment is temporarily unavailable.",
+                statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
+
+        return Results.Ok(new EnrollmentRequestResponse("pending", PollAfterSeconds: 30));
+    }
+
+    /// <summary>
+    /// The agent proving possession of its request secret, and collecting its
+    /// credential once an administrator has approved.
+    /// </summary>
+    private static async Task<IResult> ClaimEnrollmentAsync(
+        [FromBody] EnrollmentClaimRequest request,
+        [FromHeader(Name = AgentProtocol.Headers.ProtocolVersion)] int? protocolVersion,
+        PendingEnrollmentStore pendingStore,
+        AgentEnrollmentService enrollmentService,
+        CancellationToken cancellationToken)
+    {
+        if (protocolVersion != AgentProtocol.Version)
+        {
+            return Results.Problem(
+                title: "Unsupported agent protocol version.",
+                statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        if (string.IsNullOrWhiteSpace(request.RequestSecret) || request.RequestSecret.Length > 512)
+        {
+            return Results.Problem(title: "requestSecret is required.", statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        // Consumes the pending request atomically when approved, so a replayed claim
+        // cannot obtain a second credential.
+        var outcome = await pendingStore.ClaimAsync(request.RequestSecret, cancellationToken);
+
+        switch (outcome.Status)
+        {
+            case ClaimStatus.Pending:
+                return Results.Ok(new EnrollmentClaimResponse(
+                    "pending", null, null, null, false, PollAfterSeconds: 30));
+
+            case ClaimStatus.Rejected:
+                return Results.Ok(new EnrollmentClaimResponse(
+                    "rejected", null, null, null, false, PollAfterSeconds: 0));
+
+            case ClaimStatus.Unavailable:
+                return Results.Problem(
+                    title: "Enrollment is temporarily unavailable.",
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+
+            case ClaimStatus.Approved:
+                break;
+
+            default:
+                // Unknown, already claimed, or expired — all indistinguishable on
+                // purpose, so a caller cannot probe which request ids exist.
+                return Results.Problem(title: "Enrollment refused.", statusCode: StatusCodes.Status403Forbidden);
+        }
+
+        // Approved: complete through the EXISTING enrollment path, so device creation,
+        // re-enrolment de-duplication, credential issuance and enrollment auditing all
+        // behave exactly as they do for a token-based enrolment.
+        var pending = outcome.Request!;
+        var enrolled = await enrollmentService.EnrollAsync(
+            outcome.EnrollmentTokenSecret!,
+            pending.Hostname,
+            pending.MachineIdentifier,
+            pending.AgentVersion,
+            pending.OperatingSystem,
+            cancellationToken);
+
+        if (!enrolled.Success)
+        {
+            return Results.Problem(title: "Enrollment refused.", statusCode: StatusCodes.Status403Forbidden);
+        }
+
+        return Results.Ok(new EnrollmentClaimResponse(
+            "approved",
+            enrolled.DeviceId,
+            enrolled.CredentialKeyId!,
+            enrolled.CredentialSecret!,
+            enrolled.ReEnrolled,
+            PollAfterSeconds: 0));
     }
 
     private static async Task<IResult> HeartbeatAsync(

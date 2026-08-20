@@ -149,6 +149,16 @@ public sealed class InstallPackageExecutorTests
 
     private sealed class FakeApi(byte[] content) : IAgentApiClient
     {
+        public Task<AgentApiResult<EnrollmentRequestResponse>> RequestEnrollmentAsync(
+            EnrollmentRequestRequest request, CancellationToken cancellationToken = default) =>
+            Task.FromResult(AgentApiResult<EnrollmentRequestResponse>.Success(
+                new EnrollmentRequestResponse("pending", 30)));
+
+        public Task<AgentApiResult<EnrollmentClaimResponse>> ClaimEnrollmentAsync(
+            EnrollmentClaimRequest request, CancellationToken cancellationToken = default) =>
+            Task.FromResult(AgentApiResult<EnrollmentClaimResponse>.Success(
+                new EnrollmentClaimResponse("pending", null, null, null, false, 30)));
+
         public int DownloadCount { get; private set; }
         public AgentApiStatus DownloadStatus { get; set; } = AgentApiStatus.Success;
 

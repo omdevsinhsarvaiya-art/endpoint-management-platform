@@ -157,6 +157,7 @@ public sealed class Program
 
             app.MapAuthEndpoints();
             app.MapEnrollmentTokenEndpoints();
+            app.MapEnrollmentApprovalEndpoints();
             app.MapDeviceEndpoints();
             app.MapLocalAccountEndpoints();
             app.MapSoftwareEndpoints();

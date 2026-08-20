@@ -72,7 +72,7 @@ public sealed class HeartbeatLoop(
         ?? throw new ArgumentNullException(nameof(logger));
 
     /// <summary>The agent build version reported to the server.</summary>
-    public string AgentVersion { get; init; } = typeof(HeartbeatLoop).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
+    public string AgentVersion { get; init; } = Core.AgentVersion.Current;
 
     public async Task RunAsync(CancellationToken stoppingToken)
     {

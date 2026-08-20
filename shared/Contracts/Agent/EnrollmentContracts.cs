@@ -63,3 +63,57 @@ public sealed record HeartbeatResponse(
     bool InventoryRequested = false,
     bool TasksPending = false,
     bool PoliciesPending = false);
+
+/// <summary>
+/// An unenrolled machine asking to be managed.
+/// </summary>
+/// <remarks>
+/// Carries no secret and no organization. The agent cannot choose which tenant it
+/// joins — that is decided by the administrator who approves it — and it proves
+/// possession later rather than presenting a bearer token now.
+/// </remarks>
+/// <param name="RequestId">
+/// SHA-256 of a 256-bit secret the agent generated and kept. The secret itself is
+/// NOT sent here; it is revealed only at claim time, which is what makes this
+/// proof-of-possession rather than a bearer credential.
+/// </param>
+/// <param name="MachineIdentifier">
+/// SMBIOS system UUID. Not an authenticator — it exists so that approving a machine
+/// that was enrolled before resolves to the same device record instead of a duplicate.
+/// </param>
+public sealed record EnrollmentRequestRequest(
+    string RequestId,
+    string MachineIdentifier,
+    string Hostname,
+    string AgentVersion,
+    string? OperatingSystem);
+
+/// <summary>Acknowledges that a request is recorded and awaiting a decision.</summary>
+/// <param name="Status">Always <c>pending</c> on success; the agent polls the claim endpoint.</param>
+/// <param name="PollAfterSeconds">How long the agent should wait before its first claim attempt.</param>
+public sealed record EnrollmentRequestResponse(string Status, int PollAfterSeconds);
+
+/// <summary>
+/// The agent proving possession of the secret behind its request id.
+/// </summary>
+/// <param name="RequestSecret">
+/// The raw 256-bit secret. Sent only over HTTPS, never logged, never persisted
+/// server-side, and the pending request is consumed atomically when it is accepted.
+/// </param>
+public sealed record EnrollmentClaimRequest(string RequestSecret);
+
+/// <summary>
+/// The outcome of a claim. A credential is present only when <paramref name="Status"/>
+/// is <c>approved</c>; every other status carries nulls so a caller cannot mistake a
+/// refusal for an issuance.
+/// </summary>
+/// <param name="Status">
+/// <c>approved</c>, <c>pending</c> (keep waiting), or <c>rejected</c> (stop asking).
+/// </param>
+public sealed record EnrollmentClaimResponse(
+    string Status,
+    Guid? DeviceId,
+    string? CredentialKeyId,
+    string? CredentialSecret,
+    bool ReEnrolled,
+    int PollAfterSeconds);

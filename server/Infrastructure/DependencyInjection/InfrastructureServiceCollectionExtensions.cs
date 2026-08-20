@@ -174,6 +174,15 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<Security.DeviceScopeAuthorizer>();
         services.AddSingleton<Security.ISecretProtector, Security.AesGcmSecretProtector>();
         services.AddScoped<Security.EphemeralSecretStore>();
+
+        // Holds enrollment requests between an agent asking and an administrator
+        // deciding. Redis-backed like the ephemeral secret store, for the same
+        // reasons: short TTL, atomic single-use redemption, no cleanup job.
+        services.AddScoped<Enrollment.PendingEnrollmentStore>();
+
+        // Turns an administrator's decision into an enrollment the EXISTING pipeline
+        // completes, rather than a second enrollment implementation.
+        services.AddScoped<Enrollment.EnrollmentApprovalService>();
         services.AddSingleton<Software.IPackageContentStore, Software.FileSystemPackageContentStore>();
         services.AddScoped<Software.SoftwarePackageService>();
 

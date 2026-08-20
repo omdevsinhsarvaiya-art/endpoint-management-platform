@@ -71,6 +71,16 @@ public sealed class TaskDispatcherTests
 
     private sealed class FakeApi(IReadOnlyList<AgentTask> tasks) : IAgentApiClient
     {
+        public Task<AgentApiResult<EnrollmentRequestResponse>> RequestEnrollmentAsync(
+            EnrollmentRequestRequest request, CancellationToken cancellationToken = default) =>
+            Task.FromResult(AgentApiResult<EnrollmentRequestResponse>.Success(
+                new EnrollmentRequestResponse("pending", 30)));
+
+        public Task<AgentApiResult<EnrollmentClaimResponse>> ClaimEnrollmentAsync(
+            EnrollmentClaimRequest request, CancellationToken cancellationToken = default) =>
+            Task.FromResult(AgentApiResult<EnrollmentClaimResponse>.Success(
+                new EnrollmentClaimResponse("pending", null, null, null, false, 30)));
+
         public List<(Guid TaskId, AgentTaskResult Result)> Results { get; } = [];
 
         public Task<AgentApiResult<AgentTaskListResponse>> ClaimTasksAsync(

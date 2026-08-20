@@ -32,6 +32,22 @@ yarn-error.log*
 pnpm-debug.log*
 
 # ---------------------------------------------------------------------------
+# Agent build / installer output
+#
+# build/ holds shared MSBuild props that ARE tracked, so this ignores only the
+# generated subdirectories: the self-contained publish (~83 MB) and the MSI.
+# Installers are distributed through GitHub Releases, never committed.
+# ---------------------------------------------------------------------------
+build/agent-publish/
+build/installer/
+*.msi
+*.wixpdb
+# Generated from agent.config.json.template at MSI build time with the target
+# server URL. Committing it would let the checked-in copy drift from whatever
+# the last build actually produced.
+agent/EndpointAgent.Installer/agent.config.json
+
+# ---------------------------------------------------------------------------
 # Test output
 # ---------------------------------------------------------------------------
 TestResults/

@@ -40,6 +40,11 @@
          only the non-web hosts (the agent service) reference it explicitly. -->
     <PackageVersion Include="Serilog.Settings.Configuration" Version="10.0.1" />
     <PackageVersion Include="Serilog.Sinks.Console" Version="6.1.1" />
+    <!-- A Windows Service has no console. Operational history has to survive on
+         disk, and start/stop/enrolment failures have to reach the Event Log
+         where an administrator already looks. -->
+    <PackageVersion Include="Serilog.Sinks.File" Version="7.0.0" />
+    <PackageVersion Include="Serilog.Sinks.EventLog" Version="4.0.0" />
     <PackageVersion Include="Serilog.Enrichers.Environment" Version="3.0.1" />
   </ItemGroup>
 

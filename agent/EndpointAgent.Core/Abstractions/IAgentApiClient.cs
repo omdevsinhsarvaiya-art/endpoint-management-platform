@@ -17,6 +17,32 @@ public interface IAgentApiClient
         CancellationToken cancellationToken = default);
 
     /// <summary>Sends an authenticated heartbeat.</summary>
+    /// <summary>
+    /// Asks the server to record this machine as awaiting approval.
+    /// </summary>
+    /// <remarks>
+    /// Anonymous, and carries no secret: only the SHA-256 of the request secret the
+    /// agent keeps. Sending it repeatedly for the same request id is safe and is how
+    /// a restarted agent resumes rather than duplicates.
+    /// </remarks>
+    Task<AgentApiResult<EnrollmentRequestResponse>> RequestEnrollmentAsync(
+        EnrollmentRequestRequest request,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Proves possession of the request secret and, once approved, collects the device
+    /// credential exactly once.
+    /// </summary>
+    /// <remarks>
+    /// The response is <c>pending</c> while an administrator has not decided,
+    /// <c>rejected</c> when refused, and <c>approved</c> with a credential exactly
+    /// once. The raw secret travels only here, only over HTTPS, and only after the
+    /// agent has already been told to keep waiting.
+    /// </remarks>
+    Task<AgentApiResult<EnrollmentClaimResponse>> ClaimEnrollmentAsync(
+        EnrollmentClaimRequest request,
+        CancellationToken cancellationToken = default);
+
     Task<AgentApiResult<HeartbeatResponse>> HeartbeatAsync(
         HeartbeatRequest request,
         DeviceCredential credential,

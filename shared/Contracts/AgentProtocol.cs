@@ -44,6 +44,18 @@ public static class AgentProtocol
     public static class Routes
     {
         public const string Enroll = "/enroll";
+
+        /// <summary>
+        /// Anonymous. An unenrolled machine asks to be managed; an administrator
+        /// decides. Grants nothing on its own.
+        /// </summary>
+        public const string EnrollRequest = "/enroll/request";
+
+        /// <summary>
+        /// Anonymous. The agent proves possession of its request secret and, once an
+        /// administrator has approved, receives its device credential exactly once.
+        /// </summary>
+        public const string EnrollClaim = "/enroll/claim";
         public const string Heartbeat = "/heartbeat";
         public const string Inventory = "/inventory";
 

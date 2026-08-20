@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<!--
+  Every file from the self-contained publish.
+
+  The <Files> element globs the publish directory at build time rather than
+  listing ~248 components by hand. That matters beyond convenience: a hand-kept
+  file list silently drops a runtime assembly when the SDK changes, and the
+  failure shows up as a crash on a customer machine rather than a build error.
+
+  EndpointAgent.Service.exe is excluded here because it carries the
+  ServiceInstall/ServiceControl authoring and is declared as its own component
+  in Package.wxs.
+-->
+
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Fragment>
+    <ComponentGroup Id="AgentBinaries" Directory="INSTALLFOLDER">
+      <Files Include="$(var.AgentPublishDir)\**">
+        <Exclude Files="$(var.AgentPublishDir)\EndpointAgent.Service.exe" />
+      </Files>
+    </ComponentGroup>
+  </Fragment>
+</Wix>

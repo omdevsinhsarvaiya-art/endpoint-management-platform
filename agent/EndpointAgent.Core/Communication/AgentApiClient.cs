@@ -47,6 +47,44 @@ public sealed class AgentApiClient(HttpClient httpClient, ILogger<AgentApiClient
         return await SendAsync<EnrollResponse>(message, "enroll", cancellationToken);
     }
 
+    public async Task<AgentApiResult<EnrollmentRequestResponse>> RequestEnrollmentAsync(
+        EnrollmentRequestRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        using var message = new HttpRequestMessage(
+            HttpMethod.Post,
+            AgentProtocol.RoutePrefix + AgentProtocol.Routes.EnrollRequest)
+        {
+            Content = JsonContent.Create(request),
+        };
+
+        AddProtocolHeaders(message, request.AgentVersion);
+
+        return await SendAsync<EnrollmentRequestResponse>(message, "enroll-request", cancellationToken);
+    }
+
+    public async Task<AgentApiResult<EnrollmentClaimResponse>> ClaimEnrollmentAsync(
+        EnrollmentClaimRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        using var message = new HttpRequestMessage(
+            HttpMethod.Post,
+            AgentProtocol.RoutePrefix + AgentProtocol.Routes.EnrollClaim)
+        {
+            Content = JsonContent.Create(request),
+        };
+
+        AddProtocolHeaders(message, Core.AgentVersion.Current);
+
+        // The request secret is in this body. SendAsync must never log request
+        // content, which it does not - it logs status codes and the operation name.
+        return await SendAsync<EnrollmentClaimResponse>(message, "enroll-claim", cancellationToken);
+    }
+
     public async Task<AgentApiResult<HeartbeatResponse>> HeartbeatAsync(
         HeartbeatRequest request,
         DeviceCredential credential,
@@ -84,7 +122,7 @@ public sealed class AgentApiClient(HttpClient httpClient, ILogger<AgentApiClient
             Content = JsonContent.Create(report),
         };
 
-        AddProtocolHeaders(message, agentVersion: typeof(AgentApiClient).Assembly.GetName().Version?.ToString(3) ?? "0.0.0");
+        AddProtocolHeaders(message, Core.AgentVersion.Current);
         message.Headers.Add(AgentProtocol.Headers.Credential, credential.ToHeaderValue());
         message.Headers.Add(AgentProtocol.Headers.DeviceId, credential.DeviceId.ToString());
 
@@ -101,7 +139,7 @@ public sealed class AgentApiClient(HttpClient httpClient, ILogger<AgentApiClient
             HttpMethod.Get,
             AgentProtocol.RoutePrefix + AgentProtocol.Routes.Tasks);
 
-        AddProtocolHeaders(message, AgentVersion());
+        AddProtocolHeaders(message, Core.AgentVersion.Current);
         message.Headers.Add(AgentProtocol.Headers.Credential, credential.ToHeaderValue());
         message.Headers.Add(AgentProtocol.Headers.DeviceId, credential.DeviceId.ToString());
 
@@ -124,7 +162,7 @@ public sealed class AgentApiClient(HttpClient httpClient, ILogger<AgentApiClient
             Content = JsonContent.Create(result),
         };
 
-        AddProtocolHeaders(message, AgentVersion());
+        AddProtocolHeaders(message, Core.AgentVersion.Current);
         message.Headers.Add(AgentProtocol.Headers.Credential, credential.ToHeaderValue());
         message.Headers.Add(AgentProtocol.Headers.DeviceId, credential.DeviceId.ToString());
 
@@ -136,7 +174,7 @@ public sealed class AgentApiClient(HttpClient httpClient, ILogger<AgentApiClient
     {
         ArgumentNullException.ThrowIfNull(credential);
         using var message = new HttpRequestMessage(HttpMethod.Get, AgentProtocol.RoutePrefix + AgentProtocol.Routes.Policies);
-        AddProtocolHeaders(message, AgentVersion());
+        AddProtocolHeaders(message, Core.AgentVersion.Current);
         message.Headers.Add(AgentProtocol.Headers.Credential, credential.ToHeaderValue());
         message.Headers.Add(AgentProtocol.Headers.DeviceId, credential.DeviceId.ToString());
         return await SendAsync<AgentPolicyListResponse>(message, "get-policies", cancellationToken);
@@ -153,7 +191,7 @@ public sealed class AgentApiClient(HttpClient httpClient, ILogger<AgentApiClient
         {
             Content = JsonContent.Create(report),
         };
-        AddProtocolHeaders(message, AgentVersion());
+        AddProtocolHeaders(message, Core.AgentVersion.Current);
         message.Headers.Add(AgentProtocol.Headers.Credential, credential.ToHeaderValue());
         message.Headers.Add(AgentProtocol.Headers.DeviceId, credential.DeviceId.ToString());
         return await SendNoContentAsync(message, "post-compliance", cancellationToken);
@@ -169,7 +207,7 @@ public sealed class AgentApiClient(HttpClient httpClient, ILogger<AgentApiClient
         using var message = new HttpRequestMessage(
             HttpMethod.Get,
             AgentProtocol.RoutePrefix + AgentProtocol.Routes.Packages + "/" + packageId + AgentProtocol.Routes.PackageContentSuffix);
-        AddProtocolHeaders(message, AgentVersion());
+        AddProtocolHeaders(message, Core.AgentVersion.Current);
         message.Headers.Add(AgentProtocol.Headers.Credential, credential.ToHeaderValue());
         message.Headers.Add(AgentProtocol.Headers.DeviceId, credential.DeviceId.ToString());
 
@@ -232,15 +270,12 @@ public sealed class AgentApiClient(HttpClient httpClient, ILogger<AgentApiClient
         {
             Content = JsonContent.Create(new RedeemSecretRequest(secretReference)),
         };
-        AddProtocolHeaders(message, AgentVersion());
+        AddProtocolHeaders(message, Core.AgentVersion.Current);
         message.Headers.Add(AgentProtocol.Headers.Credential, credential.ToHeaderValue());
         message.Headers.Add(AgentProtocol.Headers.DeviceId, credential.DeviceId.ToString());
 
         return await SendAsync<RedeemSecretResponse>(message, "redeem-secret", cancellationToken);
     }
-
-    private static string AgentVersion() =>
-        typeof(AgentApiClient).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
 
     private static void AddProtocolHeaders(HttpRequestMessage message, string agentVersion)
     {

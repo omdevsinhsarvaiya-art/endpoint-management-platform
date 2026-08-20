@@ -6,8 +6,22 @@
     <RootNamespace>EndpointAgent.Service</RootNamespace>
     <AssemblyName>EndpointAgent.Service</AssemblyName>
     <UserSecretsId>endpoint-agent-service</UserSecretsId>
+    <VersionPrefix>1.0.0</VersionPrefix>
+
+    <!--
+      Self-contained: the endpoint must not need the .NET runtime installed. An
+      administrator double-clicking an MSI cannot be asked to install a runtime
+      first, so the publish carries its own.
+
+      NOT trimmed. Trimming strips types that WMI (System.Management) and the DI
+      container resolve reflectively; the failure would appear at runtime on a
+      customer machine as a missing collector, not at build time here.
+    -->
     <RuntimeIdentifier Condition="'$(PublishAgent)' == 'true'">win-x64</RuntimeIdentifier>
-    <SelfContained Condition="'$(PublishAgent)' == 'true'">false</SelfContained>
+    <SelfContained Condition="'$(PublishAgent)' == 'true'">true</SelfContained>
+    <PublishTrimmed Condition="'$(PublishAgent)' == 'true'">false</PublishTrimmed>
+    <PublishSingleFile Condition="'$(PublishAgent)' == 'true'">false</PublishSingleFile>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
     <!--
       Windows Service host. Composition root only: DI wiring, configuration,
       logging, and hosted services. No business logic, no Windows API calls.
@@ -21,6 +35,8 @@
     <PackageReference Include="Serilog.Extensions.Hosting" />
     <PackageReference Include="Serilog.Settings.Configuration" />
     <PackageReference Include="Serilog.Sinks.Console" />
+    <PackageReference Include="Serilog.Sinks.File" />
+    <PackageReference Include="Serilog.Sinks.EventLog" />
     <PackageReference Include="Serilog.Enrichers.Environment" />
   </ItemGroup>
 
