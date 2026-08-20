@@ -7,6 +7,7 @@ import {
   type PendingEnrollment,
 } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
+import { Icon } from '../components/Icon'
 
 /** How often the list refreshes while the page is open. */
 const POLL_INTERVAL_MS = 12_000
@@ -97,125 +98,140 @@ export function PendingEnrollmentsPage() {
     }
   }
 
+  const waiting = requests.filter(
+    (r) => r.status === 'Pending' && new Date(r.expiresAt).getTime() > Date.now(),
+  ).length
+
   return (
     <>
-      {error && <div className="error-banner">{error}</div>}
+      {error && (
+        <div className="error-banner" role="alert">
+          <Icon name="alert" size={15} />
+          <span>{error}</span>
+        </div>
+      )}
       {notice && (
-        <div className="card card-section" style={{ borderLeft: '3px solid var(--color-primary)' }}>
-          {notice}
+        <div className="notice-banner" role="status">
+          <Icon name="check" size={15} />
+          <span>{notice}</span>
         </div>
       )}
 
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 16, gap: 16 }}>
-        <div style={{ color: 'var(--color-text-muted)', fontSize: 13.5, maxWidth: 640 }}>
+      <div className="page-header">
+        <div className="lede">
           Windows agents waiting for administrator approval. A machine appears here after the
           agent is installed and reaches this server; it receives no credential and cannot be
           managed until it is approved.
         </div>
         <button type="button" onClick={() => void load(true)} disabled={loading}>
+          <Icon name="refresh" size={14} />
           {loading ? 'Refreshing…' : 'Refresh'}
         </button>
       </div>
 
       {!canDecide && (
-        <div className="card card-section" style={{ color: 'var(--color-text-muted)' }}>
-          You can see enrolment requests but not decide them — that needs the
-          <code style={{ margin: '0 4px' }}>device.enroll</code> permission.
+        <div className="info-banner">
+          You can see enrolment requests but not decide them — that needs the{' '}
+          <code>device.enroll</code> permission.
         </div>
       )}
 
       <div className="card">
+        {waiting > 0 && (
+          <h2>
+            {waiting} machine{waiting === 1 ? '' : 's'} awaiting a decision
+          </h2>
+        )}
+
         {loading && requests.length === 0 && <div className="loading">Loading…</div>}
 
         {!loading && requests.length === 0 && (
           <div className="empty-state">
-            <div className="title">No pending enrollment requests.</div>
-            <div style={{ color: 'var(--color-text-muted)', fontSize: 13, marginTop: 6 }}>
-              Install the Windows agent on a PC and it will appear here within a minute.
-            </div>
+            <Icon name="inbox" size={40} strokeWidth={1.25} className="icon" />
+            <div className="title">No pending enrollment requests</div>
+            <div>Install the Windows agent on a PC and it will appear here within a minute.</div>
           </div>
         )}
 
         {requests.length > 0 && (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Computer</th>
-                <th>Operating system</th>
-                <th>Agent</th>
-                <th>Requested</th>
-                <th>Expires</th>
-                <th>Status</th>
-                <th style={{ textAlign: 'right' }}>Decision</th>
-              </tr>
-            </thead>
-            <tbody>
-              {requests.map((r) => {
-                const expired = new Date(r.expiresAt).getTime() <= Date.now()
-                const decided = r.status !== 'Pending'
-                const disabled = busy !== null || decided || expired || !canDecide
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Computer</th>
+                  <th>Operating system</th>
+                  <th>Agent</th>
+                  <th>Requested</th>
+                  <th>Expires</th>
+                  <th>Status</th>
+                  <th style={{ textAlign: 'right' }}>Decision</th>
+                </tr>
+              </thead>
+              <tbody>
+                {requests.map((r) => {
+                  const expired = new Date(r.expiresAt).getTime() <= Date.now()
+                  const decided = r.status !== 'Pending'
+                  const working = busy === r.requestId
+                  const disabled = busy !== null || decided || expired || !canDecide
 
-                return (
-                  <tr key={r.requestId}>
-                    <td>
-                      <div style={{ fontWeight: 600 }}>{r.hostname}</div>
-                      {/* Not a secret: the SMBIOS UUID is how a re-enrolling machine
-                          resolves to its existing device record instead of a duplicate. */}
-                      <div style={{ color: 'var(--color-text-muted)', fontSize: 11.5, fontFamily: 'monospace' }}>
-                        {r.machineIdentifier}
-                      </div>
-                    </td>
-                    <td>{r.operatingSystem ?? '—'}</td>
-                    <td><code>{r.agentVersion}</code></td>
-                    <td title={r.requestedAt}>{formatTime(r.requestedAt)}</td>
-                    <td style={{ color: expired ? 'var(--color-crit)' : undefined }}>
-                      {expired ? 'Expired' : relativeTo(r.expiresAt)}
-                    </td>
-                    <td>
-                      <span className={`badge ${statusClass(r.status, expired)}`}>
-                        {expired && r.status === 'Pending' ? 'Expired' : r.status}
-                      </span>
-                      {r.approvedBy && (
-                        <div style={{ color: 'var(--color-text-muted)', fontSize: 11.5, marginTop: 2 }}>
-                          by {r.approvedBy}
+                  return (
+                    <tr key={r.requestId}>
+                      <td>
+                        <div>{r.hostname}</div>
+                        {/* Not a secret: the SMBIOS UUID is how a re-enrolling machine
+                            resolves to its existing device record instead of a duplicate. */}
+                        <div className="row-sub mono-sub">{r.machineIdentifier}</div>
+                      </td>
+                      <td>{r.operatingSystem ?? '—'}</td>
+                      <td>
+                        <code>{r.agentVersion}</code>
+                      </td>
+                      <td title={r.requestedAt}>{formatTime(r.requestedAt)}</td>
+                      <td style={{ color: expired ? 'var(--color-crit)' : undefined }}>
+                        {expired ? 'Expired' : relativeTo(r.expiresAt)}
+                      </td>
+                      <td>
+                        <span className={`badge ${statusClass(r.status, expired)}`}>
+                          {expired && r.status === 'Pending' ? 'Expired' : r.status}
+                        </span>
+                        {r.approvedBy && <div className="row-sub">by {r.approvedBy}</div>}
+                      </td>
+                      <td style={{ textAlign: 'right' }}>
+                        <div className="btn-row" style={{ justifyContent: 'flex-end' }}>
+                          <button
+                            type="button"
+                            className={`btn-primary btn-sm${working ? ' btn-loading' : ''}`}
+                            disabled={disabled}
+                            onClick={() => void decide(r, true)}
+                          >
+                            {working ? 'Working…' : 'Approve'}
+                          </button>
+                          {/* Reject is styled as destructive because it is: no
+                              credential is issued and the agent stops asking. */}
+                          <button
+                            type="button"
+                            className="btn-danger btn-sm"
+                            disabled={disabled}
+                            onClick={() => void decide(r, false)}
+                          >
+                            Reject
+                          </button>
                         </div>
-                      )}
-                    </td>
-                    <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                      <button
-                        type="button"
-                        disabled={disabled}
-                        onClick={() => void decide(r, true)}
-                        style={{
-                          background: disabled ? undefined : 'var(--color-primary)',
-                          color: disabled ? undefined : '#fff',
-                          border: disabled ? undefined : 'none',
-                          borderRadius: 6,
-                          padding: '6px 14px',
-                          fontWeight: 600,
-                          cursor: disabled ? 'not-allowed' : 'pointer',
-                          marginRight: 8,
-                        }}
-                      >
-                        {busy === r.requestId ? 'Working…' : 'Approve'}
-                      </button>
-                      <button type="button" disabled={disabled} onClick={() => void decide(r, false)}>
-                        Reject
-                      </button>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 
-      <div style={{ color: 'var(--color-text-muted)', fontSize: 12.5, marginTop: 12 }}>
+      <p className="muted" style={{ fontSize: 12.5, marginTop: 12 }}>
         After approval the agent collects its credential on its next poll, then appears under
         Devices and becomes Active once it starts reporting. Requests expire 15 minutes after
         they are made; an agent that is still waiting simply asks again.
-      </div>
+      </p>
     </>
   )
 }

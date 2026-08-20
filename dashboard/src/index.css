@@ -1,255 +1,933 @@
 /* ---------------------------------------------------------------------------
-   Endpoint Management Platform - dashboard styles.
+   Endpoint Management Platform — dashboard design system.
 
-   Enterprise IT tooling: quiet colours, dense-but-readable layout, no
-   animation beyond hover/focus affordances.
+   Midnight-blue enterprise security console. Layered navy surfaces, restrained
+   accent use, dense-but-readable layout.
+
+   Two rules govern this file:
+
+   1. Token names are a contract. Components reference var(--color-primary),
+      var(--color-text-muted) and friends from inline styles in ~200 places, so
+      the names stay fixed and only their values change. That is what lets the
+      whole application re-theme without touching every component.
+
+   2. Status is never signalled by colour alone (WCAG 1.4.1). Badges carry a
+      shape/dot, and destructive actions are distinguished by weight and border
+      as well as hue.
 --------------------------------------------------------------------------- */
 
 :root {
-  --color-bg: #f4f6f8;
-  --color-surface: #ffffff;
-  --color-sidebar: #1b2733;
-  --color-sidebar-hover: #263544;
-  --color-sidebar-active: #2f4256;
-  --color-sidebar-text: #aebdcb;
-  --color-sidebar-text-active: #ffffff;
-  --color-text: #1f2933;
-  --color-text-muted: #616e7c;
-  --color-border: #d9e0e6;
-  --color-primary: #2563eb;
-  --color-ok: #15803d;
-  --color-ok-bg: #dcfce7;
-  --color-warn: #a16207;
-  --color-warn-bg: #fef9c3;
-  --color-crit: #b91c1c;
-  --color-crit-bg: #fee2e2;
-  --color-neutral-bg: #e5e7eb;
+  /* --- Surfaces: four layers, dark to light, so depth reads without shadow --- */
+  --color-bg: #0b1220;              /* app background, deepest */
+  --color-sidebar: #070d18;         /* navigation, deeper than the canvas */
+  --color-surface: #131c2e;         /* cards */
+  --color-elevated: #1a2438;        /* popovers, dialogs, table hover */
+  --color-inset: #0d1526;           /* inputs and wells, recessed */
 
-  --sidebar-width: 232px;
+  /* --- Text: three weights only. More would blur the hierarchy. --- */
+  --color-text: #e6edf7;            /* 15.8:1 on --color-bg */
+  --color-text-secondary: #a9b8cd;  /*  8.4:1 */
+  --color-text-muted: #8195ae;      /*  5.6:1 — still passes AA for body text */
 
-  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  /* --- Lines --- */
+  --color-border: #223048;
+  --color-border-strong: #2e4060;
+
+  /* --- Accent and status ---
+     Each has a foreground, a translucent fill and a border so badges and
+     banners can be built from one family without inventing new colours. */
+  --color-primary: #3b82f6;
+  --color-primary-hover: #5b9bff;
+  --color-primary-active: #2f6fd8;
+  --color-primary-fg: #ffffff;
+  --color-primary-bg: rgba(59, 130, 246, 0.14);
+  --color-primary-border: rgba(59, 130, 246, 0.42);
+
+  --color-ok: #4ade80;
+  --color-ok-bg: rgba(74, 222, 128, 0.13);
+  --color-ok-border: rgba(74, 222, 128, 0.36);
+
+  --color-warn: #fbbf24;
+  --color-warn-bg: rgba(251, 191, 36, 0.13);
+  --color-warn-border: rgba(251, 191, 36, 0.36);
+
+  --color-crit: #f87171;
+  --color-crit-bg: rgba(248, 113, 113, 0.13);
+  --color-crit-border: rgba(248, 113, 113, 0.38);
+
+  --color-info: #38bdf8;
+  --color-info-bg: rgba(56, 189, 248, 0.13);
+  --color-info-border: rgba(56, 189, 248, 0.36);
+
+  /* Neutral fill — kept because inline styles use it for wells and chips. */
+  --color-neutral-bg: #1e293b;
+
+  /* --- Geometry --- */
+  --radius-sm: 4px;
+  --radius: 6px;
+  --radius-lg: 10px;
+  --radius-pill: 999px;
+
+  --control-height: 34px;
+  --control-height-sm: 28px;
+  --row-height: 40px;
+  --sidebar-width: 244px;
+  --topbar-height: 56px;
+
+  /* --- Elevation. Dark UIs need a light rim, not just a drop shadow. --- */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.55);
+
+  --transition: 160ms cubic-bezier(0.4, 0, 0.2, 1);
+
+  font-family: 'Segoe UI', system-ui, -apple-system, 'Inter', sans-serif;
   font-size: 14px;
+  line-height: 1.5;
   color: var(--color-text);
   background-color: var(--color-bg);
+
+  color-scheme: dark;         /* native scrollbars/controls follow the theme */
+  -webkit-font-smoothing: antialiased;
 }
 
-* {
-  box-sizing: border-box;
+* { box-sizing: border-box; }
+
+body { margin: 0; min-height: 100vh; background: var(--color-bg); }
+#root { min-height: 100vh; }
+
+a { color: var(--color-primary); text-decoration: none; }
+a:hover { color: var(--color-primary-hover); }
+
+h1, h2, h3 { color: var(--color-text); }
+
+/* One focus treatment everywhere, so keyboard users get a consistent signal. */
+:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
 }
 
-body {
-  margin: 0;
-  min-height: 100vh;
-}
+::selection { background: var(--color-primary-bg); }
 
-#root {
-  min-height: 100vh;
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--color-border-strong);
+  border-radius: var(--radius-pill);
+  border: 2px solid var(--color-bg);
 }
-
-a {
-  color: var(--color-primary);
-  text-decoration: none;
-}
+::-webkit-scrollbar-thumb:hover { background: #3d5480; }
 
 /* --- Application frame --------------------------------------------------- */
 
-.app-shell {
-  display: flex;
-  min-height: 100vh;
-}
+.app-shell { display: flex; min-height: 100vh; }
 
 .sidebar {
   width: var(--sidebar-width);
   flex-shrink: 0;
   background: var(--color-sidebar);
-  color: var(--color-sidebar-text);
+  border-right: 1px solid var(--color-border);
   display: flex;
   flex-direction: column;
+  position: sticky;
+  top: 0;
+  height: 100vh;
 }
 
 .sidebar-brand {
-  padding: 18px 20px 14px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 18px 20px 16px;
+  border-bottom: 1px solid var(--color-border);
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.sidebar-brand .mark {
+  width: 30px; height: 30px;
+  flex-shrink: 0;
+  border-radius: 7px;
+  background: linear-gradient(140deg, var(--color-primary), #1e50a8);
+  display: grid; place-items: center;
+  color: #fff;
+  box-shadow: var(--shadow-sm);
 }
 
 .sidebar-brand .product {
-  color: #fff;
-  font-size: 15px;
-  font-weight: 600;
-  letter-spacing: 0.2px;
+  color: var(--color-text);
+  font-size: 14.5px;
+  font-weight: 650;
+  letter-spacing: 0.1px;
+  line-height: 1.2;
 }
 
 .sidebar-brand .tagline {
-  font-size: 11.5px;
-  margin-top: 2px;
-  color: var(--color-sidebar-text);
+  font-size: 11px;
+  margin-top: 1px;
+  color: var(--color-text-muted);
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
 }
 
-.sidebar-nav {
-  flex: 1;
-  padding: 10px 0;
-  overflow-y: auto;
+.sidebar-nav { flex: 1; padding: 12px 10px; overflow-y: auto; }
+
+/* Grouping label. Sections keep a 12-item nav scannable. */
+.sidebar-nav .nav-group {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  padding: 14px 10px 6px;
 }
+.sidebar-nav .nav-group:first-child { padding-top: 2px; }
 
 .sidebar-nav a {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 9px 20px;
-  color: var(--color-sidebar-text);
+  padding: 8px 10px;
+  margin-bottom: 1px;
+  border-radius: var(--radius);
+  color: var(--color-text-secondary);
   font-size: 13.5px;
-  border-left: 3px solid transparent;
+  transition: background var(--transition), color var(--transition);
+  position: relative;
+}
+
+.sidebar-nav a .nav-icon {
+  width: 17px; height: 17px;
+  flex-shrink: 0;
+  opacity: 0.75;
+  transition: opacity var(--transition);
+}
+
+.sidebar-nav a .nav-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sidebar-nav a:hover {
-  background: var(--color-sidebar-hover);
-  color: var(--color-sidebar-text-active);
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--color-text);
+}
+.sidebar-nav a:hover .nav-icon { opacity: 1; }
+
+/* Active state carries three cues — fill, accent bar and weight — so it does
+   not depend on colour perception alone. */
+.sidebar-nav a.active {
+  background: var(--color-primary-bg);
+  color: #dbe9ff;
+  font-weight: 600;
+}
+.sidebar-nav a.active .nav-icon { opacity: 1; color: var(--color-primary); }
+.sidebar-nav a.active::before {
+  content: '';
+  position: absolute;
+  left: -10px; top: 50%;
+  transform: translateY(-50%);
+  width: 3px; height: 18px;
+  border-radius: 0 2px 2px 0;
+  background: var(--color-primary);
 }
 
-.sidebar-nav a.active {
-  background: var(--color-sidebar-active);
-  color: var(--color-sidebar-text-active);
-  border-left-color: var(--color-primary);
-  font-weight: 600;
+/* Count pill, e.g. pending enrollments awaiting a decision. Static: a waiting
+   queue is information, not an alarm, and a flashing badge trains people to
+   ignore it. */
+.nav-count {
+  min-width: 20px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: var(--radius-pill);
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  display: inline-grid;
+  place-items: center;
+  line-height: 1;
 }
 
 .sidebar-footer {
-  padding: 12px 20px;
-  font-size: 11.5px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 12px 18px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  border-top: 1px solid var(--color-border);
 }
 
-.main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-}
+.main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 
 .topbar {
-  height: 52px;
-  background: var(--color-surface);
+  height: var(--topbar-height);
+  background: rgba(19, 28, 46, 0.82);
+  backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--color-border);
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 0 24px;
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  gap: 16px;
 }
 
-.topbar h1 {
-  font-size: 16px;
-  font-weight: 600;
-  margin: 0;
+.topbar h1 { font-size: 16px; font-weight: 650; margin: 0; letter-spacing: -0.1px; }
+
+.topbar-user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12.5px;
+  color: var(--color-text-secondary);
 }
 
-.content {
-  padding: 24px;
-  flex: 1;
+.avatar {
+  width: 28px; height: 28px;
+  border-radius: var(--radius-pill);
+  background: var(--color-primary-bg);
+  border: 1px solid var(--color-primary-border);
+  color: #cfe0ff;
+  display: grid; place-items: center;
+  font-size: 11.5px; font-weight: 700;
+  flex-shrink: 0;
 }
 
-/* --- Cards and stat tiles ------------------------------------------------ */
+.content { padding: 24px; flex: 1; min-width: 0; }
 
-.stat-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 14px;
-  margin-bottom: 24px;
-}
+/* --- Cards --------------------------------------------------------------- */
 
 .card {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   padding: 16px 18px;
-}
-
-.stat-card .stat-label {
-  font-size: 12.5px;
-  color: var(--color-text-muted);
-  margin-bottom: 6px;
-}
-
-.stat-card .stat-value {
-  font-size: 26px;
-  font-weight: 650;
-  line-height: 1.1;
+  box-shadow: var(--shadow-sm);
 }
 
 .card h2 {
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 13.5px;
+  font-weight: 650;
   margin: 0 0 12px;
+  letter-spacing: 0.1px;
 }
 
-.card-section {
+.card-section { margin-bottom: 20px; }
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 14px;
   margin-bottom: 24px;
 }
 
-/* --- Status badges ------------------------------------------------------- */
+.stat-card { position: relative; overflow: hidden; }
 
-.badge {
-  display: inline-block;
-  padding: 2px 10px;
-  border-radius: 999px;
-  font-size: 12px;
+/* Hairline of accent along the top edge — enough to make a KPI tile feel
+   deliberate without turning the dashboard into a colour chart. */
+.stat-card::after {
+  content: '';
+  position: absolute; inset: 0 0 auto 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--color-primary), transparent 75%);
+  opacity: 0.65;
+}
+
+.stat-card .stat-label {
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  margin-bottom: 8px;
+}
+
+.stat-card .stat-value {
+  font-size: 27px;
+  font-weight: 680;
+  line-height: 1.05;
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;   /* digits stay aligned as counts change */
+}
+
+/* A tone tints the accent rule and the number. Applied only where the value
+   genuinely carries a state — "3 retired" is not a warning, so it stays neutral.
+   Tinting every tile would make the whole dashboard look like an incident. */
+.stat-card.tone-ok::after   { background: linear-gradient(90deg, var(--color-ok), transparent 75%); }
+.stat-card.tone-warn::after { background: linear-gradient(90deg, var(--color-warn), transparent 75%); }
+.stat-card.tone-crit::after { background: linear-gradient(90deg, var(--color-crit), transparent 75%); }
+.stat-card.tone-muted::after { background: var(--color-border); opacity: 1; }
+
+.stat-card.tone-ok   .stat-value { color: var(--color-ok); }
+.stat-card.tone-warn .stat-value { color: var(--color-warn); }
+.stat-card.tone-crit .stat-value { color: var(--color-crit); }
+.stat-card.tone-muted .stat-value { color: var(--color-text-secondary); }
+
+/* Unknown values read as absent, not as zero. */
+.stat-card .stat-value.unknown { color: var(--color-text-muted); font-weight: 400; }
+
+.stat-card .stat-note { font-size: 11.5px; color: var(--color-text-muted); margin-top: 6px; }
+
+/* Small labelled figures, denser than a stat-card — used inside a report card. */
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(165px, 1fr));
+  gap: 10px;
+}
+
+.metric {
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-inset);
+}
+
+.metric .metric-label { color: var(--color-text-muted); font-size: 11.5px; }
+
+.metric .metric-value {
+  font-size: 20px;
+  font-weight: 650;
+  margin-top: 2px;
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.metric.tone-ok   .metric-value { color: var(--color-ok); }
+.metric.tone-warn .metric-value { color: var(--color-warn); }
+.metric.tone-crit .metric-value { color: var(--color-crit); }
+
+/* --- Buttons -------------------------------------------------------------
+   Bare <button> is the secondary style, because most buttons in the app are
+   secondary and were written without a class. Intent is opt-in via a modifier,
+   which keeps a row of five identical-looking buttons from happening by
+   default. */
+
+button,
+.btn {
+  height: var(--control-height);
+  padding: 0 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-elevated);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 550;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  white-space: nowrap;
+  transition: background var(--transition), border-color var(--transition),
+              color var(--transition), transform var(--transition);
+}
+
+button:hover:not(:disabled),
+.btn:hover:not(:disabled) {
+  background: #22304a;
+  border-color: #3a5075;
+}
+
+button:active:not(:disabled),
+.btn:active:not(:disabled) { transform: translateY(1px); }
+
+button:disabled,
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.btn-primary {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-primary-fg);
   font-weight: 600;
 }
-
-.badge.ok {
-  color: var(--color-ok);
-  background: var(--color-ok-bg);
+.btn-primary:hover:not(:disabled) {
+  background: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
 }
+.btn-primary:active:not(:disabled) { background: var(--color-primary-active); }
 
-.badge.warn {
-  color: var(--color-warn);
-  background: var(--color-warn-bg);
-}
-
-.badge.crit {
+/* Destructive actions are outlined rather than filled: a wall of solid red
+   reads as an error state, and the outline still separates them clearly from
+   neutral actions. They fill on hover, at the point of commitment. */
+.btn-danger {
+  background: transparent;
+  border-color: var(--color-crit-border);
   color: var(--color-crit);
-  background: var(--color-crit-bg);
+}
+.btn-danger:hover:not(:disabled) {
+  background: var(--color-crit);
+  border-color: var(--color-crit);
+  color: #1a0a0a;
 }
 
-.badge.neutral {
-  color: var(--color-text-muted);
-  background: var(--color-neutral-bg);
+.btn-warning {
+  background: transparent;
+  border-color: var(--color-warn-border);
+  color: var(--color-warn);
+}
+.btn-warning:hover:not(:disabled) {
+  background: var(--color-warn);
+  border-color: var(--color-warn);
+  color: #1a1405;
 }
 
-/* --- Tables -------------------------------------------------------------- */
-
-.table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13.5px;
+/* Lowest emphasis — for repeated row-level actions where a bordered button
+   every few pixels would create visual noise. */
+.btn-ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--color-text-secondary);
 }
+.btn-ghost:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: transparent;
+  color: var(--color-text);
+}
+
+.btn-sm { height: var(--control-height-sm); padding: 0 10px; font-size: 12.5px; }
+
+.btn-icon { width: var(--control-height); padding: 0; }
+.btn-icon.btn-sm { width: var(--control-height-sm); }
+
+/* Loading: a quiet spinner in place of the label's leading edge. */
+.btn-loading { position: relative; color: transparent !important; pointer-events: none; }
+.btn-loading::after {
+  content: '';
+  position: absolute;
+  width: 13px; height: 13px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  color: var(--color-text);
+  animation: spin 600ms linear infinite;
+}
+.btn-primary.btn-loading::after { color: #fff; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.btn-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+/* --- Status badges -------------------------------------------------------
+   A dot precedes the label so status survives greyscale and colour-blindness
+   (WCAG 1.4.1: colour is never the only visual means of conveying info). */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 10px 2px 8px;
+  border-radius: var(--radius-pill);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+  line-height: 1.6;
+}
+
+.badge::before {
+  content: '';
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+
+.badge.ok      { color: var(--color-ok);   background: var(--color-ok-bg);   border-color: var(--color-ok-border); }
+.badge.warn    { color: var(--color-warn); background: var(--color-warn-bg); border-color: var(--color-warn-border); }
+.badge.crit    { color: var(--color-crit); background: var(--color-crit-bg); border-color: var(--color-crit-border); }
+.badge.info    { color: var(--color-info); background: var(--color-info-bg); border-color: var(--color-info-border); }
+.badge.neutral { color: var(--color-text-muted); background: var(--color-neutral-bg); border-color: var(--color-border); }
+
+/* Square marker for a non-status label, so "type" chips never read as "state". */
+.badge.plain::before { border-radius: 1px; opacity: 0.7; }
+
+/* --- Tables --------------------------------------------------------------- */
+
+.table { width: 100%; border-collapse: collapse; font-size: 13px; }
 
 .table th {
   text-align: left;
   font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
   color: var(--color-text-muted);
   border-bottom: 1px solid var(--color-border);
-  padding: 8px 10px;
+  padding: 9px 12px;
+  white-space: nowrap;
+  position: sticky;
+  top: 0;
+  background: var(--color-surface);
+  z-index: 1;
 }
 
 .table td {
+  border-bottom: 1px solid rgba(34, 48, 72, 0.6);
+  padding: 0 12px;
+  height: var(--row-height);
+  color: var(--color-text-secondary);
+  vertical-align: middle;
+}
+
+/* First column is the identity of the row — hostname, username — so it gets
+   full-strength text while everything else recedes. */
+.table td:first-child { color: var(--color-text); font-weight: 550; }
+
+.table tbody tr { transition: background var(--transition); }
+.table tbody tr:hover { background: var(--color-elevated); }
+.table tr:last-child td { border-bottom: none; }
+
+/* Secondary line inside a cell — a machine identifier under a hostname, an
+   approver under a status. Resets the first-column weight so it stays secondary. */
+.row-sub {
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--color-text-muted);
+  margin-top: 2px;
+}
+.row-sub.mono-sub { font-family: 'Cascadia Mono', 'SF Mono', Consolas, monospace; }
+
+/* Vertical padding for rows that carry two lines. */
+.table td:has(.row-sub) { padding-top: 8px; padding-bottom: 8px; }
+
+/* Opt-in truncation. Needs a max-width from the column to take effect. */
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
+  max-width: 100%;
+}
+
+.table-wrap { overflow-x: auto; margin: 0 -18px; padding: 0 18px; }
+
+/* --- Forms ---------------------------------------------------------------- */
+
+input[type='text'],
+input[type='password'],
+input[type='email'],
+input[type='search'],
+input[type='number'],
+select,
+textarea {
+  height: var(--control-height);
+  padding: 0 11px;
+  border-radius: var(--radius);
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-inset);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 13px;
+  transition: border-color var(--transition), box-shadow var(--transition);
+  width: 100%;
+}
+
+textarea { height: auto; padding: 9px 11px; resize: vertical; }
+
+input::placeholder, textarea::placeholder { color: var(--color-text-muted); opacity: 0.75; }
+
+input:hover:not(:disabled), select:hover:not(:disabled) { border-color: #3a5075; }
+
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-bg);
+}
+
+input:disabled, select:disabled, textarea:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: var(--color-neutral-bg);
+}
+
+input[aria-invalid='true'], .field-error input {
+  border-color: var(--color-crit);
+}
+input[aria-invalid='true']:focus {
+  box-shadow: 0 0 0 3px var(--color-crit-bg);
+}
+
+select {
+  appearance: none;
+  padding-right: 30px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238195ae' stroke-width='3'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+}
+
+input[type='checkbox'], input[type='radio'] {
+  width: 15px; height: 15px;
+  accent-color: var(--color-primary);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+/* The native file button is unstyleable as a whole, but its selector button is
+   not — so it gets the secondary-button treatment and stops being the one
+   light-grey control on a dark page. */
+input[type='file'] {
+  width: 100%;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--color-text-secondary);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  height: var(--control-height);
+  display: flex;
+  align-items: center;
+}
+
+input[type='file']::file-selector-button {
+  height: var(--control-height-sm);
+  margin-right: 10px;
+  padding: 0 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-elevated);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 550;
+  cursor: pointer;
+  transition: background var(--transition), border-color var(--transition);
+}
+input[type='file']::file-selector-button:hover {
+  background: #22304a;
+  border-color: #3a5075;
+}
+
+.field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+
+/* Two-up form layout that collapses to one column when the container narrows. */
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0 14px;
+  max-width: 760px;
+}
+.form-grid .full { grid-column: 1 / -1; }
+
+.field-label,
+label.field-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  letter-spacing: 0.2px;
+}
+
+.field-hint { font-size: 11.5px; color: var(--color-text-muted); }
+
+/* Validation message sits with its field, not in a banner at the top of the
+   form where the reader has to work out which input it refers to. */
+.field-message {
+  font-size: 11.5px;
+  color: var(--color-crit);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* Search field with the magnifier inside it. The icon is positioned rather than
+   drawn as a background image so it inherits the theme's colours. */
+.input-search { position: relative; flex: 0 1 320px; min-width: 200px; }
+.input-search input { padding-left: 32px; }
+.input-search .search-icon {
+  position: absolute;
+  left: 10px; top: 50%;
+  transform: translateY(-50%);
+  color: var(--color-text-muted);
+  pointer-events: none;
+}
+
+/* Row of controls above a table. */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+.toolbar .spacer { flex: 1; }
+
+.pagination {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  font-size: 12.5px;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.pagination .pager { display: flex; gap: 8px; align-items: center; }
+
+.check-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+/* --- Dialogs -------------------------------------------------------------- */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(4, 8, 16, 0.72);
+  backdrop-filter: blur(3px);
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  animation: overlay-in 140ms ease-out;
+}
+
+.dialog {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  width: 100%;
+  max-height: 88vh;
+  overflow-y: auto;
+  animation: dialog-in 180ms cubic-bezier(0.2, 0, 0.2, 1);
+}
+
+.dialog-header {
+  padding: 18px 22px 14px;
   border-bottom: 1px solid var(--color-border);
-  padding: 8px 10px;
+}
+.dialog-header h2 { margin: 0; font-size: 15.5px; font-weight: 650; }
+.dialog-header .sub { font-size: 12.5px; color: var(--color-text-muted); margin-top: 3px; }
+
+.dialog-body { padding: 18px 22px; }
+
+.dialog-footer {
+  padding: 14px 22px 18px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  border-top: 1px solid var(--color-border);
 }
 
-.table tr:last-child td {
-  border-bottom: none;
+.form-section {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.7px;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  margin: 20px 0 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--color-border);
+}
+.form-section:first-child { margin-top: 0; }
+
+/* Recap block — what a profile sets, or what is about to be applied. Tighter
+   than a standalone .kv because it is read as a unit, not scanned row by row. */
+.summary {
+  background: var(--color-inset);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  margin: 10px 0;
+}
+.summary .summary-title { font-weight: 600; font-size: 13.5px; margin-bottom: 3px; }
+.summary .summary-note { color: var(--color-text-muted); font-size: 12.5px; margin-bottom: 10px; }
+.summary .kv { grid-template-columns: minmax(140px, 190px) 1fr; font-size: 12.5px; }
+.summary .kv dt, .summary .kv dd { border-bottom: none; padding: 3px 0; }
+.summary .kv dt { padding-right: 12px; }
+
+/* Step counter on a multi-step dialog. */
+.step-badge {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
 }
 
-/* --- States -------------------------------------------------------------- */
+@keyframes overlay-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes dialog-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.99); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* --- Sign-in -------------------------------------------------------------- */
+
+.login-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background:
+    radial-gradient(900px 480px at 50% -10%, rgba(59, 130, 246, 0.16), transparent 65%),
+    var(--color-sidebar);
+}
+
+.login-card {
+  width: 100%;
+  max-width: 380px;
+  padding: 30px 32px 32px;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  border-color: var(--color-border-strong);
+}
+
+.login-brand { text-align: center; margin-bottom: 24px; }
+
+.login-brand .mark {
+  width: 42px; height: 42px;
+  margin: 0 auto 12px;
+  border-radius: 11px;
+  background: linear-gradient(140deg, var(--color-primary), #1e50a8);
+  display: grid; place-items: center;
+  color: #fff;
+  box-shadow: 0 6px 18px rgba(59, 130, 246, 0.28);
+}
+
+.login-brand .name { font-size: 17px; font-weight: 650; letter-spacing: -0.1px; }
+.login-brand .sub { color: var(--color-text-muted); font-size: 12.5px; margin-top: 3px; }
+
+.login-card button[type='submit'] { width: 100%; margin-top: 8px; }
+
+.login-foot {
+  margin-top: 18px;
+  text-align: center;
+  font-size: 11.5px;
+  color: var(--color-text-muted);
+}
+
+/* --- States --------------------------------------------------------------- */
 
 .empty-state {
   text-align: center;
   color: var(--color-text-muted);
-  padding: 48px 24px;
+  padding: 52px 24px;
+}
+
+/* Size comes from the element so a section can pick a smaller glyph; only the
+   placement and the deliberately low-contrast colour are fixed here. */
+.empty-state .icon {
+  display: block;
+  margin: 0 auto 14px;
+  color: var(--color-border-strong);
 }
 
 .empty-state .title {
-  font-size: 15px;
+  font-size: 14.5px;
   font-weight: 600;
   color: var(--color-text);
   margin-bottom: 6px;
@@ -258,21 +936,379 @@ a {
 .error-banner {
   background: var(--color-crit-bg);
   color: var(--color-crit);
-  border: 1px solid #fecaca;
-  border-radius: 8px;
-  padding: 12px 16px;
+  border: 1px solid var(--color-crit-border);
+  border-radius: var(--radius);
+  padding: 11px 14px;
   margin-bottom: 16px;
-  font-size: 13.5px;
+  font-size: 13px;
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+}
+
+.notice-banner {
+  background: var(--color-ok-bg);
+  color: var(--color-ok);
+  border: 1px solid var(--color-ok-border);
+  border-radius: var(--radius);
+  padding: 11px 14px;
+  margin-bottom: 16px;
+  font-size: 13px;
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+}
+
+.info-banner {
+  background: var(--color-info-bg);
+  color: var(--color-info);
+  border: 1px solid var(--color-info-border);
+  border-radius: var(--radius);
+  padding: 11px 14px;
+  margin-bottom: 16px;
+  font-size: 13px;
+}
+
+/* Leading icon sits on the first line's optical centre rather than its box top. */
+.error-banner > svg,
+.notice-banner > svg { flex-shrink: 0; margin-top: 2px; }
+
+.warn-banner {
+  background: var(--color-warn-bg);
+  color: var(--color-warn);
+  border: 1px solid var(--color-warn-border);
+  border-radius: var(--radius);
+  padding: 11px 14px;
+  margin-bottom: 16px;
+  font-size: 13px;
 }
 
 .loading {
   color: var(--color-text-muted);
   padding: 24px 0;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13px;
 }
 
-code {
-  background: var(--color-neutral-bg);
-  border-radius: 4px;
+.loading::before {
+  content: '';
+  width: 13px; height: 13px;
+  border: 2px solid var(--color-border-strong);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: spin 700ms linear infinite;
+  flex-shrink: 0;
+}
+
+/* Progress reported inside a banner adopts the banner's voice instead of
+   reverting to muted grey on a tinted background. */
+.info-banner .loading { color: inherit; padding: 0; }
+.info-banner .loading::before {
+  border-color: var(--color-info-border);
+  border-top-color: var(--color-info);
+}
+
+/* Skeletons for first paint, where a spinner would just say "something is
+   happening" without hinting at the shape of what is coming. */
+.skeleton {
+  background: linear-gradient(90deg, var(--color-elevated) 25%, #24314a 50%, var(--color-elevated) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+  border-radius: var(--radius-sm);
+  height: 12px;
+}
+.skeleton-row { height: var(--row-height); display: flex; align-items: center; gap: 16px; padding: 0 12px; }
+
+@keyframes shimmer { to { background-position: -200% 0; } }
+
+/* --- Misc ----------------------------------------------------------------- */
+
+code, .mono {
+  background: var(--color-inset);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
   padding: 1px 6px;
+  font-size: 12px;
+  font-family: 'Cascadia Mono', 'SF Mono', Consolas, monospace;
+  color: var(--color-text-secondary);
+}
+
+.page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 18px;
+}
+
+.page-header .lede {
+  color: var(--color-text-muted);
+  font-size: 13px;
+  max-width: 640px;
+}
+
+.divider { height: 1px; background: var(--color-border); border: 0; margin: 16px 0; }
+
+/* Master/detail. Collapses to a single column when there is no room for both. */
+.split { display: flex; gap: 16px; align-items: flex-start; }
+.split > .split-aside { flex: 0 0 300px; min-width: 0; }
+.split > .split-main { flex: 1; min-width: 0; }
+
+@media (max-width: 900px) {
+  .split { flex-direction: column; }
+  .split > .split-aside { flex: 1 1 auto; width: 100%; }
+  .split > .split-main { width: 100%; }
+}
+
+/* Selectable row in a list. A real <button> so it is reachable by keyboard and
+   announced as activatable — the previous click-handler <div> was neither. */
+.list-item {
+  display: block;
+  width: 100%;
+  height: auto;
+  text-align: left;
+  padding: 9px 11px;
+  margin-bottom: 3px;
+  border-radius: var(--radius);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: background var(--transition), border-color var(--transition);
+}
+
+.list-item:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.045);
+  border-color: transparent;
+}
+
+.list-item[aria-selected='true'] {
+  background: var(--color-primary-bg);
+  border-color: var(--color-primary-border);
+}
+
+.list-item .list-item-title { font-weight: 600; color: var(--color-text); font-size: 13.5px; }
+.list-item .list-item-sub { color: var(--color-text-muted); font-size: 11.5px; margin-top: 2px; }
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.card-header h2 { margin: 0; }
+
+/* --- Detail header: the identity of the thing being looked at ------------- */
+
+.detail-header {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: 16px 18px;
+  margin-bottom: 16px;
+  box-shadow: var(--shadow-sm);
+}
+
+.breadcrumb {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.detail-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.detail-title h1 { font-size: 19px; font-weight: 650; margin: 0; letter-spacing: -0.2px; }
+.detail-title .spacer { flex: 1; }
+
+/* Inline facts strip. Cheaper to scan than a table for six short values. */
+.detail-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 22px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
   font-size: 12.5px;
+}
+.detail-facts .fact { display: flex; gap: 7px; align-items: center; }
+.detail-facts .fact-label { color: var(--color-text-muted); }
+.detail-facts .fact-value { color: var(--color-text-secondary); }
+
+/* --- Tabs ----------------------------------------------------------------- */
+
+.tabs {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--color-border);
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.tabs .tab {
+  height: 38px;
+  padding: 0 14px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: var(--radius) var(--radius) 0 0;
+  background: none;
+  color: var(--color-text-muted);
+  font-size: 13px;
+  font-weight: 500;
+  flex-shrink: 0;
+  transition: color var(--transition), border-color var(--transition), background var(--transition);
+}
+.tabs .tab:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: transparent;
+  color: var(--color-text-secondary);
+  transform: none;
+}
+.tabs .tab[aria-selected='true'] {
+  color: var(--color-text);
+  font-weight: 600;
+  border-bottom-color: var(--color-primary);
+  background: none;
+}
+
+/* Count suffix on a tab, so "Users 5" does not read as one long label. */
+.tabs .tab .tab-count {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  background: var(--color-neutral-bg);
+  color: var(--color-text-muted);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+.tabs .tab[aria-selected='true'] .tab-count {
+  background: var(--color-primary-bg);
+  color: #a8c8ff;
+}
+
+/* --- Key/value detail list ------------------------------------------------ */
+
+.kv {
+  display: grid;
+  grid-template-columns: minmax(150px, 210px) 1fr;
+  gap: 0;
+  font-size: 13px;
+}
+.kv dt {
+  color: var(--color-text-muted);
+  padding: 8px 14px 8px 0;
+  border-bottom: 1px solid rgba(34, 48, 72, 0.6);
+}
+.kv dd {
+  margin: 0;
+  padding: 8px 0;
+  color: var(--color-text);
+  border-bottom: 1px solid rgba(34, 48, 72, 0.6);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.kv dt:last-of-type, .kv dd:last-of-type { border-bottom: none; }
+
+@media (max-width: 600px) {
+  .kv { grid-template-columns: 1fr; }
+  .kv dt { border-bottom: none; padding-bottom: 0; }
+}
+
+/* --- Grouped actions -----------------------------------------------------
+   Actions are grouped by consequence, not alphabetically: interrupting a
+   session, powering a machine off, and ending management are different sizes of
+   decision and should not sit in one undifferentiated row of buttons. */
+
+.action-group { padding: 14px 0; border-top: 1px solid var(--color-border); }
+.action-group:first-of-type { border-top: none; padding-top: 4px; }
+.action-group h3 { font-size: 13px; font-weight: 650; margin: 0 0 3px; }
+.action-group .group-note {
+  color: var(--color-text-muted);
+  font-size: 12.5px;
+  margin: 0 0 11px;
+  max-width: 620px;
+}
+
+/* The last group on a device page ends management. Marked out so it cannot be
+   mistaken for the routine actions above it. */
+.action-group.destructive {
+  margin-top: 6px;
+  border: 1px solid var(--color-crit-border);
+  border-radius: var(--radius);
+  background: var(--color-crit-bg);
+  padding: 14px 16px;
+}
+.action-group.destructive h3 { color: var(--color-crit); }
+
+/* Long inventory lists scroll inside the card rather than the page. */
+.scroll-y { max-height: 520px; overflow-y: auto; }
+
+.muted { color: var(--color-text-muted); }
+.secondary { color: var(--color-text-secondary); }
+
+/* Visible to screen readers, not on screen. Used where an icon or a bare number
+   carries meaning that needs spelling out. */
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* --- Responsive ----------------------------------------------------------
+   Desktop-first on purpose: this is an administration console and information
+   density matters more than a phone layout. Narrow screens collapse the
+   sidebar to icons rather than reflowing everything. */
+
+@media (max-width: 1024px) {
+  :root { --sidebar-width: 60px; }
+  .sidebar-brand .product,
+  .sidebar-brand .tagline,
+  .sidebar-nav .nav-label,
+  .sidebar-nav .nav-group,
+  .sidebar-footer { display: none; }
+  .sidebar-brand { justify-content: center; padding: 18px 0; }
+  .sidebar-nav { padding: 12px 8px; }
+  .sidebar-nav a { justify-content: center; padding: 9px 0; position: relative; }
+  .content { padding: 18px 16px; }
+
+  /* The pending count has no room for its digits here, but "there is something
+     waiting" must survive the collapse — so it becomes a corner dot rather than
+     disappearing. The count stays available to screen readers either way. */
+  .nav-count {
+    position: absolute;
+    top: 4px; right: 8px;
+    min-width: 8px; width: 8px; height: 8px;
+    padding: 0;
+    font-size: 0;
+    overflow: hidden;
+  }
+}
+
+@media (max-width: 720px) {
+  .topbar { padding: 0 14px; }
+  .topbar-user .who { display: none; }
+  .stat-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+}
+
+/* Respect a stated preference for less motion. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

@@ -9,6 +9,7 @@ import {
   type LocalUserRow,
 } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
+import { Icon } from '../components/Icon'
 
 /**
  * Device -> Groups. Shows real Windows local groups and their actual membership,
@@ -77,115 +78,177 @@ export function DeviceGroupsPanel({ deviceId }: { deviceId: string }) {
 
   return (
     <div className="card">
-      {error && <div className="error-banner">{error}</div>}
+      {error && (
+        <div className="error-banner" role="alert">
+          <Icon name="alert" size={15} />
+          <span>{error}</span>
+        </div>
+      )}
       {notice && (
-        <div className="error-banner" style={{ background: '#ecfdf5', borderColor: '#a7f3d0', color: '#065f46' }}>
-          {notice}
+        <div className="notice-banner" role="status">
+          <Icon name="check" size={15} />
+          <span>{notice}</span>
         </div>
       )}
       {pending && <div className="loading">Waiting for the device to report the result…</div>}
 
       {groups.length === 0 && (
         <div className="empty-state">
+          <Icon name="groups" size={40} strokeWidth={1.25} className="icon" />
           <div className="title">No local group inventory yet</div>
-          <div>Refresh inventory and wait for the agent's next heartbeat.</div>
+          <div>Refresh inventory and wait for the agent’s next heartbeat.</div>
         </div>
       )}
 
       {groups.length > 0 && !selected && (
-        <table className="table">
-          <thead><tr><th>Group</th><th>Members</th><th>Membership</th><th></th></tr></thead>
-          <tbody>
-            {groups.map((g) => (
-              <tr key={g.sid}>
-                <td>
-                  <div style={{ fontWeight: 600 }}>
-                    {g.name}{' '}
-                    {g.isAdministrators && <span className="badge warn">high impact</span>}
-                  </div>
-                  <div style={{ color: 'var(--color-text-muted)', fontSize: 12 }}>{g.description ?? '—'}</div>
-                </td>
-                <td>{g.memberCount}</td>
-                <td style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
-                  {(g.members ?? []).map((m) => m.name).join(', ') || '—'}
-                </td>
-                <td><button type="button" onClick={() => setSelected(g)}>Open</button></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-
-      {selected && (
         <>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-            <div>
-              <h2 style={{ margin: 0 }}>
-                {selected.name} {selected.isAdministrators && <span className="badge warn">high impact</span>}
-              </h2>
-              <div style={{ color: 'var(--color-text-muted)', fontSize: 12, fontFamily: 'monospace' }}>{selected.sid}</div>
-            </div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              {canManage && (
-                <button type="button" onClick={() => {
-                  const candidates = users.filter(
-                    (u) => !(selected.members ?? []).some((m) => m.sid === u.sid))
-                  if (candidates.length === 0) {
-                    setError('Every known local user is already a member of this group.')
-                    return
-                  }
-                  const name = window.prompt(
-                    `Add which user to "${selected.name}"?\n\n${candidates.map((u) => u.name).join(', ')}`)
-                  if (!name) return
-                  const user = candidates.find((u) => u.name.toLowerCase() === name.toLowerCase())
-                  if (!user) {
-                    setError(`No local user named "${name}".`)
-                    return
-                  }
-                  void run(`Add ${user.name} to ${selected.name}`,
-                    () => addLocalGroupMember(deviceId, selected.sid, user.sid))
-                }}>
-                  Add user
-                </button>
-              )}
-              <button type="button" onClick={() => setSelected(null)}>Back</button>
-            </div>
-          </div>
-
-          {(selected.members ?? []).length === 0 && <div className="loading">This group has no members.</div>}
-
-          {(selected.members ?? []).length > 0 && (
+          <h2>Local Windows groups</h2>
+          <div className="table-wrap">
             <table className="table">
-              <thead><tr><th>Member</th><th>Type</th><th>SID</th>{canManage && <th></th>}</tr></thead>
+              <thead>
+                <tr>
+                  <th>Group</th>
+                  <th>Members</th>
+                  <th>Membership</th>
+                  <th style={{ textAlign: 'right' }}>Actions</th>
+                </tr>
+              </thead>
               <tbody>
-                {(selected.members ?? []).map((m) => (
-                  <tr key={m.sid ?? m.name}>
-                    <td style={{ fontWeight: 600 }}>{m.name}</td>
-                    <td>{m.memberType}</td>
-                    <td style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--color-text-muted)' }}>{m.sid ?? '—'}</td>
-                    {canManage && (
-                      <td>
-                        {m.sid && (
-                          <button type="button"
-                            onClick={() => {
-                              if (!window.confirm(
-                                `Remove "${m.name}" from "${selected.name}"?`
-                                + (selected.isAdministrators
-                                  ? '\n\nThis removes their local administrator rights on this device.'
-                                  : ''))) return
-                              void run(`Remove ${m.name} from ${selected.name}`,
-                                () => removeLocalGroupMember(deviceId, selected.sid, m.sid!))
-                            }}
-                            style={{ border: '1px solid #fca5a5', color: 'var(--color-crit)' }}>
-                            Remove
-                          </button>
-                        )}
-                      </td>
-                    )}
+                {groups.map((g) => (
+                  <tr key={g.sid}>
+                    <td>
+                      <div>
+                        {g.name}{' '}
+                        {/* Administrators is called out on sight: adding a member
+                            here grants full control of the machine. */}
+                        {g.isAdministrators && <span className="badge warn">high impact</span>}
+                      </div>
+                      <div className="row-sub">{g.description ?? '—'}</div>
+                    </td>
+                    <td>{g.memberCount}</td>
+                    <td className="muted" style={{ maxWidth: 320 }}>
+                      <span className="truncate">
+                        {(g.members ?? []).map((m) => m.name).join(', ') || '—'}
+                      </span>
+                    </td>
+                    <td style={{ textAlign: 'right' }}>
+                      <button type="button" className="btn-sm" onClick={() => setSelected(g)}>
+                        Open
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+          </div>
+        </>
+      )}
+
+      {selected && (
+        <>
+          <div className="card-header">
+            <div>
+              <h2>
+                {selected.name}{' '}
+                {selected.isAdministrators && <span className="badge warn">high impact</span>}
+              </h2>
+              <div className="row-sub mono-sub">{selected.sid}</div>
+            </div>
+            <div className="btn-row">
+              {canManage && (
+                <button
+                  type="button"
+                  className="btn-sm"
+                  onClick={() => {
+                    const candidates = users.filter(
+                      (u) => !(selected.members ?? []).some((m) => m.sid === u.sid),
+                    )
+                    if (candidates.length === 0) {
+                      setError('Every known local user is already a member of this group.')
+                      return
+                    }
+                    const name = window.prompt(
+                      `Add which user to "${selected.name}"?\n\n${candidates.map((u) => u.name).join(', ')}`,
+                    )
+                    if (!name) return
+                    const user = candidates.find((u) => u.name.toLowerCase() === name.toLowerCase())
+                    if (!user) {
+                      setError(`No local user named "${name}".`)
+                      return
+                    }
+                    void run(`Add ${user.name} to ${selected.name}`, () =>
+                      addLocalGroupMember(deviceId, selected.sid, user.sid),
+                    )
+                  }}
+                >
+                  <Icon name="plus" size={14} />
+                  Add user
+                </button>
+              )}
+              <button type="button" className="btn-ghost btn-sm" onClick={() => setSelected(null)}>
+                Back
+              </button>
+            </div>
+          </div>
+
+          {(selected.members ?? []).length === 0 && (
+            <div className="empty-state">
+              <div className="title">This group has no members</div>
+            </div>
+          )}
+
+          {(selected.members ?? []).length > 0 && (
+            <div className="table-wrap">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Member</th>
+                    <th>Type</th>
+                    <th>SID</th>
+                    {canManage && <th style={{ textAlign: 'right' }}>Actions</th>}
+                  </tr>
+                </thead>
+                <tbody>
+                  {(selected.members ?? []).map((m) => (
+                    <tr key={m.sid ?? m.name}>
+                      <td>{m.name}</td>
+                      <td>{m.memberType}</td>
+                      <td className="muted" style={{ maxWidth: 240 }}>
+                        <span className="truncate mono-sub" title={m.sid ?? undefined}>
+                          {m.sid ?? '—'}
+                        </span>
+                      </td>
+                      {canManage && (
+                        <td style={{ textAlign: 'right' }}>
+                          {m.sid && (
+                            <button
+                              type="button"
+                              className="btn-danger btn-sm"
+                              onClick={() => {
+                                if (
+                                  !window.confirm(
+                                    `Remove "${m.name}" from "${selected.name}"?` +
+                                      (selected.isAdministrators
+                                        ? '\n\nThis removes their local administrator rights on this device.'
+                                        : ''),
+                                  )
+                                )
+                                  return
+                                void run(`Remove ${m.name} from ${selected.name}`, () =>
+                                  removeLocalGroupMember(deviceId, selected.sid, m.sid!),
+                                )
+                              }}
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </>
       )}

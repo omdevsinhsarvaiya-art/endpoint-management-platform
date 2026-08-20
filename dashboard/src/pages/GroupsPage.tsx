@@ -9,6 +9,7 @@ import {
   type GroupRow,
 } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
+import { Icon } from '../components/Icon'
 
 export function GroupsPage() {
   const { hasPermission } = useAuth()
@@ -68,13 +69,29 @@ export function GroupsPage() {
     }
   }
 
+  const canManage = hasPermission('group.manage')
+
   return (
     <>
-      {error && <div className="error-banner">{error}</div>}
+      {error && (
+        <div className="error-banner" role="alert">
+          <Icon name="alert" size={15} />
+          <span>{error}</span>
+        </div>
+      )}
 
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
-        {hasPermission('group.manage') && (
-          <button type="button" onClick={() => setCreating(!creating)}>
+      <div className="page-header">
+        <div className="lede">
+          Device groups are how policies, software and updates get targeted at a set of machines
+          rather than one at a time.
+        </div>
+        {canManage && (
+          <button
+            type="button"
+            className={creating ? undefined : 'btn-primary'}
+            onClick={() => setCreating(!creating)}
+          >
+            {!creating && <Icon name="plus" size={14} />}
             {creating ? 'Cancel' : 'New group'}
           </button>
         )}
@@ -82,63 +99,104 @@ export function GroupsPage() {
 
       {creating && (
         <div className="card card-section">
+          <h2>New group</h2>
           <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end' }}>
-            <label style={{ fontSize: 13, fontWeight: 600 }}>
-              Group name
+            <div className="field" style={{ marginBottom: 0, width: 260 }}>
+              <label className="field-label" htmlFor="group-name">
+                Group name
+              </label>
               <input
+                id="group-name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="Finance"
-                style={{ display: 'block', marginTop: 4, padding: '7px 10px', border: '1px solid var(--color-border)', borderRadius: 6, font: 'inherit', width: 240 }}
               />
-            </label>
-            <button type="button" disabled={!name.trim()} onClick={() => void onCreate()}
-              style={{ background: 'var(--color-primary)', color: '#fff', border: 'none', borderRadius: 6, padding: '8px 16px', fontWeight: 600, cursor: 'pointer' }}>
+            </div>
+            <button
+              type="button"
+              className="btn-primary"
+              disabled={!name.trim()}
+              onClick={() => void onCreate()}
+            >
               Create
             </button>
           </div>
         </div>
       )}
 
-      <div style={{ display: 'flex', gap: 16 }}>
-        <div className="card" style={{ flex: '0 0 320px' }}>
+      <div className="split">
+        <div className="card split-aside">
           <h2>Groups</h2>
-          {groups.length === 0 && <div className="empty-state"><div className="title">No groups yet</div></div>}
+          {groups.length === 0 && (
+            <div className="empty-state">
+              <Icon name="groups" size={36} strokeWidth={1.25} className="icon" />
+              <div className="title">No groups yet</div>
+            </div>
+          )}
           {groups.map((g) => (
-            <div key={g.id} onClick={() => setSelected(g)}
-              style={{ padding: '10px 12px', borderRadius: 6, cursor: 'pointer', marginBottom: 4,
-                background: selected?.id === g.id ? 'var(--color-neutral-bg)' : 'transparent' }}>
-              <div style={{ fontWeight: 600 }}>{g.name}</div>
-              <div style={{ color: 'var(--color-text-muted)', fontSize: 12 }}>
+            <button
+              key={g.id}
+              type="button"
+              className="list-item"
+              aria-selected={selected?.id === g.id}
+              onClick={() => setSelected(g)}
+            >
+              <div className="list-item-title">{g.name}</div>
+              <div className="list-item-sub">
                 {g.memberCount} device{g.memberCount === 1 ? '' : 's'} · {g.type}
               </div>
-            </div>
+            </button>
           ))}
         </div>
 
-        <div className="card" style={{ flex: 1 }}>
+        <div className="card split-main">
           {!selected && (
             <div className="empty-state">
+              <Icon name="chevron-right" size={36} strokeWidth={1.25} className="icon" />
               <div className="title">Select a group</div>
               <div>Choose a group to view and manage its members.</div>
             </div>
           )}
           {selected && (
             <>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                <h2 style={{ margin: 0 }}>{selected.name} — members</h2>
-                {hasPermission('group.manage') && <button type="button" onClick={() => void onAddMember()}>Add member</button>}
+              <div className="card-header">
+                <h2>{selected.name} — members</h2>
+                {canManage && (
+                  <button type="button" className="btn-sm" onClick={() => void onAddMember()}>
+                    <Icon name="plus" size={14} />
+                    Add member
+                  </button>
+                )}
               </div>
-              {members.length === 0 && <div className="loading">No members yet.</div>}
+              {members.length === 0 && (
+                <div className="empty-state">
+                  <div className="title">No members yet</div>
+                  <div>Add a device to target this group with policies and software.</div>
+                </div>
+              )}
               {members.length > 0 && (
-                <table className="table">
-                  <thead><tr><th>Device</th><th>Status</th></tr></thead>
-                  <tbody>
-                    {members.map((m) => (
-                      <tr key={m.id}><td style={{ fontWeight: 600 }}>{m.hostname}</td><td>{m.status}</td></tr>
-                    ))}
-                  </tbody>
-                </table>
+                <div className="table-wrap">
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>Device</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {members.map((m) => (
+                        <tr key={m.id}>
+                          <td>{m.hostname}</td>
+                          <td>
+                            <span className={`badge ${m.status === 'Active' ? 'ok' : 'neutral'}`}>
+                              {m.status}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </>
           )}

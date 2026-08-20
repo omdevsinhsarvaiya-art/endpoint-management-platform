@@ -1,4 +1,4 @@
-import { BrowserRouter, Route, Routes } from 'react-router-dom'
+import { BrowserRouter, Link, Route, Routes } from 'react-router-dom'
 import { AuthProvider, useAuth } from './auth/AuthContext'
 import { AppShell } from './components/AppShell'
 import { DashboardPage } from './pages/DashboardPage'
@@ -42,7 +42,20 @@ function AuthGate() {
           <Route path="devices/:deviceId" element={<DeviceDetailPage />} />
           <Route
             path="users"
-            element={<PlaceholderPage title="Users" phase="Phase 4 (local user management)" />}
+            element={
+              <PlaceholderPage
+                title="Fleet-wide Users"
+                phase="Phase 4 (local user management)"
+                // Local accounts are managed per machine today. Saying so turns a
+                // dead end into a signpost.
+                alternative={
+                  <>
+                    Local Windows accounts are managed per machine — open a device under{' '}
+                    <Link to="/devices">Devices</Link> and use its <strong>Users</strong> tab.
+                  </>
+                }
+              />
+            }
           />
           <Route path="groups" element={<GroupsPage />} />
           <Route path="software" element={<SoftwarePage />} />

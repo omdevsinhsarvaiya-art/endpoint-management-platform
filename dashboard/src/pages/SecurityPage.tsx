@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { getSecurityOverview, type SecurityOverview } from '../api/client'
+import { Icon } from '../components/Icon'
 
 function scoreBadge(score: number | null) {
   if (score == null) return <span className="badge neutral">Unknown</span>
@@ -8,11 +9,10 @@ function scoreBadge(score: number | null) {
   return <span className={cls}>{score}%</span>
 }
 
+/** Pass/Fail rather than a tick or a colour — readable in greyscale and aloud. */
 function checkCell(value: boolean | null) {
-  if (value == null) return <span style={{ color: 'var(--color-text-muted)' }}>—</span>
-  return value
-    ? <span className="badge ok">Pass</span>
-    : <span className="badge crit">Fail</span>
+  if (value == null) return <span className="muted">—</span>
+  return value ? <span className="badge ok">Pass</span> : <span className="badge crit">Fail</span>
 }
 
 export function SecurityPage() {
@@ -25,7 +25,14 @@ export function SecurityPage() {
       .catch(() => setError('Could not load security overview.'))
   }, [])
 
-  if (error) return <div className="error-banner">{error}</div>
+  if (error) {
+    return (
+      <div className="error-banner" role="alert">
+        <Icon name="alert" size={15} />
+        <span>{error}</span>
+      </div>
+    )
+  }
   if (!data) return <div className="loading">Loading security overview…</div>
 
   const s = data.summary
@@ -33,53 +40,94 @@ export function SecurityPage() {
   return (
     <>
       <div className="stat-grid">
-        <div className="card stat-card"><div className="stat-label">Devices reporting</div><div className="stat-value">{s.devicesReporting}</div></div>
-        <div className="card stat-card"><div className="stat-label">Average score</div><div className="stat-value">{s.averageScore ?? '—'}{s.averageScore != null ? '%' : ''}</div></div>
-        <div className="card stat-card"><div className="stat-label">Healthy (≥80%)</div><div className="stat-value" style={{ color: 'var(--color-ok)' }}>{s.healthy}</div></div>
-        <div className="card stat-card"><div className="stat-label">Needs attention</div><div className="stat-value" style={{ color: 'var(--color-warn)' }}>{s.needsAttention}</div></div>
-        <div className="card stat-card"><div className="stat-label">Critical (&lt;50%)</div><div className="stat-value" style={{ color: 'var(--color-crit)' }}>{s.critical}</div></div>
+        <div className="card stat-card">
+          <div className="stat-label">Devices reporting</div>
+          <div className="stat-value">{s.devicesReporting}</div>
+        </div>
+        <div className="card stat-card">
+          <div className="stat-label">Average score</div>
+          <div className={`stat-value${s.averageScore == null ? ' unknown' : ''}`}>
+            {s.averageScore == null ? '—' : `${s.averageScore}%`}
+          </div>
+        </div>
+        <div className={`card stat-card${s.healthy > 0 ? ' tone-ok' : ''}`}>
+          <div className="stat-label">Healthy (≥80%)</div>
+          <div className="stat-value">{s.healthy}</div>
+        </div>
+        <div className={`card stat-card${s.needsAttention > 0 ? ' tone-warn' : ''}`}>
+          <div className="stat-label">Needs attention</div>
+          <div className="stat-value">{s.needsAttention}</div>
+        </div>
+        <div className={`card stat-card${s.critical > 0 ? ' tone-crit' : ''}`}>
+          <div className="stat-label">Critical (&lt;50%)</div>
+          <div className="stat-value">{s.critical}</div>
+        </div>
       </div>
 
       <div className="card">
         <h2>Device compliance</h2>
         {data.devices.length === 0 && (
           <div className="empty-state">
+            <Icon name="security" size={40} strokeWidth={1.25} className="icon" />
             <div className="title">No security data yet</div>
             <div>Security posture appears once devices report an inventory that includes it.</div>
           </div>
         )}
         {data.devices.length > 0 && (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Device</th><th>Score</th><th>Defender</th><th>Firewall</th>
-                <th>Secure Boot</th><th>TPM</th><th>BitLocker</th><th>Local admins</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.devices.map((d) => (
-                <tr key={d.deviceId}>
-                  <td style={{ fontWeight: 600 }}><Link to={`/devices/${d.deviceId}`}>{d.hostname}</Link></td>
-                  <td>{scoreBadge(d.complianceScore)}</td>
-                  <td>{checkCell(d.defenderEnabled)}</td>
-                  <td>{checkCell(d.firewallEnabled)}</td>
-                  <td>{checkCell(d.secureBootEnabled)}</td>
-                  <td>{checkCell(d.tpmEnabled)}</td>
-                  <td>
-                    {d.bitLockerSystemDriveStatus == null
-                      ? <span style={{ color: 'var(--color-text-muted)' }}>—</span>
-                      : d.bitLockerSystemDriveStatus === 'On'
-                        ? <span className="badge ok">On</span>
-                        : <span className="badge crit">{d.bitLockerSystemDriveStatus}</span>}
-                  </td>
-                  <td>
-                    {d.localAdministratorCount == null ? '—'
-                      : <span className={d.localAdministratorCount > 3 ? 'badge warn' : 'badge neutral'}>{d.localAdministratorCount}</span>}
-                  </td>
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Device</th>
+                  <th>Score</th>
+                  <th>Defender</th>
+                  <th>Firewall</th>
+                  <th>Secure Boot</th>
+                  <th>TPM</th>
+                  <th>BitLocker</th>
+                  <th>Local admins</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {data.devices.map((d) => (
+                  <tr key={d.deviceId}>
+                    <td>
+                      <Link to={`/devices/${d.deviceId}`}>{d.hostname}</Link>
+                    </td>
+                    <td>{scoreBadge(d.complianceScore)}</td>
+                    <td>{checkCell(d.defenderEnabled)}</td>
+                    <td>{checkCell(d.firewallEnabled)}</td>
+                    <td>{checkCell(d.secureBootEnabled)}</td>
+                    <td>{checkCell(d.tpmEnabled)}</td>
+                    <td>
+                      {d.bitLockerSystemDriveStatus == null ? (
+                        <span className="muted">—</span>
+                      ) : d.bitLockerSystemDriveStatus === 'On' ? (
+                        <span className="badge ok">On</span>
+                      ) : (
+                        <span className="badge crit">{d.bitLockerSystemDriveStatus}</span>
+                      )}
+                    </td>
+                    <td>
+                      {/* More than three local administrators on one machine is
+                          worth a look, not an alert — hence warn, never crit. */}
+                      {d.localAdministratorCount == null ? (
+                        <span className="muted">—</span>
+                      ) : (
+                        <span
+                          className={`badge plain ${
+                            d.localAdministratorCount > 3 ? 'warn' : 'neutral'
+                          }`}
+                        >
+                          {d.localAdministratorCount}
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </>

@@ -5,6 +5,7 @@ import {
   getSoftwareTitles,
   type SoftwareTitlePage,
 } from '../api/client'
+import { Icon } from '../components/Icon'
 
 const PAGE_SIZE = 30
 
@@ -43,33 +44,45 @@ export function SoftwarePage() {
 
   return (
     <>
-      {error && <div className="error-banner">{error}</div>}
+      {error && (
+        <div className="error-banner" role="alert">
+          <Icon name="alert" size={15} />
+          <span>{error}</span>
+        </div>
+      )}
 
       <PackagesPanel />
 
       <div className="card">
-        <div style={{ display: 'flex', gap: 12, marginBottom: 14, flexWrap: 'wrap' }}>
-          <input
-            type="search"
-            placeholder="Search software…"
-            value={search}
-            onChange={(e) => {
-              setPage(1)
-              setSearch(e.target.value)
-            }}
-            style={{ flex: '0 1 300px', padding: '7px 12px', border: '1px solid var(--color-border)', borderRadius: 6, font: 'inherit' }}
-          />
+        <h2>Installed software</h2>
+        <div className="toolbar">
+          <div className="input-search">
+            <Icon name="search" size={15} className="search-icon" />
+            <input
+              type="search"
+              placeholder="Search software…"
+              aria-label="Search software by name"
+              value={search}
+              onChange={(e) => {
+                setPage(1)
+                setSearch(e.target.value)
+              }}
+            />
+          </div>
           <select
+            aria-label="Filter by publisher"
+            style={{ width: 'auto', minWidth: 180 }}
             value={publisher}
             onChange={(e) => {
               setPage(1)
               setPublisher(e.target.value)
             }}
-            style={{ padding: '7px 12px', border: '1px solid var(--color-border)', borderRadius: 6, font: 'inherit' }}
           >
             <option value="">All publishers</option>
             {publishers.map((p) => (
-              <option key={p} value={p}>{p}</option>
+              <option key={p} value={p}>
+                {p}
+              </option>
             ))}
           </select>
         </div>
@@ -78,34 +91,67 @@ export function SoftwarePage() {
 
         {data && data.items.length === 0 && (
           <div className="empty-state">
+            <Icon name="software" size={40} strokeWidth={1.25} className="icon" />
             <div className="title">No software found</div>
-            <div>Software appears here once devices report an inventory that includes installed applications.</div>
+            <div>
+              Software appears here once devices report an inventory that includes installed
+              applications.
+            </div>
           </div>
         )}
 
         {data && data.items.length > 0 && (
           <>
-            <table className="table">
-              <thead>
-                <tr><th>Application</th><th>Version</th><th>Publisher</th><th>Installs</th></tr>
-              </thead>
-              <tbody>
-                {data.items.map((t) => (
-                  <tr key={`${t.name}|${t.version}|${t.publisher}`}>
-                    <td style={{ fontWeight: 600 }}>{t.name}</td>
-                    <td>{t.version ?? '—'}</td>
-                    <td>{t.publisher ?? '—'}</td>
-                    <td><span className="badge neutral">{t.installCount}</span></td>
+            <div className="table-wrap">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Application</th>
+                    <th>Version</th>
+                    <th>Publisher</th>
+                    <th>Installs</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 14, color: 'var(--color-text-muted)', fontSize: 13 }}>
-              <span>{data.totalCount} distinct title{data.totalCount === 1 ? '' : 's'}</span>
-              <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <button type="button" disabled={page <= 1} onClick={() => setPage(page - 1)}>Previous</button>
-                <span>Page {page} of {totalPages}</span>
-                <button type="button" disabled={page >= totalPages} onClick={() => setPage(page + 1)}>Next</button>
+                </thead>
+                <tbody>
+                  {data.items.map((t) => (
+                    <tr key={`${t.name}|${t.version}|${t.publisher}`}>
+                      <td>{t.name}</td>
+                      <td>{t.version ?? '—'}</td>
+                      <td>{t.publisher ?? '—'}</td>
+                      <td>
+                        {/* A count, not a state — square marker keeps it from
+                            reading as a status pill. */}
+                        <span className="badge neutral plain">{t.installCount}</span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="pagination">
+              <span>
+                {data.totalCount} distinct title{data.totalCount === 1 ? '' : 's'}
+              </span>
+              <span className="pager">
+                <button
+                  type="button"
+                  className="btn-sm"
+                  disabled={page <= 1}
+                  onClick={() => setPage(page - 1)}
+                >
+                  Previous
+                </button>
+                <span>
+                  Page {page} of {totalPages}
+                </span>
+                <button
+                  type="button"
+                  className="btn-sm"
+                  disabled={page >= totalPages}
+                  onClick={() => setPage(page + 1)}
+                >
+                  Next
+                </button>
               </span>
             </div>
           </>

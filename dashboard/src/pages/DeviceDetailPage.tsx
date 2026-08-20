@@ -14,7 +14,20 @@ import {
   type DeviceTaskItem,
 } from '../api/client'
 
+import { Icon } from '../components/Icon'
+import { ConfirmDialog } from '../components/ConfirmDialog'
+
 type Tab = 'overview' | 'hardware' | 'network' | 'users' | 'groups' | 'software' | 'security' | 'updates' | 'services' | 'processes' | 'actions' | 'tasks'
+
+type ActionKey = 'restart' | 'shutdown' | 'lock' | 'signout'
+
+interface ActionSpec {
+  key: ActionKey
+  label: string
+  perm: string
+  /** Whether the action interrupts someone, and so warrants a confirmation. */
+  confirm: boolean
+}
 
 function formatBytes(bytes: number | null): string {
   if (bytes == null) return '—'
@@ -30,6 +43,22 @@ function formatBytes(bytes: number | null): string {
 
 function formatTimestamp(value: string | null): string {
   return value ? new Date(value).toLocaleString() : '—'
+}
+
+/**
+ * The "we have not heard from the machine yet" state, which every inventory tab
+ * needs. Says what to do about it rather than only reporting absence.
+ */
+function InventoryEmpty({ title, detail }: { title: string; detail?: string }) {
+  return (
+    <div className="card">
+      <div className="empty-state">
+        <Icon name="inbox" size={40} strokeWidth={1.25} className="icon" />
+        <div className="title">{title}</div>
+        <div>{detail ?? 'Use "Refresh inventory" and wait for the agent’s next heartbeat.'}</div>
+      </div>
+    </div>
+  )
 }
 
 export function DeviceDetailPage() {
@@ -114,179 +143,257 @@ export function DeviceDetailPage() {
   }
 
   if (error && !device) {
-    return <div className="error-banner">{error}</div>
+    return (
+      <div className="error-banner" role="alert">
+        <Icon name="alert" size={15} />
+        <span>{error}</span>
+      </div>
+    )
   }
 
   if (!device) {
     return <div className="loading">Loading device…</div>
   }
 
-  const tabs: { key: Tab; label: string }[] = [
+  const tabs: { key: Tab; label: string; count?: number }[] = [
     { key: 'overview', label: 'Overview' },
     { key: 'hardware', label: 'Hardware' },
-    { key: 'network', label: 'Network' },
-    { key: 'users', label: `Users${device.localUsers.length ? ` (${device.localUsers.length})` : ''}` },
-    { key: 'groups', label: `Groups${device.localGroups.length ? ` (${device.localGroups.length})` : ''}` },
-    { key: 'software', label: `Software${device.software.length ? ` (${device.software.length})` : ''}` },
+    { key: 'network', label: 'Network', count: device.networkInterfaces.length },
+    { key: 'users', label: 'Users', count: device.localUsers.length },
+    { key: 'groups', label: 'Groups', count: device.localGroups.length },
+    { key: 'software', label: 'Software', count: device.software.length },
     { key: 'security', label: 'Security' },
-    { key: 'updates', label: `Updates${device.windowsUpdate?.history.length ? ` (${device.windowsUpdate.history.length})` : ''}` },
-    { key: 'services', label: `Services${device.services.length ? ` (${device.services.length})` : ''}` },
-    { key: 'processes', label: `Processes${device.processes.length ? ` (${device.processes.length})` : ''}` },
+    { key: 'updates', label: 'Updates', count: device.windowsUpdate?.history.length },
+    { key: 'services', label: 'Services', count: device.services.length },
+    { key: 'processes', label: 'Processes', count: device.processes.length },
     { key: 'actions', label: 'Actions' },
-    { key: 'tasks', label: `Tasks${tasks.length ? ` (${tasks.length})` : ''}` },
+    { key: 'tasks', label: 'Tasks', count: tasks.length },
   ]
 
-  const actionButtons: { key: 'restart' | 'shutdown' | 'lock' | 'signout'; label: string; perm: string; danger?: boolean }[] = [
-    { key: 'lock', label: 'Lock screen', perm: 'device.lock' },
-    { key: 'signout', label: 'Sign out user', perm: 'device.sign_out_user', danger: true },
-    { key: 'restart', label: 'Restart', perm: 'device.restart', danger: true },
-    { key: 'shutdown', label: 'Shut down', perm: 'device.shutdown', danger: true },
+  // Grouped by consequence. "Lock screen" is recoverable in a second; "Shut
+  // down" needs someone physically present to undo. Presenting them as one flat
+  // row of identical buttons is what makes the wrong one easy to click.
+  const sessionActions: ActionSpec[] = [
+    { key: 'lock', label: 'Lock screen', perm: 'device.lock', confirm: false },
+    { key: 'signout', label: 'Sign out user', perm: 'device.sign_out_user', confirm: true },
   ]
+  const powerActions: ActionSpec[] = [
+    { key: 'restart', label: 'Restart', perm: 'device.restart', confirm: true },
+    { key: 'shutdown', label: 'Shut down', perm: 'device.shutdown', confirm: true },
+  ]
+
+  const visibleSession = sessionActions.filter((a) => hasPermission(a.perm))
+  const visiblePower = powerActions.filter((a) => hasPermission(a.perm))
+
+  function actionButton(a: ActionSpec) {
+    return (
+      <button
+        key={a.key}
+        type="button"
+        className={a.confirm ? 'btn-warning' : undefined}
+        onClick={() => (a.confirm ? setConfirm(a.key) : void runAction(a.key))}
+      >
+        {a.label}
+      </button>
+    )
+  }
 
   return (
     <>
-      {error && <div className="error-banner">{error}</div>}
-      {actionMsg && <div className="error-banner" style={{ background: 'var(--color-ok-bg)', color: 'var(--color-ok)', borderColor: '#bbf7d0' }}>{actionMsg}</div>}
-
-      {confirm && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 }}>
-          <div className="card" style={{ width: 420, padding: 24 }}>
-            <h2 style={{ marginTop: 0 }}>Confirm {confirm}</h2>
-            <p style={{ color: 'var(--color-text-muted)', fontSize: 14 }}>
-              This queues a <strong>{confirm}</strong> task for <strong>{device.hostname}</strong>. The device
-              performs it on its next check-in. This action is audited.
-            </p>
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 20 }}>
-              <button type="button" onClick={() => setConfirm(null)}>Cancel</button>
-              <button type="button" onClick={() => void runAction(confirm)}
-                style={{ background: 'var(--color-crit)', color: '#fff', border: 'none', borderRadius: 6, padding: '7px 14px', fontWeight: 600, cursor: 'pointer' }}>
-                Yes, {confirm}
-              </button>
-            </div>
-          </div>
+      {error && (
+        <div className="error-banner" role="alert">
+          <Icon name="alert" size={15} />
+          <span>{error}</span>
+        </div>
+      )}
+      {actionMsg && (
+        <div className="notice-banner" role="status">
+          <Icon name="check" size={15} />
+          <span>{actionMsg}</span>
         </div>
       )}
 
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div>
-          <Link to="/devices">← Devices</Link>
-          <span style={{ margin: '0 8px', color: 'var(--color-text-muted)' }}>/</span>
-          <strong>{device.hostname}</strong>{' '}
+      {confirm && (
+        <ConfirmDialog
+          title={`Confirm ${confirm}`}
+          confirmLabel={`Yes, ${confirm}`}
+          onCancel={() => setConfirm(null)}
+          onConfirm={() => void runAction(confirm)}
+        >
+          <>
+            This queues a <strong className="secondary">{confirm}</strong> task for{' '}
+            <strong className="secondary">{device.hostname}</strong>. The device performs it on its
+            next check-in. This action is audited.
+          </>
+        </ConfirmDialog>
+      )}
+
+      <div className="detail-header">
+        <div className="breadcrumb">
+          <Link to="/devices">Devices</Link>
+          <Icon name="chevron-right" size={12} />
+          <span>{device.hostname}</span>
+        </div>
+        <div className="detail-title">
+          <h1>{device.hostname}</h1>
           {device.status === 'Retired' ? (
             <span className="badge neutral">Retired</span>
           ) : (
             <span className="badge ok">Active</span>
           )}
+          <span className="spacer" />
+          <button
+            type="button"
+            onClick={() => void onRefreshInventory()}
+            disabled={device.inventoryRefreshPending}
+          >
+            <Icon name="refresh" size={14} />
+            {device.inventoryRefreshPending
+              ? 'Inventory refresh pending…'
+              : refreshRequested
+                ? 'Refresh again'
+                : 'Refresh inventory'}
+          </button>
         </div>
-        <button type="button" onClick={() => void onRefreshInventory()} disabled={device.inventoryRefreshPending}>
-          {device.inventoryRefreshPending
-            ? 'Inventory refresh pending…'
-            : refreshRequested
-              ? 'Refresh again'
-              : 'Refresh inventory'}
-        </button>
+        <div className="detail-facts">
+          <span className="fact">
+            <span className="fact-label">OS</span>
+            <span className="fact-value">{device.operatingSystem ?? '—'}</span>
+          </span>
+          <span className="fact">
+            <span className="fact-label">Agent</span>
+            <span className="fact-value">{device.agentVersion}</span>
+          </span>
+          <span className="fact">
+            <span className="fact-label">Signed in</span>
+            <span className="fact-value">{device.loggedOnUser ?? '—'}</span>
+          </span>
+          <span className="fact">
+            <span className="fact-label">Last seen</span>
+            <span className="fact-value">{formatTimestamp(device.lastSeenAt)}</span>
+          </span>
+        </div>
       </div>
 
-      <div style={{ display: 'flex', gap: 4, marginBottom: 16, borderBottom: '1px solid var(--color-border)' }}>
+      <div className="tabs" role="tablist" aria-label="Device sections">
         {tabs.map((t) => (
           <button
             key={t.key}
             type="button"
+            role="tab"
+            className="tab"
+            aria-selected={tab === t.key}
             onClick={() => setTab(t.key)}
-            style={{
-              border: 'none',
-              background: 'none',
-              font: 'inherit',
-              padding: '8px 14px',
-              cursor: 'pointer',
-              borderBottom: tab === t.key ? '2px solid var(--color-primary)' : '2px solid transparent',
-              fontWeight: tab === t.key ? 600 : 400,
-              color: tab === t.key ? 'var(--color-text)' : 'var(--color-text-muted)',
-            }}
           >
             {t.label}
+            {t.count ? <span className="tab-count">{t.count}</span> : null}
           </button>
         ))}
       </div>
 
       {tab === 'overview' && (
         <div className="card">
-          <table className="table">
-            <tbody>
-              <tr><td style={{ width: 220, color: 'var(--color-text-muted)' }}>Hostname</td><td>{device.hostname}</td></tr>
-              <tr><td style={{ color: 'var(--color-text-muted)' }}>Operating system</td><td>{device.operatingSystem ?? '—'}</td></tr>
-              <tr><td style={{ color: 'var(--color-text-muted)' }}>Logged-on user</td><td>{device.loggedOnUser ?? '—'}</td></tr>
-              <tr><td style={{ color: 'var(--color-text-muted)' }}>Agent version</td><td><code>{device.agentVersion}</code></td></tr>
-              <tr><td style={{ color: 'var(--color-text-muted)' }}>Last seen</td><td>{formatTimestamp(device.lastSeenAt)}</td></tr>
-              <tr><td style={{ color: 'var(--color-text-muted)' }}>Enrolled</td><td>{formatTimestamp(device.enrolledAt)}</td></tr>
-              <tr><td style={{ color: 'var(--color-text-muted)' }}>Inventory collected</td><td>{formatTimestamp(device.inventoryCollectedAt)}</td></tr>
-              <tr><td style={{ color: 'var(--color-text-muted)' }}>Machine identifier</td><td><code>{device.machineIdentifier}</code></td></tr>
-            </tbody>
-          </table>
+          <h2>Identity</h2>
+          <dl className="kv">
+            <dt>Hostname</dt>
+            <dd>{device.hostname}</dd>
+            <dt>Operating system</dt>
+            <dd>{device.operatingSystem ?? '—'}</dd>
+            <dt>Logged-on user</dt>
+            <dd>{device.loggedOnUser ?? '—'}</dd>
+            <dt>Agent version</dt>
+            <dd>
+              <code>{device.agentVersion}</code>
+            </dd>
+            <dt>Last seen</dt>
+            <dd>{formatTimestamp(device.lastSeenAt)}</dd>
+            <dt>Enrolled</dt>
+            <dd>{formatTimestamp(device.enrolledAt)}</dd>
+            <dt>Inventory collected</dt>
+            <dd>{formatTimestamp(device.inventoryCollectedAt)}</dd>
+            {/* The SMBIOS UUID: how this record survives a rename or a rebuild. */}
+            <dt>Machine identifier</dt>
+            <dd>
+              <code>{device.machineIdentifier}</code>
+            </dd>
+          </dl>
         </div>
       )}
 
       {tab === 'hardware' && (
         <>
-          {!device.hardware && (
-            <div className="card">
-              <div className="empty-state">
-                <div className="title">No hardware inventory yet</div>
-                <div>Use "Refresh inventory" and wait for the agent's next heartbeat.</div>
-              </div>
-            </div>
-          )}
+          {!device.hardware && <InventoryEmpty title="No hardware inventory yet" />}
           {device.hardware && (
             <>
               <div className="card card-section">
                 <h2>System</h2>
-                <table className="table">
-                  <tbody>
-                    <tr><td style={{ width: 220, color: 'var(--color-text-muted)' }}>Manufacturer</td><td>{device.hardware.manufacturer ?? '—'}</td></tr>
-                    <tr><td style={{ color: 'var(--color-text-muted)' }}>Model</td><td>{device.hardware.model ?? '—'}</td></tr>
-                    <tr><td style={{ color: 'var(--color-text-muted)' }}>Serial number</td><td>{device.hardware.serialNumber ?? '—'}</td></tr>
-                    <tr><td style={{ color: 'var(--color-text-muted)' }}>CPU</td><td>{device.hardware.cpuName ?? '—'}</td></tr>
-                    <tr>
-                      <td style={{ color: 'var(--color-text-muted)' }}>Cores</td>
-                      <td>
-                        {device.hardware.cpuPhysicalCores ?? '—'} physical /{' '}
-                        {device.hardware.cpuLogicalProcessors ?? '—'} logical
-                      </td>
-                    </tr>
-                    <tr><td style={{ color: 'var(--color-text-muted)' }}>Memory</td><td>{formatBytes(device.hardware.totalMemoryBytes)}</td></tr>
-                  </tbody>
-                </table>
+                <dl className="kv">
+                  <dt>Manufacturer</dt>
+                  <dd>{device.hardware.manufacturer ?? '—'}</dd>
+                  <dt>Model</dt>
+                  <dd>{device.hardware.model ?? '—'}</dd>
+                  <dt>Serial number</dt>
+                  <dd>{device.hardware.serialNumber ?? '—'}</dd>
+                  <dt>CPU</dt>
+                  <dd>{device.hardware.cpuName ?? '—'}</dd>
+                  <dt>Cores</dt>
+                  <dd>
+                    {device.hardware.cpuPhysicalCores ?? '—'} physical /{' '}
+                    {device.hardware.cpuLogicalProcessors ?? '—'} logical
+                  </dd>
+                  <dt>Memory</dt>
+                  <dd>{formatBytes(device.hardware.totalMemoryBytes)}</dd>
+                </dl>
               </div>
 
               <div className="card card-section">
                 <h2>Disks</h2>
-                {!device.hardware.disks?.length && <div className="loading">No fixed volumes reported.</div>}
+                {!device.hardware.disks?.length && (
+                  <div className="empty-state">
+                    <div className="title">No fixed volumes reported</div>
+                  </div>
+                )}
                 {!!device.hardware.disks?.length && (
-                  <table className="table">
-                    <thead>
-                      <tr><th>Volume</th><th>File system</th><th>Size</th><th>Free</th><th>Used</th></tr>
-                    </thead>
-                    <tbody>
-                      {device.hardware.disks.map((disk) => {
-                        const usedPct = disk.sizeBytes > 0
-                          ? Math.round(((disk.sizeBytes - disk.freeBytes) / disk.sizeBytes) * 100)
-                          : 0
-                        return (
-                          <tr key={disk.name}>
-                            <td style={{ fontWeight: 600 }}>{disk.name}</td>
-                            <td>{disk.fileSystem ?? '—'}</td>
-                            <td>{formatBytes(disk.sizeBytes)}</td>
-                            <td>{formatBytes(disk.freeBytes)}</td>
-                            <td>
-                              <span className={usedPct >= 90 ? 'badge crit' : usedPct >= 75 ? 'badge warn' : 'badge ok'}>
-                                {usedPct}%
-                              </span>
-                            </td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
+                  <div className="table-wrap">
+                    <table className="table">
+                      <thead>
+                        <tr>
+                          <th>Volume</th>
+                          <th>File system</th>
+                          <th>Size</th>
+                          <th>Free</th>
+                          <th>Used</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {device.hardware.disks.map((disk) => {
+                          const usedPct =
+                            disk.sizeBytes > 0
+                              ? Math.round(((disk.sizeBytes - disk.freeBytes) / disk.sizeBytes) * 100)
+                              : 0
+                          return (
+                            <tr key={disk.name}>
+                              <td>{disk.name}</td>
+                              <td>{disk.fileSystem ?? '—'}</td>
+                              <td>{formatBytes(disk.sizeBytes)}</td>
+                              <td>{formatBytes(disk.freeBytes)}</td>
+                              <td>
+                                {/* A full disk is an operational problem, so the
+                                    thresholds escalate rather than just reporting. */}
+                                <span
+                                  className={`badge plain ${
+                                    usedPct >= 90 ? 'crit' : usedPct >= 75 ? 'warn' : 'ok'
+                                  }`}
+                                >
+                                  {usedPct}%
+                                </span>
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
                 )}
               </div>
             </>
@@ -299,231 +406,338 @@ export function DeviceDetailPage() {
       {tab === 'groups' && <DeviceGroupsPanel deviceId={deviceId!} />}
 
       {tab === 'software' && (
-        <div className="card">
-          {!device.software.length && (
-            <div className="empty-state">
-              <div className="title">No software inventory yet</div>
-              <div>Use "Refresh inventory" and wait for the agent's next heartbeat.</div>
+        <>
+          {!device.software.length && <InventoryEmpty title="No software inventory yet" />}
+          {!!device.software.length && (
+            <div className="card">
+              <h2>Installed applications</h2>
+              <div className="scroll-y table-wrap">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Application</th>
+                      <th>Version</th>
+                      <th>Publisher</th>
+                      <th>Arch</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {device.software.map((sw) => (
+                      <tr key={`${sw.name}|${sw.version}`}>
+                        <td>{sw.name}</td>
+                        <td>{sw.version ?? '—'}</td>
+                        <td>{sw.publisher ?? '—'}</td>
+                        <td>{sw.architecture ?? '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
-          {!!device.software.length && (
-            <table className="table">
-              <thead>
-                <tr><th>Application</th><th>Version</th><th>Publisher</th><th>Arch</th></tr>
-              </thead>
-              <tbody>
-                {device.software.map((sw) => (
-                  <tr key={`${sw.name}|${sw.version}`}>
-                    <td style={{ fontWeight: 600 }}>{sw.name}</td>
-                    <td>{sw.version ?? '—'}</td>
-                    <td>{sw.publisher ?? '—'}</td>
-                    <td>{sw.architecture ?? '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
+        </>
       )}
 
       {tab === 'security' && (
-        <div className="card">
+        <>
           {!device.securityPosture && (
-            <div className="empty-state">
-              <div className="title">No security posture yet</div>
-              <div>Use "Refresh inventory" and wait for the agent's next heartbeat. Some checks (BitLocker, TPM) require the agent to run elevated.</div>
-            </div>
+            <InventoryEmpty
+              title="No security posture yet"
+              detail="Use “Refresh inventory” and wait for the agent’s next heartbeat. Some checks (BitLocker, TPM) require the agent to run elevated."
+            />
           )}
-          {device.securityPosture && (() => {
-            const p = device.securityPosture
-            const row = (label: string, v: boolean | null, extra?: string) => (
-              <tr>
-                <td style={{ color: 'var(--color-text-muted)', width: 260 }}>{label}</td>
-                <td>
-                  {v == null
-                    ? <span style={{ color: 'var(--color-text-muted)' }}>Unknown (agent may need elevation)</span>
-                    : v ? <span className="badge ok">Pass</span> : <span className="badge crit">Fail</span>}
-                  {extra ? <span style={{ marginLeft: 8, color: 'var(--color-text-muted)', fontSize: 12.5 }}>{extra}</span> : null}
-                </td>
-              </tr>
-            )
-            return (
-              <>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
-                  <span style={{ fontSize: 15, fontWeight: 600 }}>Compliance score</span>
-                  {p.complianceScore == null
-                    ? <span className="badge neutral">Unknown</span>
-                    : <span className={p.complianceScore >= 80 ? 'badge ok' : p.complianceScore >= 50 ? 'badge warn' : 'badge crit'} style={{ fontSize: 15 }}>{p.complianceScore}%</span>}
+          {device.securityPosture &&
+            (() => {
+              const p = device.securityPosture
+              // "Unknown" is kept visually distinct from "Fail". An unelevated
+              // agent that cannot read TPM state has not found a problem, and
+              // showing it as a failure would send someone chasing nothing.
+              const check = (label: string, v: boolean | null, extra?: string) => (
+                <>
+                  <dt>{label}</dt>
+                  <dd>
+                    {v == null ? (
+                      <span className="badge neutral">Unknown — agent may need elevation</span>
+                    ) : v ? (
+                      <span className="badge ok">Pass</span>
+                    ) : (
+                      <span className="badge crit">Fail</span>
+                    )}
+                    {extra ? <span className="muted" style={{ marginLeft: 8, fontSize: 12.5 }}>{extra}</span> : null}
+                  </dd>
+                </>
+              )
+              return (
+                <div className="card">
+                  <div className="card-header">
+                    <h2>Compliance</h2>
+                    {p.complianceScore == null ? (
+                      <span className="badge neutral">Score unknown</span>
+                    ) : (
+                      <span
+                        className={`badge ${
+                          p.complianceScore >= 80 ? 'ok' : p.complianceScore >= 50 ? 'warn' : 'crit'
+                        }`}
+                        style={{ fontSize: 13 }}
+                      >
+                        {p.complianceScore}% compliant
+                      </span>
+                    )}
+                  </div>
+                  <dl className="kv">
+                    {check('Microsoft Defender antivirus', p.defenderAntivirusEnabled)}
+                    {check('Defender real-time protection', p.defenderRealtimeProtectionEnabled)}
+                    {check(
+                      'Defender signatures fresh (≤7d)',
+                      p.defenderSignatureAgeDays == null ? null : p.defenderSignatureAgeDays <= 7,
+                      p.defenderSignatureAgeDays == null ? undefined : `${p.defenderSignatureAgeDays}d old`,
+                    )}
+                    {check('Firewall (Domain)', p.firewallDomainEnabled)}
+                    {check('Firewall (Private)', p.firewallPrivateEnabled)}
+                    {check('Firewall (Public)', p.firewallPublicEnabled)}
+                    {check('Secure Boot', p.secureBootEnabled)}
+                    {check('TPM enabled', p.tpmEnabled, p.tpmSpecVersion ? `v${p.tpmSpecVersion}` : undefined)}
+                    {check(
+                      'BitLocker (system drive)',
+                      p.bitLockerSystemDriveStatus == null
+                        ? null
+                        : p.bitLockerSystemDriveStatus === 'On',
+                      p.bitLockerSystemDriveStatus ?? undefined,
+                    )}
+                    <dt>Local administrators</dt>
+                    <dd>{p.localAdministratorCount ?? '—'}</dd>
+                  </dl>
                 </div>
-                <table className="table">
-                  <tbody>
-                    {row('Microsoft Defender antivirus', p.defenderAntivirusEnabled)}
-                    {row('Defender real-time protection', p.defenderRealtimeProtectionEnabled)}
-                    {row('Defender signatures fresh (≤7d)', p.defenderSignatureAgeDays == null ? null : p.defenderSignatureAgeDays <= 7, p.defenderSignatureAgeDays == null ? undefined : `${p.defenderSignatureAgeDays}d old`)}
-                    {row('Firewall (Domain)', p.firewallDomainEnabled)}
-                    {row('Firewall (Private)', p.firewallPrivateEnabled)}
-                    {row('Firewall (Public)', p.firewallPublicEnabled)}
-                    {row('Secure Boot', p.secureBootEnabled)}
-                    {row('TPM enabled', p.tpmEnabled, p.tpmSpecVersion ? `v${p.tpmSpecVersion}` : undefined)}
-                    {row('BitLocker (system drive)', p.bitLockerSystemDriveStatus == null ? null : p.bitLockerSystemDriveStatus === 'On', p.bitLockerSystemDriveStatus ?? undefined)}
-                    <tr>
-                      <td style={{ color: 'var(--color-text-muted)' }}>Local administrators</td>
-                      <td>{p.localAdministratorCount ?? '—'}</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </>
-            )
-          })()}
-        </div>
+              )
+            })()}
+        </>
       )}
 
       {tab === 'updates' && (
-        <div className="card">
+        <>
           {!device.windowsUpdate && (
-            <div className="empty-state">
-              <div className="title">No update data yet</div>
-              <div>Refresh inventory and wait for the agent's next heartbeat. History is read from the local Windows Update store.</div>
-            </div>
+            <InventoryEmpty
+              title="No update data yet"
+              detail="Refresh inventory and wait for the agent’s next heartbeat. History is read from the local Windows Update store."
+            />
           )}
-          {device.windowsUpdate && (() => {
-            const u = device.windowsUpdate
-            return (
-              <>
-                <div style={{ display: 'flex', gap: 24, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
-                  <div>
-                    <span style={{ color: 'var(--color-text-muted)', marginRight: 8 }}>Reboot pending</span>
-                    {u.rebootRequired ? <span className="badge warn">Yes</span> : <span className="badge ok">No</span>}
+          {device.windowsUpdate &&
+            (() => {
+              const u = device.windowsUpdate
+              return (
+                <div className="card">
+                  <div className="detail-facts" style={{ marginTop: 0, paddingTop: 0, borderTop: 'none' }}>
+                    <span className="fact">
+                      <span className="fact-label">Reboot pending</span>
+                      {u.rebootRequired ? (
+                        <span className="badge warn">Yes</span>
+                      ) : (
+                        <span className="badge ok">No</span>
+                      )}
+                    </span>
+                    <span className="fact">
+                      <span className="fact-label">Failed updates</span>
+                      <span className={`badge plain ${u.failedUpdateCount > 0 ? 'crit' : 'neutral'}`}>
+                        {u.failedUpdateCount}
+                      </span>
+                    </span>
+                    <span className="fact">
+                      <span className="fact-label">Reported</span>
+                      <span className="fact-value">{new Date(u.collectedAt).toLocaleString()}</span>
+                    </span>
                   </div>
-                  <div>
-                    <span style={{ color: 'var(--color-text-muted)', marginRight: 8 }}>Failed updates</span>
-                    {u.failedUpdateCount > 0 ? <span className="badge crit">{u.failedUpdateCount}</span> : <span className="badge neutral">0</span>}
-                  </div>
-                  <div style={{ color: 'var(--color-text-muted)', fontSize: 12.5 }}>
-                    Reported {new Date(u.collectedAt).toLocaleString()}
-                  </div>
-                </div>
-                {u.history.length === 0
-                  ? <div className="loading">No update history recorded.</div>
-                  : (
-                    <div style={{ maxHeight: 520, overflowY: 'auto' }}>
+                  <hr className="divider" />
+                  {u.history.length === 0 ? (
+                    <div className="empty-state">
+                      <div className="title">No update history recorded</div>
+                    </div>
+                  ) : (
+                    <div className="scroll-y table-wrap">
                       <table className="table">
-                        <thead><tr><th>Update</th><th>Operation</th><th>Result</th><th>Date</th></tr></thead>
+                        <thead>
+                          <tr>
+                            <th>Update</th>
+                            <th>Operation</th>
+                            <th>Result</th>
+                            <th>Date</th>
+                          </tr>
+                        </thead>
                         <tbody>
                           {u.history.map((h, i) => (
                             <tr key={i}>
-                              <td style={{ fontWeight: 600 }}>{h.title}</td>
+                              <td>{h.title}</td>
                               <td>{h.operation}</td>
                               <td>
-                                {h.result === 'Succeeded' ? <span className="badge ok">Succeeded</span>
-                                  : h.result === 'Failed' || h.result === 'Aborted' ? <span className="badge crit">{h.result}</span>
-                                  : <span className="badge neutral">{h.result}</span>}
+                                {h.result === 'Succeeded' ? (
+                                  <span className="badge ok">Succeeded</span>
+                                ) : h.result === 'Failed' || h.result === 'Aborted' ? (
+                                  <span className="badge crit">{h.result}</span>
+                                ) : (
+                                  <span className="badge neutral">{h.result}</span>
+                                )}
                               </td>
-                              <td style={{ color: 'var(--color-text-muted)', fontSize: 12 }}>{h.date ? new Date(h.date).toLocaleString() : '—'}</td>
+                              <td className="muted">
+                                {h.date ? new Date(h.date).toLocaleString() : '—'}
+                              </td>
                             </tr>
                           ))}
                         </tbody>
                       </table>
                     </div>
                   )}
-              </>
-            )
-          })()}
-        </div>
+                </div>
+              )
+            })()}
+        </>
       )}
 
       {tab === 'services' && (
-        <div className="card">
+        <>
           {!device.services.length && (
-            <div className="empty-state"><div className="title">No service inventory yet</div><div>Refresh inventory and wait for the next heartbeat.</div></div>
+            <InventoryEmpty
+              title="No service inventory yet"
+              detail="Refresh inventory and wait for the next heartbeat."
+            />
           )}
           {!!device.services.length && (
-            <div style={{ maxHeight: 520, overflowY: 'auto' }}>
-              <table className="table">
-                <thead><tr><th>Service</th><th>Status</th><th>Start mode</th></tr></thead>
-                <tbody>
-                  {device.services.map((sv) => (
-                    <tr key={sv.name}>
-                      <td><div style={{ fontWeight: 600 }}>{sv.displayName}</div><div style={{ color: 'var(--color-text-muted)', fontSize: 12 }}>{sv.name}</div></td>
-                      <td>{sv.status === 'Running' ? <span className="badge ok">Running</span> : <span className="badge neutral">{sv.status}</span>}</td>
-                      <td>{sv.startMode}</td>
+            <div className="card">
+              <h2>Windows services</h2>
+              <div className="scroll-y table-wrap">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Service</th>
+                      <th>Status</th>
+                      <th>Start mode</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {device.services.map((sv) => (
+                      <tr key={sv.name}>
+                        <td>
+                          <div>{sv.displayName}</div>
+                          <div className="row-sub mono-sub">{sv.name}</div>
+                        </td>
+                        <td>
+                          {sv.status === 'Running' ? (
+                            <span className="badge ok">Running</span>
+                          ) : (
+                            <span className="badge neutral">{sv.status}</span>
+                          )}
+                        </td>
+                        <td>{sv.startMode}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
-        </div>
+        </>
       )}
 
       {tab === 'processes' && (
-        <div className="card">
+        <>
           {!device.processes.length && (
-            <div className="empty-state"><div className="title">No process snapshot yet</div><div>Refresh inventory and wait for the next heartbeat.</div></div>
+            <InventoryEmpty
+              title="No process snapshot yet"
+              detail="Refresh inventory and wait for the next heartbeat."
+            />
           )}
           {!!device.processes.length && (
-            <>
-              <div style={{ color: 'var(--color-text-muted)', fontSize: 12.5, marginBottom: 8 }}>
-                Point-in-time snapshot (top by memory) as of {device.processes[0] ? new Date(device.processes[0].collectedAt).toLocaleString() : ''}.
+            <div className="card">
+              <div className="card-header">
+                <h2>Running processes</h2>
+                <span className="muted" style={{ fontSize: 12 }}>
+                  Snapshot (top by memory) as of{' '}
+                  {device.processes[0]
+                    ? new Date(device.processes[0].collectedAt).toLocaleString()
+                    : ''}
+                </span>
               </div>
-              <table className="table">
-                <thead><tr><th>Process</th><th>PID</th><th>Memory</th><th>Path</th></tr></thead>
-                <tbody>
-                  {device.processes.map((pr) => (
-                    <tr key={pr.processId}>
-                      <td style={{ fontWeight: 600 }}>{pr.name}</td>
-                      <td>{pr.processId}</td>
-                      <td>{formatBytes(pr.workingSetBytes)}</td>
-                      <td style={{ color: 'var(--color-text-muted)', fontSize: 12, maxWidth: 380, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pr.executablePath ?? '—'}</td>
+              <div className="scroll-y table-wrap">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Process</th>
+                      <th>PID</th>
+                      <th>Memory</th>
+                      <th>Path</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </>
+                  </thead>
+                  <tbody>
+                    {device.processes.map((pr) => (
+                      <tr key={pr.processId}>
+                        <td>{pr.name}</td>
+                        <td>{pr.processId}</td>
+                        <td>{formatBytes(pr.workingSetBytes)}</td>
+                        <td className="muted" style={{ maxWidth: 380 }}>
+                          <span className="truncate" title={pr.executablePath ?? undefined}>
+                            {pr.executablePath ?? '—'}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           )}
-        </div>
+        </>
       )}
 
       {tab === 'actions' && (
         <div className="card">
           <h2>Device actions</h2>
-          <p style={{ color: 'var(--color-text-muted)', fontSize: 13.5, marginTop: 0 }}>
-            Each action is delivered as a typed task the device pulls on its next check-in. Buttons you
-            lack permission for are hidden; the server enforces this regardless.
+          <p className="muted" style={{ fontSize: 13, marginTop: 0, maxWidth: 620 }}>
+            Each action is delivered as a typed task the device pulls on its next check-in. Actions
+            you lack permission for are hidden; the server enforces this regardless.
           </p>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 12 }}>
-            {actionButtons.filter((a) => hasPermission(a.perm)).map((a) => (
-              <button key={a.key} type="button"
-                onClick={() => (a.key === 'lock' ? void runAction('lock') : setConfirm(a.key))}
-                style={{
-                  padding: '9px 16px', borderRadius: 6, font: 'inherit', fontWeight: 600, cursor: 'pointer',
-                  border: a.danger ? '1px solid #fca5a5' : '1px solid var(--color-border)',
-                  color: a.danger ? 'var(--color-crit)' : 'var(--color-text)',
-                  background: 'var(--color-surface)',
-                }}>
-                {a.label}
-              </button>
-            ))}
-            {actionButtons.filter((a) => hasPermission(a.perm)).length === 0 && (
-              <div className="loading">Your role grants no device actions.</div>
-            )}
-          </div>
+
+          {visibleSession.length === 0 && visiblePower.length === 0 && !hasPermission('device.retire') && (
+            <div className="empty-state">
+              <Icon name="key" size={36} strokeWidth={1.25} className="icon" />
+              <div className="title">No actions available</div>
+              <div>Your role grants no device actions on this machine.</div>
+            </div>
+          )}
+
+          {visibleSession.length > 0 && (
+            <div className="action-group">
+              <h3>Session</h3>
+              <p className="group-note">
+                Affects whoever is signed in right now. Locking is immediate and harmless; signing a
+                user out closes their applications and can lose unsaved work.
+              </p>
+              <div className="btn-row">{visibleSession.map(actionButton)}</div>
+            </div>
+          )}
+
+          {visiblePower.length > 0 && (
+            <div className="action-group">
+              <h3>Power</h3>
+              <p className="group-note">
+                Interrupts the machine. A shut-down device cannot be restarted remotely — someone
+                has to be physically present to power it back on.
+              </p>
+              <div className="btn-row">{visiblePower.map(actionButton)}</div>
+            </div>
+          )}
 
           {hasPermission('device.retire') && (
-            <div style={{ marginTop: 24, paddingTop: 16, borderTop: '1px solid var(--color-border)' }}>
-              <h3 style={{ margin: '0 0 4px' }}>Lifecycle</h3>
-              <p style={{ color: 'var(--color-text-muted)', fontSize: 13, marginTop: 0 }}>
-                Offboarding revokes the device's credentials and retires it — reversible via reactivation, which
-                requires the machine to re-enroll. It does not wipe the machine.
+            <div className="action-group destructive">
+              <h3>Lifecycle</h3>
+              <p className="group-note">
+                Offboarding revokes the device's credentials and retires it — reversible via
+                reactivation, which requires the machine to re-enroll. It does not wipe the machine.
               </p>
               {device.status === 'Retired' ? (
-                <button type="button" onClick={() => void onReactivate()}
-                  style={{ padding: '9px 16px', borderRadius: 6, font: 'inherit', fontWeight: 600, cursor: 'pointer', border: '1px solid var(--color-border)', background: 'var(--color-surface)' }}>
+                <button type="button" onClick={() => void onReactivate()}>
                   Reactivate device
                 </button>
               ) : (
-                <button type="button" onClick={() => void onOffboard()}
-                  style={{ padding: '9px 16px', borderRadius: 6, font: 'inherit', fontWeight: 600, cursor: 'pointer', border: '1px solid #fca5a5', color: 'var(--color-crit)', background: 'var(--color-surface)' }}>
+                <button type="button" className="btn-danger" onClick={() => void onOffboard()}>
+                  <Icon name="trash" size={14} />
                   Offboard device
                 </button>
               )}
@@ -534,69 +748,98 @@ export function DeviceDetailPage() {
 
       {tab === 'tasks' && (
         <div className="card">
+          <h2>Queued and completed tasks</h2>
           {!tasks.length && (
             <div className="empty-state">
+              <Icon name="tasks" size={40} strokeWidth={1.25} className="icon" />
               <div className="title">No tasks yet</div>
               <div>Queue an action from the Actions tab to see it here.</div>
             </div>
           )}
           {!!tasks.length && (
-            <table className="table">
-              <thead>
-                <tr><th>Task</th><th>Status</th><th>Queued by</th><th>Queued</th><th>Result</th></tr>
-              </thead>
-              <tbody>
-                {tasks.map((t) => (
-                  <tr key={t.id}>
-                    <td style={{ fontWeight: 600 }}>{t.type}</td>
-                    <td>
-                      <span className={
-                        t.status === 'Succeeded' ? 'badge ok'
-                          : t.status === 'Failed' || t.status === 'Expired' ? 'badge crit'
-                          : t.status === 'Cancelled' ? 'badge neutral'
-                          : 'badge warn'}>{t.status}</span>
-                    </td>
-                    <td>{t.createdByDisplay}</td>
-                    <td>{new Date(t.createdAt).toLocaleString()}</td>
-                    <td style={{ color: 'var(--color-text-muted)', fontSize: 12.5 }}>{t.resultMessage ?? '—'}</td>
+            <div className="table-wrap">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Task</th>
+                    <th>Status</th>
+                    <th>Queued by</th>
+                    <th>Queued</th>
+                    <th>Result</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {tasks.map((t) => (
+                    <tr key={t.id}>
+                      <td>{t.type}</td>
+                      <td>
+                        {/* Anything still in flight is amber, not green: a queued
+                            task has not happened on the machine yet. */}
+                        <span
+                          className={`badge ${
+                            t.status === 'Succeeded'
+                              ? 'ok'
+                              : t.status === 'Failed' || t.status === 'Expired'
+                                ? 'crit'
+                                : t.status === 'Cancelled'
+                                  ? 'neutral'
+                                  : 'warn'
+                          }`}
+                        >
+                          {t.status}
+                        </span>
+                      </td>
+                      <td>{t.createdByDisplay}</td>
+                      <td>{new Date(t.createdAt).toLocaleString()}</td>
+                      <td className="muted">{t.resultMessage ?? '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
       )}
 
       {tab === 'network' && (
-        <div className="card">
-          {!device.networkInterfaces.length && (
-            <div className="empty-state">
-              <div className="title">No network inventory yet</div>
-              <div>Use "Refresh inventory" and wait for the agent's next heartbeat.</div>
+        <>
+          {!device.networkInterfaces.length && <InventoryEmpty title="No network inventory yet" />}
+          {!!device.networkInterfaces.length && (
+            <div className="card">
+              <h2>Network interfaces</h2>
+              <div className="scroll-y table-wrap">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Interface</th>
+                      <th>Status</th>
+                      <th>MAC address</th>
+                      <th>IP addresses</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {device.networkInterfaces.map((nic) => (
+                      <tr key={nic.name}>
+                        <td>{nic.name}</td>
+                        <td>
+                          {nic.isUp ? (
+                            <span className="badge ok">Up</span>
+                          ) : (
+                            <span className="badge neutral">Down</span>
+                          )}
+                        </td>
+                        <td>
+                          <code>{nic.macAddress ?? '—'}</code>
+                        </td>
+                        <td>{nic.ipAddresses?.length ? nic.ipAddresses.join(', ') : '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
-          {!!device.networkInterfaces.length && (
-            <table className="table">
-              <thead>
-                <tr><th>Interface</th><th>Status</th><th>MAC address</th><th>IP addresses</th></tr>
-              </thead>
-              <tbody>
-                {device.networkInterfaces.map((nic) => (
-                  <tr key={nic.name}>
-                    <td style={{ fontWeight: 600 }}>{nic.name}</td>
-                    <td>
-                      {nic.isUp
-                        ? <span className="badge ok">Up</span>
-                        : <span className="badge neutral">Down</span>}
-                    </td>
-                    <td><code>{nic.macAddress ?? '—'}</code></td>
-                    <td>{nic.ipAddresses?.length ? nic.ipAddresses.join(', ') : '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
+        </>
       )}
     </>
   )

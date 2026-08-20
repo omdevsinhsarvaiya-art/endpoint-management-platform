@@ -3,7 +3,15 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Declared here as well as in CSS so the browser paints the dark canvas
+         before the stylesheet arrives, instead of flashing white first. -->
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#0b1220" />
+    <link rel="icon" type="image/svg+xml" href="/app-icon.svg" />
     <title>Endpoint Platform</title>
+    <style>
+      html { background: #0b1220; }
+    </style>
   </head>
   <body>
     <div id="root"></div>
@@ -11,3 +19,4 @@
   </body>
 </html>
 
+ 

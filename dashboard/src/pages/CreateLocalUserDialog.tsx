@@ -5,6 +5,8 @@ import {
   type ProfileCatalog,
   type UserConfigurationProfile,
 } from '../api/client'
+import { Icon } from '../components/Icon'
+import { useDialogDismiss } from '../components/useDialogDismiss'
 
 /**
  * Create Local Windows User.
@@ -29,6 +31,8 @@ export function CreateLocalUserDialog({
   onCancel: () => void
   onSubmit: (body: CreateLocalUserBody) => Promise<void>
 }) {
+  useDialogDismiss(onCancel)
+
   const [catalog, setCatalog] = useState<ProfileCatalog | null>(null)
   const [profileKey, setProfileKey] = useState<string>('')
   const [reviewing, setReviewing] = useState(false)
@@ -98,246 +102,334 @@ export function CreateLocalUserDialog({
   }
 
   return (
-    <div style={overlay}>
-      <div className="card" style={{ width: 620, maxHeight: '88vh', overflowY: 'auto' }}>
-        <h2 style={{ marginTop: 0 }}>
-          {reviewing ? 'Review Windows account changes' : 'Create local Windows user'}
-        </h2>
+    <div className="overlay" role="dialog" aria-modal="true" aria-labelledby="create-user-title">
+      <div className="dialog" style={{ maxWidth: 640 }}>
+        <div className="dialog-header">
+          <div className="step-badge">Step {reviewing ? 2 : 1} of 2</div>
+          <h2 id="create-user-title">
+            {reviewing ? 'Review Windows account changes' : 'Create local Windows user'}
+          </h2>
+          <div className="sub">on {deviceName}</div>
+        </div>
 
-        {error && <div className="error-banner">{error}</div>}
+        <div className="dialog-body">
+          {error && (
+            <div className="error-banner" role="alert">
+              <Icon name="alert" size={15} />
+              <span>{error}</span>
+            </div>
+          )}
 
-        {!reviewing && (
-          <>
-            <label style={label}>
-              Configuration profile
-              <select
-                value={profileKey}
-                onChange={(e) => {
-                  const p = catalog?.profiles.find((x) => x.key === e.target.value)
-                  if (p) applyProfile(p)
-                }}
-                style={input}
+          {!reviewing && (
+            <>
+              <div className="field">
+                <label className="field-label" htmlFor="cu-profile">
+                  Configuration profile
+                </label>
+                <select
+                  id="cu-profile"
+                  value={profileKey}
+                  onChange={(e) => {
+                    const p = catalog?.profiles.find((x) => x.key === e.target.value)
+                    if (p) applyProfile(p)
+                  }}
+                >
+                  {catalog?.profiles.map((p) => (
+                    <option
+                      key={p.key}
+                      value={p.key}
+                      disabled={p.grantsAdministrator && !canGrantAdmin}
+                    >
+                      {p.displayName}
+                      {p.grantsAdministrator && !canGrantAdmin
+                        ? ' (needs change-type permission)'
+                        : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {selected && (
+                <div className="summary">
+                  <div className="summary-title">{selected.displayName}</div>
+                  <div className="summary-note">{selected.description}</div>
+                  <dl className="kv">
+                    <dt>Account type</dt>
+                    <dd>
+                      {selected.accountType === 'Administrator'
+                        ? 'Administrator'
+                        : 'Standard User'}
+                    </dd>
+                    <dt>Status</dt>
+                    <dd>{selected.enabled ? 'Enabled' : 'Disabled'}</dd>
+                    <dt>Administrator membership</dt>
+                    <dd>{selected.grantsAdministrator ? 'Yes' : 'No'}</dd>
+                    <dt>Password expiration</dt>
+                    <dd>Windows default policy</dd>
+                    <dt>Force password change</dt>
+                    <dd>{selected.mustChangePasswordAtNextLogon ? 'Yes' : 'No'}</dd>
+                    <dt>Additional groups</dt>
+                    <dd>{selected.additionalGroups.join(', ') || 'None'}</dd>
+                  </dl>
+                </div>
+              )}
+
+              <div className="form-section">Identity</div>
+              <div className="form-grid">
+                <div className="field">
+                  <label className="field-label" htmlFor="cu-username">
+                    Username
+                  </label>
+                  <input
+                    id="cu-username"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    autoComplete="off"
+                  />
+                </div>
+                <div className="field">
+                  <label className="field-label" htmlFor="cu-fullname">
+                    Display name
+                  </label>
+                  <input
+                    id="cu-fullname"
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                    autoComplete="off"
+                  />
+                </div>
+                <div className="field full">
+                  <label className="field-label" htmlFor="cu-description">
+                    Description
+                  </label>
+                  <input
+                    id="cu-description"
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    autoComplete="off"
+                  />
+                </div>
+              </div>
+
+              <div className="form-section">Password</div>
+              <div className="form-grid">
+                <div className="field">
+                  <label className="field-label" htmlFor="cu-password">
+                    Password
+                  </label>
+                  <input
+                    id="cu-password"
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    autoComplete="new-password"
+                  />
+                  <div className="field-hint">At least 8 characters.</div>
+                </div>
+                <div className="field">
+                  <label className="field-label" htmlFor="cu-confirm">
+                    Confirm password
+                  </label>
+                  <input
+                    id="cu-confirm"
+                    type="password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    autoComplete="new-password"
+                    aria-invalid={passwordMismatch}
+                    aria-describedby={passwordMismatch ? 'cu-confirm-error' : undefined}
+                  />
+                  {/* The message sits with the field it is about, not in a banner
+                      at the top where the reader has to work out which input failed. */}
+                  {passwordMismatch && (
+                    <div className="field-message" id="cu-confirm-error">
+                      <Icon name="alert" size={13} />
+                      Passwords do not match.
+                    </div>
+                  )}
+                </div>
+              </div>
+              <label className="check-row" style={{ marginTop: 4 }}>
+                <input
+                  type="checkbox"
+                  checked={mustChange}
+                  onChange={(e) => setMustChange(e.target.checked)}
+                />
+                User must change password at next logon
+              </label>
+
+              <div className="form-section">Account type</div>
+              <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
+                <label className="check-row">
+                  <input
+                    type="radio"
+                    name="cu-accounttype"
+                    checked={accountType === 'StandardUser'}
+                    onChange={() => setAccountType('StandardUser')}
+                  />
+                  Standard User
+                </label>
+                <label className="check-row" style={{ opacity: canGrantAdmin ? 1 : 0.5 }}>
+                  <input
+                    type="radio"
+                    name="cu-accounttype"
+                    disabled={!canGrantAdmin}
+                    checked={accountType === 'Administrator'}
+                    onChange={() => setAccountType('Administrator')}
+                  />
+                  Administrator
+                </label>
+              </div>
+              {accountType === 'Administrator' && (
+                <div className="warn-banner" style={{ marginTop: 10, marginBottom: 0 }}>
+                  This account will be added to the local <strong>Administrators</strong> group and
+                  will have full control of this device.
+                </div>
+              )}
+
+              <div className="form-section">Account status</div>
+              <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
+                <label className="check-row">
+                  <input
+                    type="radio"
+                    name="cu-status"
+                    checked={enabled}
+                    onChange={() => setEnabled(true)}
+                  />
+                  Enabled
+                </label>
+                <label className="check-row">
+                  <input
+                    type="radio"
+                    name="cu-status"
+                    checked={!enabled}
+                    onChange={() => setEnabled(false)}
+                  />
+                  Disabled
+                </label>
+              </div>
+
+              {catalog && (
+                <>
+                  <div className="form-section">Additional groups</div>
+                  {catalog.permittedAdditionalGroups.length > 0 ? (
+                    <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+                      {catalog.permittedAdditionalGroups.map((g) => (
+                        <label key={g} className="check-row">
+                          <input
+                            type="checkbox"
+                            checked={groups.includes(g)}
+                            onChange={(e) =>
+                              setGroups(
+                                e.target.checked ? [...groups, g] : groups.filter((x) => x !== g),
+                              )
+                            }
+                          />
+                          {g}
+                        </label>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="field-hint">
+                      None of the assignable groups exist on {deviceName}.
+                    </div>
+                  )}
+
+                  {/* Say which policy groups this machine does not have, rather than
+                      omitting them silently — an operator who expected one should learn
+                      that the device lacks it, not that the platform forgot it. */}
+                  {unavailableGroups.length > 0 && (
+                    <div className="field-hint" style={{ marginTop: 8 }}>
+                      Not offered because {deviceName} does not have{' '}
+                      {unavailableGroups.length === 1 ? 'this group' : 'these groups'}:{' '}
+                      {unavailableGroups.join(', ')}.
+                    </div>
+                  )}
+
+                  {!catalog.deviceGroupsKnown && (
+                    <div className="field-hint" style={{ marginTop: 8 }}>
+                      {deviceName} has not reported its local groups yet, so all assignable groups
+                      are shown. Any the device turns out not to have are skipped and reported back.
+                    </div>
+                  )}
+
+                  <div className="field-hint" style={{ marginTop: 8 }}>
+                    Administrator rights are granted through the account type above, not here.
+                  </div>
+                </>
+              )}
+            </>
+          )}
+
+          {reviewing && (
+            <>
+              <div className="summary" style={{ marginTop: 0 }}>
+                <dl className="kv">
+                  <dt>Device</dt>
+                  <dd>{deviceName}</dd>
+                  <dt>Username</dt>
+                  <dd>{body.username}</dd>
+                  <dt>Display name</dt>
+                  <dd>{body.fullName ?? '—'}</dd>
+                  <dt>Account type</dt>
+                  <dd>{accountType === 'Administrator' ? 'Administrator' : 'Standard User'}</dd>
+                  <dt>Status</dt>
+                  <dd>{enabled ? 'Enabled' : 'Disabled'}</dd>
+                  <dt>Administrator</dt>
+                  <dd>{accountType === 'Administrator' ? 'Yes' : 'No'}</dd>
+                  <dt>Password policy</dt>
+                  <dd>{mustChange ? 'Force change at next logon' : 'Windows default'}</dd>
+                  <dt>Additional groups</dt>
+                  <dd>{groups.join(', ') || 'None'}</dd>
+                </dl>
+              </div>
+
+              {/* The password itself is never restated here. It is submitted once and
+                  is not stored anywhere this dialog could read it back from. */}
+              {accountType === 'Administrator' && (
+                <div className="warn-banner">
+                  <strong>{body.username}</strong> will be added to{' '}
+                  <strong>BUILTIN\Administrators</strong> on <strong>{deviceName}</strong>, giving
+                  it full control of the device.
+                </div>
+              )}
+
+              <div className="field-hint">
+                The account is created on the endpoint itself. It appears in this list only once the
+                device reports it back, so what you see afterwards is the machine's real state.
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="dialog-footer">
+          {!reviewing && (
+            <>
+              <button type="button" onClick={onCancel}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={!valid}
+                onClick={() => setReviewing(true)}
               >
-                {catalog?.profiles.map((p) => (
-                  <option key={p.key} value={p.key} disabled={p.grantsAdministrator && !canGrantAdmin}>
-                    {p.displayName}
-                    {p.grantsAdministrator && !canGrantAdmin ? ' (needs change-type permission)' : ''}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            {selected && (
-              <div style={preview}>
-                <div style={{ fontWeight: 600, marginBottom: 6 }}>{selected.displayName}</div>
-                <div style={{ color: 'var(--color-text-muted)', fontSize: 12.5, marginBottom: 8 }}>
-                  {selected.description}
-                </div>
-                <Row k="Account type" v={selected.accountType === 'Administrator' ? 'Administrator' : 'Standard User'} />
-                <Row k="Status" v={selected.enabled ? 'Enabled' : 'Disabled'} />
-                <Row k="Administrator membership" v={selected.grantsAdministrator ? 'Yes' : 'No'} />
-                <Row k="Password expiration" v="Windows default policy" />
-                <Row k="Force password change" v={selected.mustChangePasswordAtNextLogon ? 'Yes' : 'No'} />
-                <Row k="Additional groups" v={selected.additionalGroups.join(', ') || 'None'} />
-              </div>
-            )}
-
-            <Section title="Identity" />
-            <div style={grid}>
-              <label style={label}>Username
-                <input value={username} onChange={(e) => setUsername(e.target.value)} style={input} autoComplete="off" />
-              </label>
-              <label style={label}>Display name
-                <input value={fullName} onChange={(e) => setFullName(e.target.value)} style={input} autoComplete="off" />
-              </label>
-              <label style={{ ...label, gridColumn: '1 / -1' }}>Description
-                <input value={description} onChange={(e) => setDescription(e.target.value)} style={input} autoComplete="off" />
-              </label>
-            </div>
-
-            <Section title="Password" />
-            <div style={grid}>
-              <label style={label}>Password
-                <input type="password" value={password} onChange={(e) => setPassword(e.target.value)}
-                  style={input} autoComplete="new-password" />
-              </label>
-              <label style={label}>Confirm password
-                <input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)}
-                  style={input} autoComplete="new-password" />
-              </label>
-            </div>
-            {passwordMismatch && (
-              <div style={{ color: 'var(--color-crit)', fontSize: 13 }}>Passwords do not match.</div>
-            )}
-            <label style={{ ...label, flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 }}>
-              <input type="checkbox" checked={mustChange} onChange={(e) => setMustChange(e.target.checked)} />
-              User must change password at next logon
-            </label>
-
-            <Section title="Account type" />
-            <div style={{ display: 'flex', gap: 18 }}>
-              <label style={radio}>
-                <input type="radio" checked={accountType === 'StandardUser'}
-                  onChange={() => setAccountType('StandardUser')} />
-                Standard User
-              </label>
-              <label style={{ ...radio, opacity: canGrantAdmin ? 1 : 0.5 }}>
-                <input type="radio" disabled={!canGrantAdmin} checked={accountType === 'Administrator'}
-                  onChange={() => setAccountType('Administrator')} />
-                Administrator
-              </label>
-            </div>
-            {accountType === 'Administrator' && (
-              <div style={{ ...warn, marginTop: 8 }}>
-                This account will be added to the local <strong>Administrators</strong> group and will have full
-                control of this device.
-              </div>
-            )}
-
-            <Section title="Account status" />
-            <div style={{ display: 'flex', gap: 18 }}>
-              <label style={radio}>
-                <input type="radio" checked={enabled} onChange={() => setEnabled(true)} /> Enabled
-              </label>
-              <label style={radio}>
-                <input type="radio" checked={!enabled} onChange={() => setEnabled(false)} /> Disabled
-              </label>
-            </div>
-
-            {catalog && (
-              <>
-                <Section title="Additional groups" />
-                {catalog.permittedAdditionalGroups.length > 0 ? (
-                  <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
-                    {catalog.permittedAdditionalGroups.map((g) => (
-                      <label key={g} style={radio}>
-                        <input
-                          type="checkbox"
-                          checked={groups.includes(g)}
-                          onChange={(e) =>
-                            setGroups(e.target.checked ? [...groups, g] : groups.filter((x) => x !== g))
-                          }
-                        />
-                        {g}
-                      </label>
-                    ))}
-                  </div>
-                ) : (
-                  <div style={{ color: 'var(--color-text-muted)', fontSize: 12.5 }}>
-                    None of the assignable groups exist on {deviceName}.
-                  </div>
-                )}
-
-                {/* Say which policy groups this machine does not have, rather than
-                    omitting them silently — an operator who expected one should learn
-                    that the device lacks it, not that the platform forgot it. */}
-                {unavailableGroups.length > 0 && (
-                  <div style={{ color: 'var(--color-text-muted)', fontSize: 12, marginTop: 6 }}>
-                    Not offered because {deviceName} does not have{' '}
-                    {unavailableGroups.length === 1 ? 'this group' : 'these groups'}:{' '}
-                    {unavailableGroups.join(', ')}.
-                  </div>
-                )}
-
-                {!catalog.deviceGroupsKnown && (
-                  <div style={{ color: 'var(--color-text-muted)', fontSize: 12, marginTop: 6 }}>
-                    {deviceName} has not reported its local groups yet, so all assignable groups are shown.
-                    Any the device turns out not to have are skipped and reported back.
-                  </div>
-                )}
-
-                <div style={{ color: 'var(--color-text-muted)', fontSize: 12, marginTop: 6 }}>
-                  Administrator rights are granted through the account type above, not here.
-                </div>
-              </>
-            )}
-
-            <div style={actions}>
-              <button type="button" onClick={onCancel}>Cancel</button>
-              <button type="button" disabled={!valid} onClick={() => setReviewing(true)} style={primary}>
                 Review
               </button>
-            </div>
-          </>
-        )}
-
-        {reviewing && (
-          <>
-            <div style={preview}>
-              <Row k="Device" v={deviceName} />
-              <Row k="Username" v={body.username} />
-              <Row k="Display name" v={body.fullName ?? '—'} />
-              <Row k="Account type" v={accountType === 'Administrator' ? 'Administrator' : 'Standard User'} />
-              <Row k="Status" v={enabled ? 'Enabled' : 'Disabled'} />
-              <Row k="Administrator" v={accountType === 'Administrator' ? 'Yes' : 'No'} />
-              <Row k="Password policy" v={mustChange ? 'Force change at next logon' : 'Windows default'} />
-              <Row k="Additional groups" v={groups.join(', ') || 'None'} />
-            </div>
-
-            {accountType === 'Administrator' && (
-              <div style={warn}>
-                <strong>{body.username}</strong> will be added to <strong>BUILTIN\Administrators</strong> on{' '}
-                <strong>{deviceName}</strong>, giving it full control of the device.
-              </div>
-            )}
-
-            <div style={{ color: 'var(--color-text-muted)', fontSize: 12.5, marginTop: 10 }}>
-              The account is created on the endpoint itself. It appears in this list only once the device
-              reports it back, so what you see afterwards is the machine's real state.
-            </div>
-
-            <div style={actions}>
-              <button type="button" onClick={() => setReviewing(false)}>Back</button>
-              <button type="button" style={primary} onClick={() => void onSubmit(body)}>
+            </>
+          )}
+          {reviewing && (
+            <>
+              <button type="button" onClick={() => setReviewing(false)}>
+                Back
+              </button>
+              <button type="button" className="btn-primary" onClick={() => void onSubmit(body)}>
                 Confirm &amp; create
               </button>
-            </div>
-          </>
-        )}
+            </>
+          )}
+        </div>
       </div>
     </div>
   )
-}
-
-function Row({ k, v }: { k: string; v: string }) {
-  return (
-    <div style={{ display: 'flex', gap: 12, padding: '3px 0', fontSize: 13.5 }}>
-      <span style={{ color: 'var(--color-text-muted)', width: 200, flexShrink: 0 }}>{k}</span>
-      <span style={{ fontWeight: 500 }}>{v}</span>
-    </div>
-  )
-}
-
-function Section({ title }: { title: string }) {
-  return (
-    <div style={{ fontWeight: 600, fontSize: 13, margin: '18px 0 8px', color: 'var(--color-text-muted)' }}>
-      {title.toUpperCase()}
-    </div>
-  )
-}
-
-const overlay: React.CSSProperties = {
-  position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 60,
-  display: 'grid', placeItems: 'center',
-}
-const grid: React.CSSProperties = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }
-const label: React.CSSProperties = { fontSize: 13, fontWeight: 600, display: 'flex', flexDirection: 'column', gap: 4 }
-const input: React.CSSProperties = {
-  padding: '7px 10px', border: '1px solid var(--color-border)', borderRadius: 6, font: 'inherit',
-}
-const radio: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 6, fontSize: 13.5 }
-const preview: React.CSSProperties = {
-  background: 'var(--color-neutral-bg)', border: '1px solid var(--color-border)',
-  borderRadius: 8, padding: 12, marginTop: 10,
-}
-const warn: React.CSSProperties = {
-  background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e',
-  borderRadius: 8, padding: 10, fontSize: 13, marginTop: 10,
-}
-const actions: React.CSSProperties = {
-  display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 20,
-}
-const primary: React.CSSProperties = {
-  background: 'var(--color-primary)', color: '#fff', border: 'none',
-  borderRadius: 6, padding: '8px 16px', fontWeight: 600, cursor: 'pointer',
 }

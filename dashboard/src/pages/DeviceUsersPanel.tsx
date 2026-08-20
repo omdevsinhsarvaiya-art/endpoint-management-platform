@@ -17,6 +17,9 @@ import {
 } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import { CreateLocalUserDialog } from './CreateLocalUserDialog'
+import { Icon } from '../components/Icon'
+import { ConfirmDialog } from '../components/ConfirmDialog'
+import { useDialogDismiss } from '../components/useDialogDismiss'
 
 type Pending = { taskId: string; label: string; stage: string }
 
@@ -138,29 +141,49 @@ export function DeviceUsersPanel({ deviceId, deviceName }: { deviceId: string; d
 
   return (
     <div className="card">
-      {error && <div className="error-banner">{error}</div>}
+      {error && (
+        <div className="error-banner" role="alert">
+          <Icon name="alert" size={15} />
+          <span>{error}</span>
+        </div>
+      )}
       {notice && (
-        <div className="error-banner" style={{ background: '#ecfdf5', borderColor: '#a7f3d0', color: '#065f46' }}>
-          {notice}
+        <div className="notice-banner" role="status">
+          <Icon name="check" size={15} />
+          <span>{notice}</span>
         </div>
       )}
       {pending && (
-        <div className="loading">
-          <strong>{pending.label}</strong> — {pending.stage}
+        // In-flight work is reported as progress, never as completion: the
+        // account does not exist until Windows says it does.
+        <div className="info-banner" role="status">
+          <div className="loading">
+            <span>
+              <strong>{pending.label}</strong> — {pending.stage}
+            </span>
+          </div>
         </div>
       )}
 
-      <div style={{ display: 'flex', gap: 12, marginBottom: 14, alignItems: 'center', flexWrap: 'wrap' }}>
-        <input
-          type="search"
-          placeholder="Search users…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          style={{ flex: '0 1 260px', padding: '7px 12px', border: '1px solid var(--color-border)', borderRadius: 6, font: 'inherit' }}
-        />
-        <div style={{ flex: 1 }} />
+      <div className="toolbar">
+        <div className="input-search" style={{ flexBasis: 260 }}>
+          <Icon name="search" size={15} className="search-icon" />
+          <input
+            type="search"
+            placeholder="Search users…"
+            aria-label="Search local users"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+        <div className="spacer" />
         {canCreate && (
-          <button type="button" onClick={() => setCreating(!creating)}>
+          <button
+            type="button"
+            className={creating ? undefined : 'btn-primary'}
+            onClick={() => setCreating(!creating)}
+          >
+            {!creating && <Icon name="plus" size={14} />}
             {creating ? 'Cancel' : 'Create user'}
           </button>
         )}
@@ -180,42 +203,72 @@ export function DeviceUsersPanel({ deviceId, deviceName }: { deviceId: string; d
 
       {visible.length === 0 && (
         <div className="empty-state">
-          <div className="title">No local users reported</div>
-          <div>Refresh inventory and wait for the agent's next heartbeat.</div>
+          <Icon name="users" size={40} strokeWidth={1.25} className="icon" />
+          <div className="title">
+            {search ? 'No accounts match this search' : 'No local users reported'}
+          </div>
+          <div>
+            {search
+              ? 'Clear the search to see every reported account.'
+              : 'Refresh inventory and wait for the agent’s next heartbeat.'}
+          </div>
         </div>
       )}
 
       {visible.length > 0 && (
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Account</th><th>Status</th><th>Account type</th><th>SID</th><th>Last logon</th><th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {visible.map((u) => (
-              <tr key={u.sid}>
-                <td>
-                  <div style={{ fontWeight: 600 }}>{u.name}</div>
-                  <div style={{ color: 'var(--color-text-muted)', fontSize: 12 }}>{u.fullName ?? u.description ?? '—'}</div>
-                </td>
-                <td>{u.enabled ? <span className="badge ok">Enabled</span> : <span className="badge neutral">Disabled</span>}</td>
-                <td>
-                  {u.isLocalAdministrator
-                    ? <span className="badge warn">Administrator</span>
-                    : <span className="badge neutral">Standard User</span>}
-                </td>
-                <td style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--color-text-muted)' }}>{u.sid}</td>
-                <td style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
-                  {u.lastLogon ? new Date(u.lastLogon).toLocaleDateString() : '—'}
-                </td>
-                <td style={{ whiteSpace: 'nowrap' }}>
-                  <button type="button" onClick={() => setSelected(u)}>Details</button>
-                </td>
+        <div className="table-wrap">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Account</th>
+                <th>Status</th>
+                <th>Account type</th>
+                <th>SID</th>
+                <th>Last logon</th>
+                <th style={{ textAlign: 'right' }}>Actions</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {visible.map((u) => (
+                <tr key={u.sid}>
+                  <td>
+                    <div>{u.name}</div>
+                    <div className="row-sub">{u.fullName ?? u.description ?? '—'}</div>
+                  </td>
+                  <td>
+                    {u.enabled ? (
+                      <span className="badge ok">Enabled</span>
+                    ) : (
+                      <span className="badge neutral">Disabled</span>
+                    )}
+                  </td>
+                  <td>
+                    {/* Administrator is amber, not green: elevation is a fact
+                        worth noticing on a list of accounts, not a reassurance. */}
+                    {u.isLocalAdministrator ? (
+                      <span className="badge warn">Administrator</span>
+                    ) : (
+                      <span className="badge neutral">Standard User</span>
+                    )}
+                  </td>
+                  <td className="muted" style={{ maxWidth: 220 }}>
+                    <span className="truncate mono-sub" title={u.sid}>
+                      {u.sid}
+                    </span>
+                  </td>
+                  <td className="muted">
+                    {u.lastLogon ? new Date(u.lastLogon).toLocaleDateString() : '—'}
+                  </td>
+                  <td style={{ textAlign: 'right' }}>
+                    <button type="button" className="btn-sm" onClick={() => setSelected(u)}>
+                      Details
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
 
       {selected && (
@@ -234,19 +287,13 @@ export function DeviceUsersPanel({ deviceId, deviceName }: { deviceId: string; d
       )}
 
       {confirm && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 50, display: 'grid', placeItems: 'center' }}>
-          <div className="card" style={{ maxWidth: 460 }}>
-            <h2 style={{ marginTop: 0 }}>{confirm.title}</h2>
-            <p style={{ color: 'var(--color-text-muted)', fontSize: 13.5 }}>{confirm.body}</p>
-            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-              <button type="button" onClick={() => setConfirm(null)}>Cancel</button>
-              <button type="button" onClick={() => void confirm.run()}
-                style={{ background: 'var(--color-crit)', color: '#fff', border: 'none', borderRadius: 6, padding: '8px 16px', fontWeight: 600, cursor: 'pointer' }}>
-                Confirm
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          title={confirm.title}
+          onCancel={() => setConfirm(null)}
+          onConfirm={() => void confirm.run()}
+        >
+          {confirm.body}
+        </ConfirmDialog>
       )}
     </div>
   )
@@ -263,126 +310,235 @@ function UserDetail({
   onConfirm: (c: { title: string; body: string; run: () => Promise<void> }) => void
   deviceId: string
 }) {
+  useDialogDismiss(onClose)
+
   const memberOf = groups.filter((g) => (g.members ?? []).some((m) => m.sid === user.sid))
   const target = user.isLocalAdministrator ? 'StandardUser' : 'Administrator'
   const targetLabel = user.isLocalAdministrator ? 'Standard User' : 'Administrator'
   const currentLabel = user.isLocalAdministrator ? 'Administrator' : 'Standard User'
 
+  const canGroups = permissions.canManageGroups
+  const hasPasswordActions = permissions.canReset || permissions.canForce
+
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 40, display: 'grid', placeItems: 'center' }}>
-      <div className="card" style={{ maxWidth: 620, width: '90%', maxHeight: '85vh', overflowY: 'auto' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
-          <div>
-            <h2 style={{ margin: 0 }}>{user.name}</h2>
-            <div style={{ color: 'var(--color-text-muted)', fontSize: 13 }}>{user.fullName ?? '—'}</div>
+    <div className="overlay" role="dialog" aria-modal="true" aria-labelledby="user-detail-title">
+      <div className="dialog" style={{ maxWidth: 640 }}>
+        <div className="dialog-header">
+          <div className="card-header" style={{ marginBottom: 0 }}>
+            <div>
+              <h2 id="user-detail-title">{user.name}</h2>
+              <div className="sub">{user.fullName ?? '—'}</div>
+            </div>
+            <button type="button" className="btn-ghost btn-sm" onClick={onClose}>
+              Close
+            </button>
           </div>
-          <button type="button" onClick={onClose}>Close</button>
         </div>
 
-        <table className="table" style={{ marginTop: 14 }}>
-          <tbody>
-            <tr><td style={{ color: 'var(--color-text-muted)', width: 170 }}>SID</td>
-              <td style={{ fontFamily: 'monospace', fontSize: 12 }}>{user.sid}</td></tr>
-            <tr><td style={{ color: 'var(--color-text-muted)' }}>Status</td>
-              <td>{user.enabled ? <span className="badge ok">Enabled</span> : <span className="badge neutral">Disabled</span>}</td></tr>
-            <tr><td style={{ color: 'var(--color-text-muted)' }}>Account type</td>
-              <td>{user.isLocalAdministrator ? <span className="badge warn">Administrator</span> : <span className="badge neutral">Standard User</span>}</td></tr>
-            <tr><td style={{ color: 'var(--color-text-muted)' }}>Administrators member</td>
-              <td>{user.isLocalAdministrator ? 'Yes — real BUILTIN\\Administrators membership' : 'No'}</td></tr>
-            <tr><td style={{ color: 'var(--color-text-muted)' }}>Groups</td>
-              <td>{memberOf.length ? memberOf.map((g) => g.name).join(', ') : '—'}</td></tr>
-            <tr><td style={{ color: 'var(--color-text-muted)' }}>Last logon</td>
-              <td>{user.lastLogon ? new Date(user.lastLogon).toLocaleString() : '—'}</td></tr>
-            <tr><td style={{ color: 'var(--color-text-muted)' }}>Description</td>
-              <td>{user.description ?? '—'}</td></tr>
-          </tbody>
-        </table>
+        <div className="dialog-body">
+          <dl className="kv">
+            <dt>SID</dt>
+            <dd>
+              <code>{user.sid}</code>
+            </dd>
+            <dt>Status</dt>
+            <dd>
+              {user.enabled ? (
+                <span className="badge ok">Enabled</span>
+              ) : (
+                <span className="badge neutral">Disabled</span>
+              )}
+            </dd>
+            <dt>Account type</dt>
+            <dd>
+              {user.isLocalAdministrator ? (
+                <span className="badge warn">Administrator</span>
+              ) : (
+                <span className="badge neutral">Standard User</span>
+              )}
+            </dd>
+            {/* Spelled out because "Administrator" here means a real Windows group
+                membership, not a flag in this platform's database. */}
+            <dt>Administrators member</dt>
+            <dd>
+              {user.isLocalAdministrator ? 'Yes — real BUILTIN\\Administrators membership' : 'No'}
+            </dd>
+            <dt>Groups</dt>
+            <dd>{memberOf.length ? memberOf.map((g) => g.name).join(', ') : '—'}</dd>
+            <dt>Last logon</dt>
+            <dd>{user.lastLogon ? new Date(user.lastLogon).toLocaleString() : '—'}</dd>
+            <dt>Description</dt>
+            <dd>{user.description ?? '—'}</dd>
+          </dl>
 
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 16 }}>
           {permissions.canChangeType && (
-            <button type="button"
-              onClick={() => onConfirm({
-                title: `Change "${user.name}" from ${currentLabel} to ${targetLabel}?`,
-                body: user.isLocalAdministrator
-                  ? `This will remove the account from the local Windows Administrators group on this device.`
-                  : `This will add the account to the local Windows Administrators group on this device.`,
-                run: async () => onAction(
-                  `Change ${user.name} to ${targetLabel}`,
-                  () => changeAccountType(deviceId, user.sid, target as 'Administrator' | 'StandardUser')),
-              })}
-              style={{ fontWeight: 600 }}>
-              Change to {targetLabel}
-            </button>
+            <div className="action-group">
+              <h3>Privilege</h3>
+              <p className="group-note">
+                Changes real membership of the local Windows Administrators group on this device.
+              </p>
+              <div className="btn-row">
+                <button
+                  type="button"
+                  className="btn-warning"
+                  onClick={() =>
+                    onConfirm({
+                      title: `Change "${user.name}" from ${currentLabel} to ${targetLabel}?`,
+                      body: user.isLocalAdministrator
+                        ? `This will remove the account from the local Windows Administrators group on this device.`
+                        : `This will add the account to the local Windows Administrators group on this device.`,
+                      run: async () =>
+                        onAction(`Change ${user.name} to ${targetLabel}`, () =>
+                          changeAccountType(
+                            deviceId,
+                            user.sid,
+                            target as 'Administrator' | 'StandardUser',
+                          ),
+                        ),
+                    })
+                  }
+                >
+                  Change to {targetLabel}
+                </button>
+              </div>
+            </div>
           )}
 
-          {permissions.canDisable && (
-            <button type="button"
-              onClick={() => onConfirm({
-                title: `${user.enabled ? 'Disable' : 'Enable'} "${user.name}"?`,
-                body: user.enabled
-                  ? 'The account will not be able to sign in until it is re-enabled.'
-                  : 'The account will be able to sign in again.',
-                run: async () => onAction(
-                  `${user.enabled ? 'Disable' : 'Enable'} ${user.name}`,
-                  () => setLocalUserEnabled(deviceId, user.sid, !user.enabled)),
-              })}>
-              {user.enabled ? 'Disable' : 'Enable'}
-            </button>
+          {(permissions.canDisable || hasPasswordActions) && (
+            <div className="action-group">
+              <h3>Access</h3>
+              <p className="group-note">
+                Controls whether the account can sign in, and what it must do at next sign-in.
+              </p>
+              <div className="btn-row">
+                {permissions.canDisable && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onConfirm({
+                        title: `${user.enabled ? 'Disable' : 'Enable'} "${user.name}"?`,
+                        body: user.enabled
+                          ? 'The account will not be able to sign in until it is re-enabled.'
+                          : 'The account will be able to sign in again.',
+                        run: async () =>
+                          onAction(`${user.enabled ? 'Disable' : 'Enable'} ${user.name}`, () =>
+                            setLocalUserEnabled(deviceId, user.sid, !user.enabled),
+                          ),
+                      })
+                    }
+                  >
+                    {user.enabled ? 'Disable' : 'Enable'}
+                  </button>
+                )}
+
+                {permissions.canReset && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const password = window.prompt(
+                        `New password for "${user.name}" (min 8 characters):`,
+                      )
+                      if (!password) return
+                      onAction(`Reset password for ${user.name}`, () =>
+                        resetLocalUserPassword(deviceId, user.sid, password),
+                      )
+                    }}
+                  >
+                    Reset password
+                  </button>
+                )}
+
+                {permissions.canForce && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onAction(`Force password change for ${user.name}`, () =>
+                        forceLocalUserPasswordChange(deviceId, user.sid),
+                      )
+                    }
+                  >
+                    Force password change
+                  </button>
+                )}
+              </div>
+            </div>
           )}
 
-          {permissions.canReset && (
-            <button type="button" onClick={() => {
-              const password = window.prompt(`New password for "${user.name}" (min 8 characters):`)
-              if (!password) return
-              onAction(`Reset password for ${user.name}`, () => resetLocalUserPassword(deviceId, user.sid, password))
-            }}>
-              Reset password
-            </button>
-          )}
+          {canGroups && (
+            <div className="action-group">
+              <h3>Group membership</h3>
+              <p className="group-note">
+                Adds or removes membership of a local group that already exists on this device.
+              </p>
+              <div className="btn-row">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const groupName = window.prompt(
+                      `Add "${user.name}" to which local group?\n\n${groups.map((g) => g.name).join(', ')}`,
+                    )
+                    if (!groupName) return
+                    const group = groups.find(
+                      (g) => g.name.toLowerCase() === groupName.toLowerCase(),
+                    )
+                    if (!group) return
+                    onAction(`Add ${user.name} to ${group.name}`, () =>
+                      addLocalGroupMember(deviceId, group.sid, user.sid),
+                    )
+                  }}
+                >
+                  Add to group
+                </button>
 
-          {permissions.canForce && (
-            <button type="button"
-              onClick={() => onAction(
-                `Force password change for ${user.name}`,
-                () => forceLocalUserPasswordChange(deviceId, user.sid))}>
-              Force password change
-            </button>
-          )}
-
-          {permissions.canManageGroups && (
-            <button type="button" onClick={() => {
-              const groupName = window.prompt(`Add "${user.name}" to which local group?\n\n${groups.map((g) => g.name).join(', ')}`)
-              if (!groupName) return
-              const group = groups.find((g) => g.name.toLowerCase() === groupName.toLowerCase())
-              if (!group) return
-              onAction(`Add ${user.name} to ${group.name}`, () => addLocalGroupMember(deviceId, group.sid, user.sid))
-            }}>
-              Add to group
-            </button>
-          )}
-
-          {permissions.canManageGroups && memberOf.length > 0 && (
-            <button type="button" onClick={() => {
-              const groupName = window.prompt(`Remove "${user.name}" from which group?\n\n${memberOf.map((g) => g.name).join(', ')}`)
-              if (!groupName) return
-              const group = memberOf.find((g) => g.name.toLowerCase() === groupName.toLowerCase())
-              if (!group) return
-              onAction(`Remove ${user.name} from ${group.name}`, () => removeLocalGroupMember(deviceId, group.sid, user.sid))
-            }}>
-              Remove from group
-            </button>
+                {memberOf.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const groupName = window.prompt(
+                        `Remove "${user.name}" from which group?\n\n${memberOf.map((g) => g.name).join(', ')}`,
+                      )
+                      if (!groupName) return
+                      const group = memberOf.find(
+                        (g) => g.name.toLowerCase() === groupName.toLowerCase(),
+                      )
+                      if (!group) return
+                      onAction(`Remove ${user.name} from ${group.name}`, () =>
+                        removeLocalGroupMember(deviceId, group.sid, user.sid),
+                      )
+                    }}
+                  >
+                    Remove from group
+                  </button>
+                )}
+              </div>
+            </div>
           )}
 
           {permissions.canDelete && (
-            <button type="button"
-              onClick={() => onConfirm({
-                title: `Delete "${user.name}"?`,
-                body: `This permanently removes the local Windows account${user.isLocalAdministrator ? ' — it is currently an Administrator' : ''}. The profile on disk is not removed.`,
-                run: async () => onAction(`Delete ${user.name}`, () => deleteLocalUser(deviceId, user.sid)),
-              })}
-              style={{ border: '1px solid #fca5a5', color: 'var(--color-crit)' }}>
-              Delete
-            </button>
+            <div className="action-group destructive">
+              <h3>Delete account</h3>
+              <p className="group-note">
+                Permanently removes the local Windows account. This cannot be undone from here — the
+                profile directory on disk is left in place.
+              </p>
+              <button
+                type="button"
+                className="btn-danger"
+                onClick={() =>
+                  onConfirm({
+                    title: `Delete "${user.name}"?`,
+                    body: `This permanently removes the local Windows account${
+                      user.isLocalAdministrator ? ' — it is currently an Administrator' : ''
+                    }. The profile on disk is not removed.`,
+                    run: async () =>
+                      onAction(`Delete ${user.name}`, () => deleteLocalUser(deviceId, user.sid)),
+                  })
+                }
+              >
+                <Icon name="trash" size={14} />
+                Delete
+              </button>
+            </div>
           )}
         </div>
       </div>

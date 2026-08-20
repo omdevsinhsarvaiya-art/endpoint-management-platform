@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { ApiError } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
+import { Icon } from '../components/Icon'
 
 export function LoginPage() {
   const { login } = useAuth()
@@ -16,6 +17,8 @@ export function LoginPage() {
     try {
       await login(email, password)
     } catch (e) {
+      // Deliberately the same message for a wrong address and a wrong password:
+      // distinguishing them would confirm which accounts exist.
       setError(
         e instanceof ApiError && e.status === 429
           ? 'Too many sign-in attempts. Wait a minute and try again.'
@@ -27,83 +30,64 @@ export function LoginPage() {
   }
 
   return (
-    <div
-      style={{
-        minHeight: '100vh',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        background: 'var(--color-sidebar)',
-      }}
-    >
-      <form
-        onSubmit={(e) => void onSubmit(e)}
-        className="card"
-        style={{ width: 360, padding: '28px 30px' }}
-      >
-        <div style={{ marginBottom: 20 }}>
-          <div style={{ fontSize: 18, fontWeight: 650 }}>Endpoint Platform</div>
-          <div style={{ color: 'var(--color-text-muted)', fontSize: 13, marginTop: 2 }}>
-            Sign in to continue
+    <div className="login-shell">
+      <form onSubmit={(e) => void onSubmit(e)} className="card login-card">
+        <div className="login-brand">
+          <div className="mark">
+            <Icon name="shield-check" size={22} strokeWidth={2} />
           </div>
+          <div className="name">Endpoint Platform</div>
+          <div className="sub">Sign in to continue</div>
         </div>
 
-        {error && <div className="error-banner">{error}</div>}
+        {error && (
+          // Announced on appearance: a keyboard user who submitted and stayed on
+          // the button would otherwise get no indication the attempt failed.
+          <div className="error-banner" role="alert">
+            <Icon name="alert" size={15} />
+            <span>{error}</span>
+          </div>
+        )}
 
-        <label style={{ display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 6 }}>
-          Email
+        <div className="field">
+          <label className="field-label" htmlFor="login-email">
+            Email
+          </label>
           <input
+            id="login-email"
             type="email"
             autoComplete="username"
+            autoFocus
             required
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            style={inputStyle}
           />
-        </label>
+        </div>
 
-        <label style={{ display: 'block', fontSize: 13, fontWeight: 600, margin: '12px 0 6px' }}>
-          Password
+        <div className="field">
+          <label className="field-label" htmlFor="login-password">
+            Password
+          </label>
           <input
+            id="login-password"
             type="password"
             autoComplete="current-password"
             required
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            style={inputStyle}
           />
-        </label>
+        </div>
 
         <button
           type="submit"
+          className={`btn-primary${busy ? ' btn-loading' : ''}`}
           disabled={busy}
-          style={{
-            width: '100%',
-            marginTop: 18,
-            padding: '9px 0',
-            background: 'var(--color-primary)',
-            color: '#fff',
-            border: 'none',
-            borderRadius: 6,
-            font: 'inherit',
-            fontWeight: 600,
-            cursor: busy ? 'wait' : 'pointer',
-          }}
         >
           {busy ? 'Signing in…' : 'Sign in'}
         </button>
+
+        <div className="login-foot">Authorized administrators only. Access is audited.</div>
       </form>
     </div>
   )
-}
-
-const inputStyle: React.CSSProperties = {
-  display: 'block',
-  width: '100%',
-  marginTop: 4,
-  padding: '8px 10px',
-  border: '1px solid var(--color-border)',
-  borderRadius: 6,
-  font: 'inherit',
-  fontWeight: 400,
 }
