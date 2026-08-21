@@ -10,6 +10,14 @@ public static class TaskPayloads
     /// <param name="Message">Optional message shown to the interactive user.</param>
     public sealed record RestartOrShutdown(int GraceSeconds, string? Message);
 
+    /// <remarks>
+    /// Serialised BY NAME, never by number. The agent's executor reads the wire
+    /// value as a string ("Start"/"Stop"/"Restart") and matches it exactly; the
+    /// default Web serializer writes enums as integers, which the agent rejects
+    /// as a malformed payload — found live against a real endpoint, not in
+    /// review. The converter rides on the type so no call site can forget it.
+    /// </remarks>
+    [System.Text.Json.Serialization.JsonConverter(typeof(System.Text.Json.Serialization.JsonStringEnumConverter))]
     public enum ServiceAction
     {
         Start = 0,

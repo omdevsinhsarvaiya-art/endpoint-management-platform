@@ -13,8 +13,11 @@ namespace EndpointAgent.Windows;
 /// <para>
 /// No shell command is ever built (ADR-0005). Restart/shutdown use
 /// <c>InitiateSystemShutdownExW</c> after enabling <c>SeShutdownPrivilege</c> in
-/// the process token; lock uses <c>LockWorkStation</c>; sign-out uses
-/// <c>ExitWindowsEx(EWX_LOGOFF)</c>. Every entry point is only reachable through
+/// the process token; lock and sign-out target the active console session via
+/// <c>WTSDisconnectSession</c> / <c>WTSLogoffSession</c>, because the
+/// session-relative APIs (<c>LockWorkStation</c>, <c>ExitWindowsEx</c>) act on
+/// the calling session and a service lives in Session 0 where there is nobody
+/// to lock or sign out. Every entry point is only reachable through
 /// an authenticated, permission-checked, audited server task.
 /// </para>
 /// <para>
@@ -31,7 +34,6 @@ public sealed class WindowsDeviceControl(ILogger<WindowsDeviceControl> logger) :
 
     // Reason: SHTDN_REASON_MAJOR_OTHER | SHTDN_REASON_MINOR_OTHER | planned.
     private const uint ShutdownReasonPlannedOther = 0x00000000 | 0x00000000 | 0x80000000;
-    private const uint EwxLogoff = 0x00000000;
 
     public Task RestartAsync(int graceSeconds, string? message, CancellationToken cancellationToken = default)
     {
@@ -47,24 +49,68 @@ public sealed class WindowsDeviceControl(ILogger<WindowsDeviceControl> logger) :
 
     public Task LockAsync(CancellationToken cancellationToken = default)
     {
-        if (!LockWorkStation())
+        // LockWorkStation only works from within the interactive session, and the
+        // agent is a service in Session 0 -- from there it always fails, which is
+        // exactly what live acceptance against a real endpoint showed. The
+        // service-safe equivalent is disconnecting the active console session:
+        // the session keeps running with all its applications, and the physical
+        // console drops to the secure logon screen. Same effect the user gets
+        // from Win+L, initiated from outside the session.
+        var sessionId = FindInteractiveSessionId();
+        if (sessionId is null)
         {
-            throw new Win32Exception(Marshal.GetLastWin32Error(), "LockWorkStation failed.");
+            throw new InvalidOperationException(
+                "No interactive user session to lock -- nobody is signed in.");
         }
 
+        if (!WTSDisconnectSession(WtsCurrentServerHandle, sessionId.Value, bWait: false))
+        {
+            throw new Win32Exception(Marshal.GetLastWin32Error(),
+                $"WTSDisconnectSession failed for session {sessionId.Value}.");
+        }
+
+        _logger.LogInformation("Interactive session {SessionId} locked by an authorized server task.", sessionId.Value);
         return Task.CompletedTask;
     }
 
     public Task SignOutAsync(CancellationToken cancellationToken = default)
     {
-        // EWX_LOGOFF signs out the interactive user. FORCEIFHUNG lets it proceed
-        // past applications that stop responding to the close message.
-        if (!ExitWindowsEx(EwxLogoff | 0x00000010 /* EWX_FORCEIFHUNG */, ShutdownReasonPlannedOther))
+        // ExitWindowsEx logs off the CALLING process's session -- from a service
+        // that is Session 0, so it could never sign out the person at the
+        // machine. WTSLogoffSession targets the interactive session explicitly.
+        var sessionId = FindInteractiveSessionId();
+        if (sessionId is null)
         {
-            throw new Win32Exception(Marshal.GetLastWin32Error(), "ExitWindowsEx(EWX_LOGOFF) failed.");
+            throw new InvalidOperationException(
+                "No interactive user session to sign out -- nobody is signed in.");
         }
 
+        // bWait: false -- report that the sign-out was initiated rather than
+        // blocking the task loop on applications that are slow to close.
+        if (!WTSLogoffSession(WtsCurrentServerHandle, sessionId.Value, bWait: false))
+        {
+            throw new Win32Exception(Marshal.GetLastWin32Error(),
+                $"WTSLogoffSession failed for session {sessionId.Value}.");
+        }
+
+        _logger.LogWarning("Interactive session {SessionId} signed out by an authorized server task.", sessionId.Value);
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// The session id of the signed-in user, or null when nobody is.
+    /// </summary>
+    /// <remarks>
+    /// The active console session covers the physical machine -- the normal case
+    /// for a managed endpoint. 0xFFFFFFFF means no console session is attached.
+    /// A user connected only over RDP is not found by this; managing RDP-only
+    /// sessions would need WTSEnumerateSessions and is deliberately out of scope
+    /// until a real deployment needs it.
+    /// </remarks>
+    private static uint? FindInteractiveSessionId()
+    {
+        var consoleSession = WTSGetActiveConsoleSessionId();
+        return consoleSession == 0xFFFFFFFF ? null : consoleSession;
     }
 
     private void InitiateShutdown(int graceSeconds, string? message, bool restart)
@@ -155,13 +201,19 @@ public sealed class WindowsDeviceControl(ILogger<WindowsDeviceControl> logger) :
         public uint Attributes;
     }
 
-    [DllImport("user32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool LockWorkStation();
+    /// <summary>WTS_CURRENT_SERVER_HANDLE: operate on the local machine.</summary>
+    private static readonly IntPtr WtsCurrentServerHandle = IntPtr.Zero;
 
-    [DllImport("user32.dll", SetLastError = true)]
+    [DllImport("kernel32.dll")]
+    private static extern uint WTSGetActiveConsoleSessionId();
+
+    [DllImport("wtsapi32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool ExitWindowsEx(uint uFlags, uint dwReason);
+    private static extern bool WTSDisconnectSession(IntPtr hServer, uint sessionId, bool bWait);
+
+    [DllImport("wtsapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool WTSLogoffSession(IntPtr hServer, uint sessionId, bool bWait);
 
     [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     [return: MarshalAs(UnmanagedType.Bool)]
