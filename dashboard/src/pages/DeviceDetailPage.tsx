@@ -147,7 +147,11 @@ export function DeviceDetailPage() {
 
   // Tracks queued actions to their terminal state, so the page reports what the
   // machine actually did rather than that the server accepted a request.
-  const { tracked, track, dismiss } = useTaskTracker(deviceId ?? '', device ? !device.isOnline : false)
+  const { tracked, track, dismiss } = useTaskTracker(
+    deviceId ?? '',
+    device ? !device.isOnline : false,
+    load,
+  )
 
   async function runAction(action: 'restart' | 'shutdown' | 'lock' | 'signout') {
     if (!deviceId) return
@@ -768,6 +772,7 @@ export function DeviceDetailPage() {
               deviceId={device.id}
               services={device.services}
               offline={!device.isOnline}
+              onInventoryChanged={load}
             />
           )}
         </>
@@ -786,6 +791,7 @@ export function DeviceDetailPage() {
               deviceId={device.id}
               processes={device.processes}
               offline={!device.isOnline}
+              onInventoryChanged={load}
             />
           )}
         </>

@@ -18,15 +18,18 @@ export function DeviceProcessesPanel({
   deviceId,
   processes,
   offline,
+  onInventoryChanged,
 }: {
   deviceId: string
   processes: DeviceProcessRow[]
   offline: boolean
+  /** Reloads the device data these rows are rendered from. */
+  onInventoryChanged?: () => void | Promise<void>
 }) {
   const { hasPermission } = useAuth()
   const canTerminate = hasPermission('task.execute')
 
-  const { tracked, track, dismiss } = useTaskTracker(deviceId, offline)
+  const { tracked, track, dismiss } = useTaskTracker(deviceId, offline, onInventoryChanged)
   const [error, setError] = useState<string | null>(null)
   const [confirm, setConfirm] = useState<DeviceProcessRow | null>(null)
 
@@ -35,7 +38,7 @@ export function DeviceProcessesPanel({
     setError(null)
     try {
       const { taskId } = await terminateProcess(deviceId, process.processId, process.name)
-      track(taskId, `Terminate ${process.name} (PID ${process.processId})`)
+      track(taskId, `Terminate ${process.name} (PID ${process.processId})`, { syncInventory: true })
     } catch {
       setError(`Could not queue termination of ${process.name}.`)
     }

@@ -18,6 +18,7 @@ import {
 import { useAuth } from '../auth/AuthContext'
 import { CreateLocalUserDialog } from './CreateLocalUserDialog'
 import { Icon } from '../components/Icon'
+import { waitForFreshInventory } from '../components/inventorySync'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { useDialogDismiss } from '../components/useDialogDismiss'
 
@@ -101,6 +102,13 @@ export function DeviceUsersPanel({ deviceId, deviceName }: { deviceId: string; d
               : `${pending.label} ${task.status.toLowerCase()}: ${task.resultMessage ?? 'no detail reported'}.`,
           )
           await load()
+          // Account rows come from inventory, which the server does not refresh
+          // on task completion — so a just-created user is not in the list this
+          // load fetched. Chase a fresh inventory and reload once it lands, so
+          // the change appears without anyone clicking Refresh.
+          if (task.status === 'Succeeded') {
+            void waitForFreshInventory(deviceId).then(() => load())
+          }
         }
       } catch {
         // Transient read failure: keep polling; the interval clears on unmount.

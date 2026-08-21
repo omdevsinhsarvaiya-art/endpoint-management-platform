@@ -10,6 +10,7 @@ import {
 } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import { Icon } from '../components/Icon'
+import { waitForFreshInventory } from '../components/inventorySync'
 
 /**
  * Device -> Groups. Shows real Windows local groups and their actual membership,
@@ -56,6 +57,11 @@ export function DeviceGroupsPanel({ deviceId }: { deviceId: string }) {
           setPending(null)
           setNotice(`${pending.label}: ${task.status.toLowerCase()}${task.resultMessage ? ` — ${task.resultMessage}` : ''}.`)
           await load()
+          // Membership rows come from inventory; see DeviceUsersPanel. Reload
+          // again once the device has uploaded a fresh one.
+          if (task.status === 'Succeeded') {
+            void waitForFreshInventory(deviceId).then(() => load())
+          }
         }
       } catch {
         // Transient failure; keep polling until unmount.

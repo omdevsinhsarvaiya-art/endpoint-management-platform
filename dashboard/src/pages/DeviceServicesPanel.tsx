@@ -21,15 +21,18 @@ export function DeviceServicesPanel({
   deviceId,
   services,
   offline,
+  onInventoryChanged,
 }: {
   deviceId: string
   services: DeviceServiceRow[]
   offline: boolean
+  /** Reloads the device data these rows are rendered from. */
+  onInventoryChanged?: () => void | Promise<void>
 }) {
   const { hasPermission } = useAuth()
   const canControl = hasPermission('task.execute')
 
-  const { tracked, track, dismiss } = useTaskTracker(deviceId, offline)
+  const { tracked, track, dismiss } = useTaskTracker(deviceId, offline, onInventoryChanged)
   const [error, setError] = useState<string | null>(null)
   const [confirm, setConfirm] = useState<{ service: DeviceServiceRow; action: ServiceAction } | null>(null)
   const [search, setSearch] = useState('')
@@ -39,7 +42,9 @@ export function DeviceServicesPanel({
     setError(null)
     try {
       const { taskId } = await controlService(deviceId, service.name, action)
-      track(taskId, `${action} "${service.displayName}"`)
+      // Service state is inventory data: on success the tracker requests a fresh
+      // inventory and reloads this table before showing the green banner.
+      track(taskId, `${action} "${service.displayName}"`, { syncInventory: true })
     } catch {
       setError(`Could not queue ${action.toLowerCase()} for "${service.displayName}".`)
     }
@@ -151,8 +156,8 @@ export function DeviceServicesPanel({
       )}
 
       <p className="muted" style={{ fontSize: 12, marginTop: 10, marginBottom: 0 }}>
-        Status shown is the last reported inventory. A queued change appears above while it runs and
-        the table catches up on the next inventory.
+        Status shown is what the device last reported. After a change succeeds, the table refreshes
+        itself as soon as the device uploads fresh inventory.
       </p>
 
       {confirm && (
