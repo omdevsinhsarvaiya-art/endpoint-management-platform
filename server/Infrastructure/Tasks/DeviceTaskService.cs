@@ -9,6 +9,14 @@ using Microsoft.Extensions.Logging;
 
 namespace EndpointPlatform.Infrastructure.Tasks;
 
+public enum TaskCancelResult
+{
+    Success,
+    NotFound,
+    /// <summary>Already delivered to the agent, or already terminal.</summary>
+    NotCancellable,
+}
+
 /// <summary>
 /// Queues typed tasks for administrators, delivers them to agents on poll, and
 /// records their results. The one place tasks are created, so every task is
@@ -171,6 +179,73 @@ public sealed class DeviceTaskService(
         }
 
         return expired;
+    }
+
+    /// <summary>
+    /// Cancels a task that is still Queued. Delivered tasks cannot be cancelled:
+    /// the agent may already be acting on one, and pretending to stop work that
+    /// is mid-flight on a Windows machine would make Cancelled a lie.
+    /// </summary>
+    /// <remarks>
+    /// The practical case is an action queued against an offline device — a
+    /// mistaken shutdown would otherwise sit Queued until its TTL expires, with
+    /// the administrator unable to do anything but wait for it to fire whenever
+    /// the machine next checks in.
+    /// </remarks>
+    public async Task<TaskCancelResult> CancelAsync(
+        Guid organizationId,
+        Guid deviceId,
+        Guid taskId,
+        Guid actorId,
+        string actorDisplay,
+        CancellationToken cancellationToken = default)
+    {
+        var task = await _dbContext.DeviceTasks
+            .SingleOrDefaultAsync(
+                t => t.Id == taskId && t.DeviceId == deviceId && t.OrganizationId == organizationId,
+                cancellationToken);
+
+        if (task is null)
+        {
+            return TaskCancelResult.NotFound;
+        }
+
+        var now = _timeProvider.GetUtcNow();
+
+        if (!task.TryCancel(now, $"Cancelled by {actorDisplay}."))
+        {
+            return TaskCancelResult.NotCancellable;
+        }
+
+        var definition = DeviceTaskCatalog.Require(task.Type);
+
+        _auditWriter.Stage(
+            organizationId,
+            AuditActorType.PlatformUser,
+            actorId,
+            actorDisplay,
+            action: $"task.cancel.{task.Type.ToString().ToLowerInvariant()}",
+            AuditResult.Success,
+            audit => audit
+                .OnDevice(deviceId, deviceId.ToString())
+                .OnTarget("device_task", task.Id.ToString(), task.Type.ToString())
+                .Requiring(definition.RequiredPermission));
+
+        try
+        {
+            await _dbContext.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            // The agent claimed it in the same instant. The claim won, so the task
+            // is genuinely on its way to the machine — report it as uncancellable
+            // rather than pretending the race went the administrator's way.
+            _dbContext.ChangeTracker.Clear();
+            return TaskCancelResult.NotCancellable;
+        }
+
+        _logger.LogInformation("Task {TaskId} ({Type}) cancelled by {Actor}.", taskId, task.Type, actorDisplay);
+        return TaskCancelResult.Success;
     }
 
     /// <summary>Applies an agent-reported result. Returns false if the task is not awaiting one.</summary>

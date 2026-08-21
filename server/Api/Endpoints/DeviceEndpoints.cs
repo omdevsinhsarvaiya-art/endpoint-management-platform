@@ -61,6 +61,14 @@ public static class DeviceEndpoints
             .WithName("ListDeviceTasks")
             .RequirePermission(Domain.Authorization.Permissions.Task.View);
 
+        // Authenticated only — the real check is per task type inside the handler:
+        // you may cancel exactly the tasks you are permitted to queue. A static
+        // permission here would either invent a new one or let a role cancel
+        // work it could never have created.
+        group.MapPost("/{deviceId:guid}/tasks/{taskId:guid}/cancel", CancelTaskAsync)
+            .WithName("CancelDeviceTask")
+            .RequireAuthorization();
+
         group.MapPost("/{deviceId:guid}/actions/control-service", ControlServiceAsync)
             .WithName("ControlDeviceService")
             .RequirePermission(Domain.Authorization.Permissions.Task.Execute);
@@ -197,6 +205,50 @@ public static class DeviceEndpoints
             : Results.Accepted($"/admin/v1/devices/{deviceId}/tasks", new { taskId = task.Id, status = task.Status.ToString() });
     }
 
+    private static async Task<IResult> CancelTaskAsync(
+        Guid deviceId,
+        Guid taskId,
+        HttpContext httpContext,
+        EndpointPlatformDbContext dbContext,
+        DeviceTaskService taskService,
+        CancellationToken cancellationToken)
+    {
+        var actor = AdminActor.Required(httpContext.User);
+
+        // Read the type first so authorization happens before any state change.
+        // Unknown task and unknown device both answer 404 — a caller who cannot
+        // cancel a task learns nothing about whether it exists.
+        var taskType = await dbContext.DeviceTasks
+            .AsNoTracking()
+            .Where(t => t.Id == taskId && t.DeviceId == deviceId && t.OrganizationId == actor.OrganizationId)
+            .Select(t => (DeviceTaskType?)t.Type)
+            .SingleOrDefaultAsync(cancellationToken);
+
+        if (taskType is null)
+        {
+            return Results.NotFound();
+        }
+
+        var definition = DeviceTaskCatalog.Require(taskType.Value);
+        if (!httpContext.User.HasClaim(AdminAuthenticationHandler.PermissionClaimType, definition.RequiredPermission))
+        {
+            return Results.Forbid();
+        }
+
+        var result = await taskService.CancelAsync(
+            actor.OrganizationId, deviceId, taskId, actor.UserId, actor.Email, cancellationToken);
+
+        return result switch
+        {
+            TaskCancelResult.Success => Results.NoContent(),
+            TaskCancelResult.NotFound => Results.NotFound(),
+            // Already delivered or terminal: a stale view, not a fault.
+            _ => Results.Problem(
+                title: "The task can no longer be cancelled — it was already delivered to the agent or has finished.",
+                statusCode: StatusCodes.Status409Conflict),
+        };
+    }
+
     private static async Task<IResult> ListTasksAsync(
         Guid deviceId,
         HttpContext httpContext,
@@ -260,6 +312,8 @@ public static class DeviceEndpoints
         Guid deviceId,
         EndpointPlatformDbContext dbContext,
         HttpContext httpContext,
+        Microsoft.Extensions.Options.IOptions<Infrastructure.Configuration.AgentServerOptions> agentServerOptions,
+        TimeProvider timeProvider,
         CancellationToken cancellationToken)
     {
         // Organization scoping: an administrator only ever sees their own
@@ -343,6 +397,13 @@ public static class DeviceEndpoints
             // label and still show which physical machine it refers to.
             device.Hostname,
             device.DisplayName,
+            // Same online definition as the device list. The dashboard needs it
+            // here so that queueing an action against an offline machine can say
+            // "queued, runs when the agent reconnects" instead of implying the
+            // action is happening now.
+            IsOnline = device.IsOnline(
+                timeProvider.GetUtcNow(),
+                TimeSpan.FromSeconds(agentServerOptions.Value.OfflineAfterSeconds)),
             device.OperatingSystem,
             device.AgentVersion,
             Status = device.Status.ToString(),

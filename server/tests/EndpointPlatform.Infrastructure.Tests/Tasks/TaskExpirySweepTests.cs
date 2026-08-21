@@ -68,6 +68,47 @@ public sealed class TaskExpirySweepTests(PostgresFixture fixture)
     }
 
     [Fact]
+    public async Task A_delivered_task_whose_agent_never_reports_back_is_expired_too()
+    {
+        // The "agent restarts while holding a task" case: the task was claimed,
+        // the agent died before executing or reporting, and nothing will ever
+        // post a result. Without this path the task would sit Delivered forever,
+        // which reads in the dashboard as "still running on the machine".
+        var start = new DateTimeOffset(2026, 3, 1, 12, 0, 0, TimeSpan.Zero);
+        var time = new TestClock(start);
+
+        await using var db = _fixture.CreateDbContext();
+        var org = new Organization("S3", ("u" + Guid.CreateVersion7().ToString("N")).Substring(0, 18));
+        db.Organizations.Add(org);
+        var token = new Domain.Enrollment.EnrollmentToken(org.Id, "t",
+            Guid.CreateVersion7().ToString("N") + Guid.CreateVersion7().ToString("N"),
+            Guid.CreateVersion7(), "a@b", start.AddHours(1), 9);
+        db.EnrollmentTokens.Add(token);
+        var device = Device.Enroll(org.Id, "SW3", "m-" + Guid.CreateVersion7().ToString("N"), "1", null, token.Id, start);
+        db.Devices.Add(device);
+
+        var task = DeviceTask.Create(org.Id, device.Id, DeviceTaskType.RestartDevice, null,
+            Guid.CreateVersion7(), "admin", start, TimeSpan.FromMinutes(15));
+        task.TryDeliver(start.AddMinutes(1)).ShouldBeTrue();
+        db.DeviceTasks.Add(task);
+        await db.SaveChangesAsync();
+
+        time.Advance(TimeSpan.FromMinutes(20));
+
+        var service = new DeviceTaskService(db, Audit(db, time), time, NullLogger<DeviceTaskService>.Instance);
+        var expired = await service.SweepExpiredAsync(batchSize: 500);
+
+        expired.ShouldBe(1);
+
+        await using var verify = _fixture.CreateDbContext();
+        var reloaded = await verify.DeviceTasks.SingleAsync(t => t.Id == task.Id);
+        reloaded.Status.ShouldBe(DeviceTaskStatus.Expired);
+
+        // And a result that limps in afterwards must not resurrect it.
+        (await service.CompleteAsync(device.Id, task.Id, succeeded: true, "late", null)).ShouldBeFalse();
+    }
+
+    [Fact]
     public async Task A_second_sweep_finds_nothing_to_do()
     {
         var start = new DateTimeOffset(2026, 2, 1, 12, 0, 0, TimeSpan.Zero);

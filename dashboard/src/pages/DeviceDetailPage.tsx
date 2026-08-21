@@ -3,7 +3,13 @@ import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
 import { DeviceUsersPanel } from './DeviceUsersPanel'
 import { DeviceGroupsPanel } from './DeviceGroupsPanel'
+import { DeviceServicesPanel } from './DeviceServicesPanel'
+import { DeviceProcessesPanel } from './DeviceProcessesPanel'
+import { TaskProgress } from '../components/TaskProgress'
+import { useTaskTracker } from '../components/useTaskTracker'
 import {
+  ApiError,
+  cancelDeviceTask,
   getDevice,
   getDeviceTasks,
   deviceName,
@@ -39,6 +45,13 @@ function isModule(value: string | null): value is Tab {
 }
 
 type ActionKey = 'restart' | 'shutdown' | 'lock' | 'signout'
+
+const ACTION_LABELS: Record<ActionKey, string> = {
+  restart: 'Restart device',
+  shutdown: 'Shut down device',
+  lock: 'Lock screen',
+  signout: 'Sign out user',
+}
 
 interface ActionSpec {
   key: ActionKey
@@ -132,15 +145,39 @@ export function DeviceDetailPage() {
     }
   }, [deviceId])
 
+  // Tracks queued actions to their terminal state, so the page reports what the
+  // machine actually did rather than that the server accepted a request.
+  const { tracked, track, dismiss } = useTaskTracker(deviceId ?? '', device ? !device.isOnline : false)
+
   async function runAction(action: 'restart' | 'shutdown' | 'lock' | 'signout') {
     if (!deviceId) return
     setConfirm(null)
+    setActionMsg(null)
     try {
-      await queueDeviceAction(deviceId, action)
-      setActionMsg(`Queued "${action}". The device runs it on its next check-in; watch the Tasks tab.`)
+      const { taskId } = await queueDeviceAction(deviceId, action)
+      track(taskId, ACTION_LABELS[action])
       await load()
     } catch {
       setActionMsg(`Could not queue "${action}".`)
+    }
+  }
+
+  async function onCancelTask(taskId: string) {
+    if (!deviceId) return
+    setActionMsg(null)
+    try {
+      await cancelDeviceTask(deviceId, taskId)
+      setActionMsg('Task cancelled.')
+    } catch (e) {
+      setActionMsg(
+        e instanceof ApiError && e.status === 409
+          ? 'Too late to cancel — the task was already delivered to the agent or has finished.'
+          : e instanceof ApiError && e.status === 403
+            ? 'You do not have permission to cancel this type of task.'
+            : 'The task could not be cancelled.',
+      )
+    } finally {
+      await load()
     }
   }
 
@@ -727,38 +764,11 @@ export function DeviceDetailPage() {
             />
           )}
           {!!device.services.length && (
-            <div className="card">
-              <h2>Windows services</h2>
-              <div className="scroll-y table-wrap">
-                <table className="table">
-                  <thead>
-                    <tr>
-                      <th>Service</th>
-                      <th>Status</th>
-                      <th>Start mode</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {device.services.map((sv) => (
-                      <tr key={sv.name}>
-                        <td>
-                          <div>{sv.displayName}</div>
-                          <div className="row-sub mono-sub">{sv.name}</div>
-                        </td>
-                        <td>
-                          {sv.status === 'Running' ? (
-                            <span className="badge ok">Running</span>
-                          ) : (
-                            <span className="badge neutral">{sv.status}</span>
-                          )}
-                        </td>
-                        <td>{sv.startMode}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+            <DeviceServicesPanel
+              deviceId={device.id}
+              services={device.services}
+              offline={!device.isOnline}
+            />
           )}
         </>
       )}
@@ -772,43 +782,11 @@ export function DeviceDetailPage() {
             />
           )}
           {!!device.processes.length && (
-            <div className="card">
-              <div className="card-header">
-                <h2>Running processes</h2>
-                <span className="muted" style={{ fontSize: 12 }}>
-                  Snapshot (top by memory) as of{' '}
-                  {device.processes[0]
-                    ? new Date(device.processes[0].collectedAt).toLocaleString()
-                    : ''}
-                </span>
-              </div>
-              <div className="scroll-y table-wrap">
-                <table className="table">
-                  <thead>
-                    <tr>
-                      <th>Process</th>
-                      <th>PID</th>
-                      <th>Memory</th>
-                      <th>Path</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {device.processes.map((pr) => (
-                      <tr key={pr.processId}>
-                        <td>{pr.name}</td>
-                        <td>{pr.processId}</td>
-                        <td>{formatBytes(pr.workingSetBytes)}</td>
-                        <td className="muted" style={{ maxWidth: 380 }}>
-                          <span className="truncate" title={pr.executablePath ?? undefined}>
-                            {pr.executablePath ?? '—'}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+            <DeviceProcessesPanel
+              deviceId={device.id}
+              processes={device.processes}
+              offline={!device.isOnline}
+            />
           )}
         </>
       )}
@@ -820,6 +798,18 @@ export function DeviceDetailPage() {
             Each action is delivered as a typed task the device pulls on its next check-in. Actions
             you lack permission for are hidden; the server enforces this regardless.
           </p>
+
+          {/* An offline machine accepts nothing right now. Saying so up front
+              beats letting someone queue a restart and wonder why nothing
+              happened — the task waits, and that is exactly what this says. */}
+          {!device.isOnline && device.status !== 'Retired' && (
+            <div className="warn-banner">
+              <strong>Device offline.</strong> Actions queued now will wait and run when the agent
+              reconnects — last seen {relativeSince(device.lastSeenAt)}.
+            </div>
+          )}
+
+          <TaskProgress tasks={tracked} onDismiss={dismiss} />
 
           {visibleSession.length === 0 && visiblePower.length === 0 && !hasPermission('device.retire') && (
             <div className="empty-state">
@@ -893,6 +883,7 @@ export function DeviceDetailPage() {
                     <th>Queued by</th>
                     <th>Queued</th>
                     <th>Result</th>
+                    <th style={{ textAlign: 'right' }}></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -919,6 +910,19 @@ export function DeviceDetailPage() {
                       <td>{t.createdByDisplay}</td>
                       <td>{new Date(t.createdAt).toLocaleString()}</td>
                       <td className="muted">{t.resultMessage ?? '—'}</td>
+                      <td style={{ textAlign: 'right' }}>
+                        {/* Only while Queued: once delivered, the agent may be
+                            mid-operation and the server refuses anyway. */}
+                        {t.status === 'Queued' && (
+                          <button
+                            type="button"
+                            className="btn-ghost btn-sm"
+                            onClick={() => void onCancelTask(t.id)}
+                          >
+                            Cancel
+                          </button>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

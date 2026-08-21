@@ -181,6 +181,12 @@ export interface DeviceDetail {
   hostname: string
   /** The administrator's console label, or null when none is set. */
   displayName: string | null
+  /**
+   * Whether the agent has checked in recently enough to be considered
+   * reachable. Same definition as the device list — the server computes both,
+   * so the UI never invents its own staleness threshold.
+   */
+  isOnline: boolean
   operatingSystem: string | null
   agentVersion: string
   status: 'Active' | 'Retired'
@@ -239,14 +245,19 @@ export interface DeviceTaskItem {
   resultMessage: string | null
 }
 
-export async function controlService(deviceId: string, serviceName: string, action: 'Start' | 'Stop' | 'Restart'): Promise<void> {
-  const r = await fetch(`/api/admin/v1/devices/${encodeURIComponent(deviceId)}/actions/control-service`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
-    body: JSON.stringify({ serviceName, action }),
-  })
-  if (r.status === 401) sessionExpiredEvent.dispatchEvent(new Event('expired'))
-  if (!r.ok) throw new ApiError(r.status, 'Service control failed', r.headers.get('X-Correlation-Id'))
+export async function controlService(
+  deviceId: string,
+  serviceName: string,
+  action: 'Start' | 'Stop' | 'Restart',
+): Promise<{ taskId: string }> {
+  return request<{ taskId: string }>(
+    `/admin/v1/devices/${encodeURIComponent(deviceId)}/actions/control-service`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ serviceName, action }),
+    },
+  )
 }
 
 export function getDeviceTasks(deviceId: string): Promise<DeviceTaskItem[]> {
@@ -256,17 +267,77 @@ export function getDeviceTasks(deviceId: string): Promise<DeviceTaskItem[]> {
 export async function queueDeviceAction(
   deviceId: string,
   action: 'restart' | 'shutdown' | 'lock' | 'signout',
-): Promise<void> {
-  const response = await fetch(
-    `/api/admin/v1/devices/${encodeURIComponent(deviceId)}/actions/${action}`,
-    { method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' } },
+): Promise<{ taskId: string }> {
+  // The taskId is the point: creating the task is not the outcome, and the id
+  // is what lets the UI follow the task to what actually happened on Windows.
+  return request<{ taskId: string }>(
+    `/admin/v1/devices/${encodeURIComponent(deviceId)}/actions/${action}`,
+    { method: 'POST' },
   )
-  if (response.status === 401) {
-    sessionExpiredEvent.dispatchEvent(new Event('expired'))
-  }
-  if (!response.ok) {
-    throw new ApiError(response.status, `${action} failed`, response.headers.get('X-Correlation-Id'))
-  }
+}
+
+/**
+ * Queues termination of one process, guarded by the image name the
+ * administrator saw. If the PID has been reused by a different executable by
+ * the time the agent acts, the agent refuses rather than killing a stranger.
+ */
+export async function terminateProcess(
+  deviceId: string,
+  processId: number,
+  expectedImageName: string,
+): Promise<{ taskId: string }> {
+  return request<{ taskId: string }>(
+    `/admin/v1/devices/${encodeURIComponent(deviceId)}/actions/terminate-process`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ processId, expectedImageName }),
+    },
+  )
+}
+
+/**
+ * Cancels a task that is still Queued. The server refuses once the task has
+ * been delivered -- the agent may already be acting on it, and a cancellation
+ * that stops nothing would be a lie. Authorization is per task type: you may
+ * cancel exactly what you are permitted to queue.
+ */
+export async function cancelDeviceTask(deviceId: string, taskId: string): Promise<void> {
+  await request<void>(
+    `/admin/v1/devices/${encodeURIComponent(deviceId)}/tasks/${encodeURIComponent(taskId)}/cancel`,
+    { method: 'POST' },
+  )
+}
+
+export interface FleetTaskItem {
+  id: string
+  deviceId: string
+  deviceHostname: string
+  deviceDisplayName: string | null
+  type: string
+  status: string
+  createdByDisplay: string
+  createdAt: string
+  deliveredAt: string | null
+  completedAt: string | null
+  resultMessage: string | null
+}
+
+export interface FleetTaskPage {
+  items: FleetTaskItem[]
+  totalCount: number
+  page: number
+  pageSize: number
+}
+
+export function getRecentTasks(
+  page: number,
+  pageSize: number,
+  status?: string,
+): Promise<FleetTaskPage> {
+  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) })
+  if (status) params.set('status', status)
+  return request<FleetTaskPage>(`/admin/v1/tasks?${params}`)
 }
 
 export interface SoftwareTitle {

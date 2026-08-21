@@ -12,6 +12,7 @@ import { SoftwarePage } from './pages/SoftwarePage'
 import { UpdatesPage } from './pages/UpdatesPage'
 import { LoginPage } from './pages/LoginPage'
 import { PlaceholderPage } from './pages/PlaceholderPage'
+import { TasksPage } from './pages/TasksPage'
 
 export default function App() {
   return (
@@ -62,10 +63,7 @@ function AuthGate() {
           <Route path="policies" element={<PoliciesPage />} />
           <Route path="updates" element={<UpdatesPage />} />
           <Route path="security" element={<SecurityPage />} />
-          <Route
-            path="tasks"
-            element={<PlaceholderPage title="Tasks" phase="Phase 10 (approved task system)" />}
-          />
+          <Route path="tasks" element={<TasksPage />} />
           <Route
             path="audit"
             element={<PlaceholderPage title="Audit Logs" phase="Phase 3 (authentication, RBAC and audit)" />}
