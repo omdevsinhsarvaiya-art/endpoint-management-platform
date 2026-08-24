@@ -110,6 +110,13 @@ public sealed class UpdateAgentExecutor(
 
         // ---- Gate 4: download + hash over the actual bytes -----------------
         var stateDir = AgentPaths.StateDirectory;
+
+        // The installer creates this directory, so in production it is always
+        // there -- which is exactly why its absence went unnoticed until a clean
+        // CI machine ran these paths. An update must not fail because a
+        // directory the agent owns is missing; creating it is free and correct.
+        Directory.CreateDirectory(stateDir);
+
         var downloadPath = Path.Combine(stateDir, $"agent-update-{info.Version}.msi.partial");
         var msiPath = Path.Combine(stateDir, $"agent-update-{info.Version}.msi");
 

@@ -84,15 +84,30 @@ if (-not (Get-Command wix -ErrorAction SilentlyContinue)) {
     throw "The WiX CLI is not installed. Install it with: dotnet tool install --global wix"
 }
 
+# Extensions MUST be pinned to the WiX version. An unversioned
+# `wix extension add` resolves to the newest package on nuget.org -- currently
+# the v7 line -- which WiX 5 then refuses with "Could not find expected package
+# root folder wixext5". A developer machine with the right extensions already
+# cached never sees this; a clean runner fails every time.
+$wixVersion = (& wix --version) -replace '^\s*(\d+\.\d+\.\d+).*$', '$1'
+if ($wixVersion -notmatch '^\d+\.\d+\.\d+$') { throw "Could not determine the WiX CLI version (got '$wixVersion')." }
+
 # `wix extension list` returns one line per extension. Joining first matters:
 # in PowerShell `$array -notmatch 'x'` FILTERS the array rather than returning a
 # boolean, so the naive check is always truthy and re-adds an existing extension.
 $installedExtensions = (& wix extension list --global 2>$null) -join "`n"
 foreach ($ext in @('WixToolset.Util.wixext', 'WixToolset.UI.wixext')) {
-    if ($installedExtensions -notmatch [regex]::Escape($ext)) {
-        Write-Host "Adding WiX extension $ext..." -ForegroundColor Cyan
-        & wix extension add --global $ext
-        if ($LASTEXITCODE -ne 0) { throw "Failed to add WiX extension $ext." }
+    $pinned = "$ext/$wixVersion"
+    # Match name AND version: an extension present at the wrong major version is
+    # worse than one that is absent, because the build fails later and vaguer.
+    # `wix extension add` takes name/version while `list` prints "name version",
+    # so the check tolerates either separator -- otherwise every build re-adds
+    # an extension that is already correctly installed.
+    $installedPattern = [regex]::Escape($ext) + '[\s/]+' + [regex]::Escape($wixVersion)
+    if ($installedExtensions -notmatch $installedPattern) {
+        Write-Host "Adding WiX extension $pinned..." -ForegroundColor Cyan
+        & wix extension add --global $pinned
+        if ($LASTEXITCODE -ne 0) { throw "Failed to add WiX extension $pinned." }
     }
 }
 
