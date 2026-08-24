@@ -62,11 +62,48 @@ public sealed class DeviceReadService(
         var staleAfter = TimeSpan.FromSeconds(_options.OfflineAfterSeconds);
         var onlineThreshold = now - staleAfter;
 
-        var items = await query
+        // One lookup serves every row. Every enrolled device is windows/x64 by
+        // construction (the MSI refuses anything else), so the latest published
+        // windows/x64 release is comparable to all of them; a future second
+        // platform would carry its arch on the device row and filter here.
+        var latestRelease = await _dbContext.AgentReleases
+            .AsNoTracking()
+            .Where(r =>
+                r.Platform == "windows"
+                && r.Architecture == "x64"
+                && r.Status == Domain.Agents.AgentReleaseStatus.Published)
+            .Select(r => r.Version)
+            .ToListAsync(cancellationToken);
+        var latestVersion = latestRelease
+            .Where(v => Domain.Agents.AgentVersionNumber.TryParse(v, out _))
+            .OrderByDescending(v =>
+            {
+                Domain.Agents.AgentVersionNumber.TryParse(v, out var parsed);
+                return parsed;
+            })
+            .FirstOrDefault();
+
+        // Plain columns only inside the SQL projection; the version comparison
+        // is .NET code EF cannot translate, so it runs on the materialised page.
+        var rows = await query
             .OrderByDescending(d => d.LastSeenAt)
             .ThenBy(d => d.Hostname)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
+            .Select(d => new
+            {
+                d.Id,
+                d.Hostname,
+                d.DisplayName,
+                d.OperatingSystem,
+                d.AgentVersion,
+                d.Status,
+                d.LastSeenAt,
+                d.EnrolledAt,
+            })
+            .ToListAsync(cancellationToken);
+
+        var items = rows
             .Select(d => new DeviceListItem(
                 d.Id,
                 d.Hostname,
@@ -78,8 +115,14 @@ public sealed class DeviceReadService(
                 d.Status == Domain.Devices.DeviceStatus.Active
                     && d.LastSeenAt != null
                     && d.LastSeenAt >= onlineThreshold,
-                d.EnrolledAt))
-            .ToListAsync(cancellationToken);
+                d.EnrolledAt,
+                latestVersion,
+                // Retired devices are not update candidates; the comparison
+                // itself fails closed on anything unparseable.
+                d.Status == Domain.Devices.DeviceStatus.Active
+                    && latestVersion != null
+                    && Domain.Agents.AgentVersionNumber.IsNewer(latestVersion, d.AgentVersion)))
+            .ToList();
 
         return new DevicePage(items, totalCount, page, pageSize);
     }
@@ -125,7 +168,11 @@ public sealed record DeviceListItem(
     string Status,
     DateTimeOffset? LastSeenAt,
     bool IsOnline,
-    DateTimeOffset EnrolledAt);
+    DateTimeOffset EnrolledAt,
+    /// <summary>Newest published agent version for this device's platform, or null when none is.</summary>
+    string? LatestAgentVersion,
+    /// <summary>True when a strictly newer published agent exists for this device.</summary>
+    bool AgentUpdateAvailable);
 
 public sealed record DevicePage(
     IReadOnlyList<DeviceListItem> Items,

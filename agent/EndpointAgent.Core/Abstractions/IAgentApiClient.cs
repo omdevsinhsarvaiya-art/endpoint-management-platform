@@ -96,6 +96,22 @@ public interface IAgentApiClient
         Stream destination,
         DeviceCredential credential,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// The published agent release the server currently offers. This is the
+    /// agent's trust anchor for self-update: task payloads are cross-checked
+    /// against it and refused on any disagreement.
+    /// </summary>
+    Task<AgentApiResult<EndpointPlatform.Contracts.Agent.AgentUpdateInfo>> GetAgentUpdateInfoAsync(
+        DeviceCredential credential,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Streams a published release's MSI into <paramref name="destination"/>.</summary>
+    Task<AgentApiResult<Unit>> DownloadAgentUpdateAsync(
+        Guid releaseId,
+        Stream destination,
+        DeviceCredential credential,
+        CancellationToken cancellationToken = default);
 }
 
 /// <summary>Placeholder for a response body-less call (204 No Content).</summary>

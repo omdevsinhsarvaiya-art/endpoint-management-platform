@@ -54,6 +54,18 @@ public sealed class TaskPayloadWireFormatTests
     }
 
     [Fact]
+    public void Update_agent_payload_matches_the_agent_field_names()
+    {
+        var releaseId = Guid.CreateVersion7();
+        var json = Serialize(new TaskPayloads.UpdateAgent(releaseId, "1.1.0", new string('a', 64)));
+
+        using var doc = JsonDocument.Parse(json);
+        doc.RootElement.GetProperty("releaseId").GetGuid().ShouldBe(releaseId);
+        doc.RootElement.GetProperty("version").GetString().ShouldBe("1.1.0");
+        doc.RootElement.GetProperty("sha256").GetString().ShouldBe(new string('a', 64));
+    }
+
+    [Fact]
     public void Restart_payload_matches_the_agent_field_names()
     {
         var json = Serialize(new TaskPayloads.RestartOrShutdown(30, "maintenance"));

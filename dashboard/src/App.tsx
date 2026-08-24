@@ -13,6 +13,7 @@ import { UpdatesPage } from './pages/UpdatesPage'
 import { LoginPage } from './pages/LoginPage'
 import { PlaceholderPage } from './pages/PlaceholderPage'
 import { TasksPage } from './pages/TasksPage'
+import { AgentReleasesPage } from './pages/AgentReleasesPage'
 
 export default function App() {
   return (
@@ -62,6 +63,7 @@ function AuthGate() {
           <Route path="software" element={<SoftwarePage />} />
           <Route path="policies" element={<PoliciesPage />} />
           <Route path="updates" element={<UpdatesPage />} />
+          <Route path="agent" element={<AgentReleasesPage />} />
           <Route path="security" element={<SecurityPage />} />
           <Route path="tasks" element={<TasksPage />} />
           <Route

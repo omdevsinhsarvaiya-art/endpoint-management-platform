@@ -63,6 +63,12 @@ public static class AgentEndpoints
                 PostTaskResultAsync)
             .WithName("AgentPostTaskResult");
 
+        group.MapGet(AgentProtocol.Routes.AgentUpdate + "/latest", GetAgentUpdateInfoAsync)
+            .WithName("AgentGetUpdateInfo");
+
+        group.MapGet(AgentProtocol.Routes.AgentUpdate + "/{releaseId:guid}/content", GetAgentUpdateContentAsync)
+            .WithName("AgentGetUpdateContent");
+
         group.MapGet(AgentProtocol.Routes.Policies, GetPoliciesAsync)
             .WithName("AgentGetPolicies");
 
@@ -151,6 +157,62 @@ public static class AgentEndpoints
 
         // The agent re-hashes and re-verifies the signer; these headers are hints, not trust.
         return Results.File(stream, "application/octet-stream", package.FileName, enableRangeProcessing: false);
+    }
+
+    private static async Task<IResult> GetAgentUpdateInfoAsync(
+        [FromHeader(Name = AgentProtocol.Headers.Credential)] string? credentialHeader,
+        [FromHeader(Name = AgentProtocol.Headers.ProtocolVersion)] int? protocolVersion,
+        AgentAuthenticationService authenticationService,
+        Infrastructure.Agents.AgentReleaseService releaseService,
+        CancellationToken cancellationToken)
+    {
+        if (protocolVersion != AgentProtocol.Version)
+        {
+            return Results.Problem(title: "Unsupported agent protocol version.", statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        var auth = await authenticationService.AuthenticateAsync(credentialHeader, cancellationToken);
+        if (!auth.Success)
+        {
+            return Results.Unauthorized();
+        }
+
+        var latest = await releaseService.GetLatestPublishedAsync(cancellationToken);
+
+        // This response is what the agent trusts over any task payload: an
+        // UpdateAgent task that names anything else is refused by the agent.
+        return latest is null
+            ? Results.Ok(new AgentUpdateInfo(false, null, null, null, null, null, null, null))
+            : Results.Ok(new AgentUpdateInfo(
+                true, latest.Id, latest.Version, latest.Architecture,
+                latest.FileName, latest.Sha256, latest.SignerSubject, latest.ContentSizeBytes));
+    }
+
+    private static async Task<IResult> GetAgentUpdateContentAsync(
+        Guid releaseId,
+        [FromHeader(Name = AgentProtocol.Headers.Credential)] string? credentialHeader,
+        [FromHeader(Name = AgentProtocol.Headers.ProtocolVersion)] int? protocolVersion,
+        AgentAuthenticationService authenticationService,
+        Infrastructure.Agents.AgentReleaseService releaseService,
+        CancellationToken cancellationToken)
+    {
+        if (protocolVersion != AgentProtocol.Version)
+        {
+            return Results.Problem(title: "Unsupported agent protocol version.", statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        var auth = await authenticationService.AuthenticateAsync(credentialHeader, cancellationToken);
+        if (!auth.Success)
+        {
+            return Results.Unauthorized();
+        }
+
+        // Only a Published release streams; Draft, Revoked and unknown are one
+        // indistinguishable 404. The agent re-hashes what it receives anyway.
+        var (stream, release) = await releaseService.OpenPublishedContentAsync(releaseId, cancellationToken);
+        return stream is null || release is null
+            ? Results.NotFound()
+            : Results.File(stream, "application/octet-stream", release.FileName, enableRangeProcessing: false);
     }
 
     private static async Task<IResult> GetPoliciesAsync(

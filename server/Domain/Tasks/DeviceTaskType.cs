@@ -44,6 +44,16 @@ public enum DeviceTaskType
     /// <summary>Install an approved, hash-verified package (Phase 11).</summary>
     InstallPackage = 30,
 
+    /// <summary>
+    /// Update the agent itself to an approved published release (Milestone 10).
+    /// Deliberately NOT an InstallPackage: the package path installs in-process,
+    /// and an in-process install of the agent's own MSI would be killed when the
+    /// upgrade stops the very service running it. This type routes to an
+    /// executor that verifies everything first and then hands the install to
+    /// Windows in a way that survives the agent's own shutdown.
+    /// </summary>
+    UpdateAgent = 31,
+
     // Local Windows account management (Phase 4 write side). Each acts on a real
     // local user/group through account-management APIs on the agent - never a shell
     // (ADR-0005). Targets are identified by SID (names are renameable).

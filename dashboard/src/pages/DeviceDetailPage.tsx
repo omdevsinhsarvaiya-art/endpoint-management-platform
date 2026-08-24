@@ -10,6 +10,9 @@ import { useTaskTracker } from '../components/useTaskTracker'
 import {
   ApiError,
   cancelDeviceTask,
+  getLatestAgentRelease,
+  updateDeviceAgent,
+  type LatestAgentRelease,
   getDevice,
   getDeviceTasks,
   deviceName,
@@ -112,6 +115,13 @@ export function DeviceDetailPage() {
   const [confirm, setConfirm] = useState<null | 'restart' | 'shutdown' | 'lock' | 'signout'>(null)
   const [actionMsg, setActionMsg] = useState<string | null>(null)
   const [editingName, setEditingName] = useState(false)
+  const [latestAgent, setLatestAgent] = useState<LatestAgentRelease | null>(null)
+
+  // The published agent release, for the "update agent" affordance. Fetched
+  // once per page visit: releases change rarely, and the compare is cheap.
+  useEffect(() => {
+    getLatestAgentRelease().then(setLatestAgent).catch(() => setLatestAgent(null))
+  }, [])
 
   // The open module lives in the query string rather than component state, so
   // Back returns to the feature grid instead of leaving the device entirely,
@@ -281,6 +291,37 @@ export function DeviceDetailPage() {
   ]
 
   const canRename = hasPermission('device.rename')
+  const canDeploy = hasPermission('software.deploy')
+
+  // Strictly newer, numerically — mirrors the server's rule, which re-checks
+  // anyway; hiding the button just avoids offering a guaranteed 409.
+  const agentOutdated = (() => {
+    if (!latestAgent?.available || !latestAgent.version) return false
+    const parse = (v: string) => v.split('.').map((n) => Number(n))
+    const a = parse(latestAgent.version)
+    const b = parse(device.agentVersion)
+    if (a.length !== 3 || b.length !== 3 || a.some(Number.isNaN) || b.some(Number.isNaN)) return false
+    for (let i = 0; i < 3; i++) {
+      if (a[i] !== b[i]) return a[i] > b[i]
+    }
+    return false
+  })()
+
+  async function onUpdateAgent() {
+    if (!deviceId || !latestAgent?.releaseId) return
+    setActionMsg(null)
+    try {
+      const { taskId } = await updateDeviceAgent(deviceId, latestAgent.releaseId)
+      track(taskId, `Update agent to ${latestAgent.version}`)
+      await load()
+    } catch (e) {
+      setActionMsg(
+        e instanceof ApiError && e.status === 409
+          ? 'The update was refused — the release is not newer than the installed agent, or is no longer published.'
+          : 'The agent update could not be queued.',
+      )
+    }
+  }
   const visibleSession = sessionActions.filter((a) => hasPermission(a.perm))
   const visiblePower = powerActions.filter((a) => hasPermission(a.perm))
 
@@ -844,6 +885,20 @@ export function DeviceDetailPage() {
                 has to be physically present to power it back on.
               </p>
               <div className="btn-row">{visiblePower.map(actionButton)}</div>
+            </div>
+          )}
+
+          {canDeploy && agentOutdated && (
+            <div className="action-group">
+              <h3>Agent</h3>
+              <p className="group-note">
+                This device runs agent {device.agentVersion}; release {latestAgent?.version} is
+                published. The agent downloads the MSI itself, verifies its hash and signature, and
+                restarts into the new version — identity, enrollment and credential are preserved.
+              </p>
+              <button type="button" className="btn-primary" onClick={() => void onUpdateAgent()}>
+                Update agent to {latestAgent?.version}
+              </button>
             </div>
           )}
 

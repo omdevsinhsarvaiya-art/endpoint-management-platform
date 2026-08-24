@@ -185,6 +185,7 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<Enrollment.EnrollmentApprovalService>();
         services.AddSingleton<Software.IPackageContentStore, Software.FileSystemPackageContentStore>();
         services.AddScoped<Software.SoftwarePackageService>();
+        services.AddScoped<Agents.AgentReleaseService>();
 
         return services;
     }

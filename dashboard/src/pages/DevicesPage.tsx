@@ -135,6 +135,13 @@ export function DevicesPage() {
                       <td>{device.operatingSystem ?? '—'}</td>
                       <td>
                         <code>{device.agentVersion}</code>
+                        {device.agentUpdateAvailable && (
+                          <div className="row-sub">
+                            <span className="badge warn">
+                              Update available: {device.latestAgentVersion}
+                            </span>
+                          </div>
+                        )}
                       </td>
                       <td>{formatLastSeen(device.lastSeenAt)}</td>
                       <td>{new Date(device.enrolledAt).toLocaleDateString()}</td>

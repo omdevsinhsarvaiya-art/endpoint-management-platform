@@ -393,6 +393,8 @@ public sealed class AgentEnrollmentManagerTests
         public Task<AgentApiResult<RedeemSecretResponse>> RedeemSecretAsync(
             string secretReference, DeviceCredential credential, CancellationToken cancellationToken = default) =>
             Task.FromResult(AgentApiResult<RedeemSecretResponse>.Success(new RedeemSecretResponse("unused")));
+        public Task<AgentApiResult<EndpointPlatform.Contracts.Agent.AgentUpdateInfo>> GetAgentUpdateInfoAsync(DeviceCredential c, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<AgentApiResult<Unit>> DownloadAgentUpdateAsync(Guid releaseId, Stream destination, DeviceCredential c, CancellationToken ct = default) => throw new NotSupportedException();
     }
 
     private sealed class FakeSystemInfo : ISystemInfoProvider

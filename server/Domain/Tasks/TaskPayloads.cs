@@ -28,6 +28,19 @@ public static class TaskPayloads
     /// <param name="ServiceName">Windows service short name (validated against a safe pattern).</param>
     public sealed record ControlService(string ServiceName, ServiceAction Action);
 
+    /// <summary>
+    /// The approved release an agent should update itself to.
+    /// </summary>
+    /// <remarks>
+    /// Advisory, not authoritative: the agent re-fetches the release metadata
+    /// over its own authenticated channel and refuses when this payload and the
+    /// server disagree, so a payload alone can never choose what gets installed.
+    /// </remarks>
+    /// <param name="ReleaseId">The published release row.</param>
+    /// <param name="Version">Expected version, cross-checked by the agent.</param>
+    /// <param name="Sha256">Expected content hash, cross-checked by the agent.</param>
+    public sealed record UpdateAgent(Guid ReleaseId, string Version, string Sha256);
+
     /// <param name="ProcessId">PID to terminate.</param>
     /// <param name="ExpectedImageName">
     /// Executable name the PID must currently have (e.g. <c>notepad.exe</c>). Guards

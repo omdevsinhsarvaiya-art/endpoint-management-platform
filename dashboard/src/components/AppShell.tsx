@@ -55,6 +55,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/software', label: 'Software', icon: 'software' },
       { to: '/policies', label: 'Policies', icon: 'policies' },
       { to: '/updates', label: 'Updates', icon: 'updates' },
+      { to: '/agent', label: 'Agent', icon: 'shield-check' },
     ],
   },
   {

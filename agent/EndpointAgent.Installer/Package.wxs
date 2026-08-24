@@ -163,12 +163,22 @@
         configuration, so inheritance is broken and the DACL replaced with SYSTEM +
         Administrators only.
       -->
+      <!--
+        Deliberately NO RemoveFolderEx here. The state directory holds the
+        device credential and enrollment identity, and a major upgrade runs the
+        OLD product's uninstall — so any uninstall-time folder removal destroys
+        the machine's identity in the middle of every upgrade (this is exactly
+        what the 1.0.0 installer did). The state directory therefore survives
+        both upgrade and uninstall; removing a machine from management is a
+        server-side retire (which revokes the credential), and the on-disk
+        residue is DPAPI-protected, ACL'd to SYSTEM/Administrators, and useless
+        once revoked. Manual cleanup: delete C:\ProgramData\EndpointPlatformAgent.
+      -->
       <Component Id="AgentStateFolder" Directory="STATEFOLDER" Bitness="always64" Guid="6d1f8c47-2e59-4b83-9a07-5f3c8e1d2b94">
         <CreateFolder>
           <util:PermissionEx User="SYSTEM" GenericAll="yes" />
           <util:PermissionEx User="Administrators" GenericAll="yes" />
         </CreateFolder>
-        <util:RemoveFolderEx On="uninstall" Property="STATEFOLDERPROP" />
         <RegistryValue Root="HKLM" Key="SOFTWARE\EndpointPlatform\Agent"
                        Name="StateDirectory" Type="string" Value="[STATEFOLDER]" KeyPath="yes" />
       </Component>

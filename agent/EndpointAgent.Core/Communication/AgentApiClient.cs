@@ -283,6 +283,86 @@ public sealed class AgentApiClient(HttpClient httpClient, ILogger<AgentApiClient
         message.Headers.Add(AgentProtocol.Headers.AgentVersion, agentVersion);
     }
 
+    public async Task<AgentApiResult<EndpointPlatform.Contracts.Agent.AgentUpdateInfo>> GetAgentUpdateInfoAsync(
+        DeviceCredential credential, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(credential);
+
+        using var message = new HttpRequestMessage(
+            HttpMethod.Get,
+            AgentProtocol.RoutePrefix + AgentProtocol.Routes.AgentUpdate + "/latest");
+        AddProtocolHeaders(message, Core.AgentVersion.Current);
+        message.Headers.Add(AgentProtocol.Headers.Credential, credential.ToHeaderValue());
+        message.Headers.Add(AgentProtocol.Headers.DeviceId, credential.DeviceId.ToString());
+
+        return await SendAsync<EndpointPlatform.Contracts.Agent.AgentUpdateInfo>(
+            message, "update-info", cancellationToken);
+    }
+
+    public async Task<AgentApiResult<Unit>> DownloadAgentUpdateAsync(
+        Guid releaseId, Stream destination, DeviceCredential credential,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(destination);
+        ArgumentNullException.ThrowIfNull(credential);
+
+        using var message = new HttpRequestMessage(
+            HttpMethod.Get,
+            AgentProtocol.RoutePrefix + AgentProtocol.Routes.AgentUpdate + "/" + releaseId + "/content");
+        AddProtocolHeaders(message, Core.AgentVersion.Current);
+        message.Headers.Add(AgentProtocol.Headers.Credential, credential.ToHeaderValue());
+        message.Headers.Add(AgentProtocol.Headers.DeviceId, credential.DeviceId.ToString());
+
+        HttpResponseMessage response;
+        try
+        {
+            response = await _httpClient.SendAsync(
+                message, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            _logger.LogWarning("Agent update download failed to reach the server: {Reason}", ex.GetType().Name);
+            return AgentApiResult<Unit>.Transient();
+        }
+
+        using (response)
+        {
+            if (response.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                return AgentApiResult<Unit>.Unauthorized();
+            }
+
+            if ((int)response.StatusCode is >= 400 and < 500)
+            {
+                return AgentApiResult<Unit>.Rejected();
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                return AgentApiResult<Unit>.Transient();
+            }
+
+            try
+            {
+                await using var source = await response.Content.ReadAsStreamAsync(cancellationToken);
+                await source.CopyToAsync(destination, cancellationToken);
+            }
+            catch (Exception ex) when (ex is HttpRequestException or IOException or TaskCanceledException)
+            {
+                // An interrupted download leaves only a partial temp file the
+                // executor deletes; nothing about the current install is touched.
+                _logger.LogWarning("Agent update download stream failed: {Reason}", ex.GetType().Name);
+                return AgentApiResult<Unit>.Transient();
+            }
+
+            return AgentApiResult<Unit>.Success(Unit.Value);
+        }
+    }
+
     private async Task<AgentApiResult<T>> SendAsync<T>(
         HttpRequestMessage message,
         string operation,

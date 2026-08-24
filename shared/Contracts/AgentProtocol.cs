@@ -80,6 +80,14 @@ public static class AgentProtocol
         /// <summary>Agent downloads package content from {RoutePrefix}/packages/{id}/content.</summary>
         public const string Packages = "/packages";
 
+        /// <summary>
+        /// Agent self-update: <c>/agent-update/latest</c> returns the published
+        /// release the agent should be on; <c>/agent-update/{id}/content</c>
+        /// streams that release's MSI. Both authenticated; the agent verifies
+        /// hash and signature itself regardless.
+        /// </summary>
+        public const string AgentUpdate = "/agent-update";
+
         /// <summary>Suffix for the package content stream.</summary>
         public const string PackageContentSuffix = "/content";
     }

@@ -90,6 +90,10 @@ export interface DeviceListItem {
   lastSeenAt: string | null
   isOnline: boolean
   enrolledAt: string
+  /** Newest published agent version for this device's platform, or null. */
+  latestAgentVersion: string | null
+  /** True when a strictly newer published agent exists for this device. */
+  agentUpdateAvailable: boolean
 }
 
 export interface DevicePage {
@@ -891,4 +895,117 @@ export async function setDeviceDisplayName(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ displayName }),
   })
+}
+
+// ---- Agent releases (Milestone 10) -----------------------------------------
+
+export interface AgentReleaseRow {
+  id: string
+  version: string
+  platform: string
+  architecture: string
+  fileName: string
+  sha256: string
+  signerSubject: string | null
+  releaseNotes: string | null
+  contentSizeBytes: number
+  status: 'Draft' | 'Published' | 'Revoked'
+  createdByDisplay: string
+  createdAt: string
+  publishedAt: string | null
+  revokedAt: string | null
+}
+
+export interface LatestAgentRelease {
+  available: boolean
+  releaseId?: string
+  version?: string
+  architecture?: string
+  fileName?: string
+  sha256?: string
+  signerSubject?: string | null
+  releaseNotes?: string | null
+  sizeBytes?: number
+  publishedAt?: string | null
+}
+
+export function getAgentReleases(): Promise<AgentReleaseRow[]> {
+  return request<AgentReleaseRow[]>('/admin/v1/agent-releases/')
+}
+
+export function getLatestAgentRelease(): Promise<LatestAgentRelease> {
+  return request<LatestAgentRelease>('/admin/v1/agent-releases/latest')
+}
+
+/**
+ * Uploads a new agent MSI as a Draft release. The SHA-256 is computed here in
+ * the browser and re-computed by the server as it stores the bytes -- a
+ * mismatch anywhere discards the upload.
+ */
+export async function createAgentRelease(
+  file: File,
+  meta: { version: string; releaseNotes?: string; signerSubject?: string },
+): Promise<void> {
+  const sha256 = await sha256Hex(file)
+  const form = new FormData()
+  form.append('file', file, file.name)
+  form.append('version', meta.version)
+  form.append('sha256', sha256)
+  if (meta.releaseNotes) form.append('releaseNotes', meta.releaseNotes)
+  if (meta.signerSubject) form.append('signerSubject', meta.signerSubject)
+
+  const r = await fetch('/api/admin/v1/agent-releases/', {
+    method: 'POST',
+    headers: { 'X-Requested-With': 'XMLHttpRequest' },
+    body: form,
+  })
+  if (r.status === 401) sessionExpiredEvent.dispatchEvent(new Event('expired'))
+  if (!r.ok) throw new ApiError(r.status, 'Release upload failed', r.headers.get('X-Correlation-Id'))
+}
+
+export async function publishAgentRelease(releaseId: string): Promise<void> {
+  await request<void>(`/admin/v1/agent-releases/${encodeURIComponent(releaseId)}/publish`, { method: 'POST' })
+}
+
+export async function revokeAgentRelease(releaseId: string): Promise<void> {
+  await request<void>(`/admin/v1/agent-releases/${encodeURIComponent(releaseId)}/revoke`, { method: 'POST' })
+}
+
+/**
+ * Downloads a release's MSI through the authenticated session and hands it to
+ * the browser as a normal file save.
+ */
+export async function downloadAgentRelease(releaseId: string, fileName: string): Promise<void> {
+  const r = await fetch(`/api/admin/v1/agent-releases/${encodeURIComponent(releaseId)}/download`, {
+    headers: { 'X-Requested-With': 'XMLHttpRequest' },
+  })
+  if (r.status === 401) sessionExpiredEvent.dispatchEvent(new Event('expired'))
+  if (!r.ok) throw new ApiError(r.status, 'Download failed', r.headers.get('X-Correlation-Id'))
+
+  const blob = await r.blob()
+  const url = URL.createObjectURL(blob)
+  try {
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = fileName
+    anchor.click()
+  } finally {
+    // Give the click a tick to start before the URL is released.
+    setTimeout(() => URL.revokeObjectURL(url), 10_000)
+  }
+}
+
+/** Queues a device's agent self-update to a published release. */
+export async function updateDeviceAgent(
+  deviceId: string,
+  releaseId: string,
+): Promise<{ taskId: string }> {
+  return request<{ taskId: string }>(
+    `/admin/v1/devices/${encodeURIComponent(deviceId)}/actions/update-agent`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ releaseId }),
+    },
+  )
 }

@@ -40,6 +40,10 @@ public static class DeviceTaskCatalog
             new(DeviceTaskType.ControlService, Permissions.Task.Execute, HighRisk: true, 900),
             new(DeviceTaskType.TerminateProcess, Permissions.Task.Execute, HighRisk: true, 600),
             new(DeviceTaskType.InstallPackage, Permissions.Software.Deploy, HighRisk: true, 7200),
+            // Software.Deploy on purpose: updating the agent IS deploying
+            // software fleet-wide, and the roles trusted with one are exactly
+            // the roles trusted with the other.
+            new(DeviceTaskType.UpdateAgent, Permissions.Software.Deploy, HighRisk: true, 3600),
 
             // Local account management (Phase 4 write side). All high-risk, interactive TTL:
             // an account change requested an hour ago should not fire when a laptop finally

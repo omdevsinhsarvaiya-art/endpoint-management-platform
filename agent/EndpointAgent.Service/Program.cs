@@ -160,6 +160,8 @@ public static class Program
             builder.Services.AddSingleton<EndpointAgent.Core.Tasks.ITaskExecutor, EndpointAgent.Core.Tasks.ControlServiceTaskExecutor>();
             builder.Services.AddSingleton<EndpointAgent.Core.Tasks.ITaskExecutor, EndpointAgent.Core.Tasks.TerminateProcessTaskExecutor>();
             builder.Services.AddSingleton<EndpointAgent.Core.Tasks.ITaskExecutor, EndpointAgent.Core.Tasks.InstallPackageExecutor>();
+            builder.Services.AddSingleton<EndpointAgent.Core.Abstractions.IAgentUpdateLauncher, EndpointAgent.Windows.WindowsAgentUpdateLauncher>();
+            builder.Services.AddSingleton<EndpointAgent.Core.Tasks.ITaskExecutor, EndpointAgent.Core.Tasks.UpdateAgentExecutor>();
             builder.Services.AddSingleton<EndpointAgent.Core.Tasks.ITaskExecutor, EndpointAgent.Core.Tasks.CreateLocalUserExecutor>();
             builder.Services.AddSingleton<EndpointAgent.Core.Tasks.ITaskExecutor, EndpointAgent.Core.Tasks.DeleteLocalUserExecutor>();
             builder.Services.AddSingleton<EndpointAgent.Core.Tasks.ITaskExecutor, EndpointAgent.Core.Tasks.EnableLocalUserExecutor>();
@@ -197,6 +199,14 @@ public static class Program
             builder.Services.AddHostedService<AgentWorker>();
 
             var host = builder.Build();
+
+            // Before anything touches enrollment or credentials: if an update's
+            // installer removed the live state files, put identity back from the
+            // pre-update snapshot so this start is a reconnect, not a re-enrol.
+            EndpointAgent.Core.AgentStateRestore.RestoreIfNeeded(
+                host.Services.GetRequiredService<Microsoft.Extensions.Logging.ILoggerFactory>()
+                    .CreateLogger("EndpointAgent.StateRestore"));
+
             await host.RunAsync();
             return 0;
         }
