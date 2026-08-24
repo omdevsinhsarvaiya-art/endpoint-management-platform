@@ -55,7 +55,10 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/software', label: 'Software', icon: 'software' },
       { to: '/policies', label: 'Policies', icon: 'policies' },
       { to: '/updates', label: 'Updates', icon: 'updates' },
-      { to: '/agent', label: 'Agent', icon: 'shield-check' },
+      // /agent-releases, not /agent: nginx proxies the /agent/ prefix to the
+      // Agent API for enrolled endpoints, so an /agent SPA route breaks on
+      // refresh and trailing slashes by landing in the API's namespace.
+      { to: '/agent-releases', label: 'Agent', icon: 'shield-check' },
     ],
   },
   {

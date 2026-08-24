@@ -30,6 +30,8 @@ export function AgentReleasesPage() {
   const [loading, setLoading] = useState(true)
   const [showUpload, setShowUpload] = useState(false)
   const [confirmRevoke, setConfirmRevoke] = useState<AgentReleaseRow | null>(null)
+  /** Release whose download just started; its buttons stay disabled briefly. */
+  const [downloadingId, setDownloadingId] = useState<string | null>(null)
 
   const [file, setFile] = useState<File | null>(null)
   const [version, setVersion] = useState('')
@@ -104,13 +106,17 @@ export function AgentReleasesPage() {
     }
   }
 
-  async function onDownload(release: AgentReleaseRow) {
+  /**
+   * Hands the download to the browser and holds the button disabled for a few
+   * seconds. The cooldown is the second guard against the freeze this page
+   * once caused: repeated clicks used to start parallel 29 MB fetches that
+   * consumed the origin's whole connection pool.
+   */
+  function onDownload(release: AgentReleaseRow) {
     setError(null)
-    try {
-      await downloadAgentRelease(release.id, release.fileName)
-    } catch {
-      setError('The download failed.')
-    }
+    setDownloadingId(release.id)
+    downloadAgentRelease(release.id, release.fileName)
+    window.setTimeout(() => setDownloadingId(null), 4_000)
   }
 
   return (
@@ -234,8 +240,13 @@ export function AgentReleasesPage() {
               <span className="badge warn">Unsigned build</span>
             )}
             <span className="spacer" />
-            <button type="button" className="btn-primary" onClick={() => void onDownload(latest)}>
-              Download MSI
+            <button
+              type="button"
+              className="btn-primary"
+              disabled={downloadingId === latest.id}
+              onClick={() => onDownload(latest)}
+            >
+              {downloadingId === latest.id ? 'Download started…' : 'Download MSI'}
             </button>
           </div>
           <dl className="kv">
@@ -315,8 +326,13 @@ export function AgentReleasesPage() {
                     <td style={{ textAlign: 'right' }}>
                       <div className="btn-row" style={{ justifyContent: 'flex-end' }}>
                         {r.status === 'Published' && (
-                          <button type="button" className="btn-sm" onClick={() => void onDownload(r)}>
-                            Download
+                          <button
+                            type="button"
+                            className="btn-sm"
+                            disabled={downloadingId === r.id}
+                            onClick={() => onDownload(r)}
+                          >
+                            {downloadingId === r.id ? 'Started…' : 'Download'}
                           </button>
                         )}
                         {canManage && r.status === 'Draft' && (

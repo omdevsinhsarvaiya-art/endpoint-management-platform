@@ -972,27 +972,28 @@ export async function revokeAgentRelease(releaseId: string): Promise<void> {
 }
 
 /**
- * Downloads a release's MSI through the authenticated session and hands it to
- * the browser as a normal file save.
+ * Starts a native browser download of a release's MSI.
+ *
+ * Deliberately NOT fetch+blob. A 29 MB blob fetch shows no progress and no
+ * busy state, so the button gets clicked repeatedly -- and six in-flight
+ * fetches consume the browser's entire HTTP/1.1 connection pool for the
+ * origin, queueing every poll and navigation behind them until the transfers
+ * finish. The page freezes for a minute while the server serves each request
+ * perfectly; that reads as "the dashboard is down". A plain navigation hands
+ * the transfer to the browser's download manager instead: real progress UI,
+ * no page-held connection, no memory buffering. Authentication rides the
+ * HttpOnly __Host- session cookie, and the server answers with
+ * Content-Disposition: attachment, so the SPA never navigates away.
  */
-export async function downloadAgentRelease(releaseId: string, fileName: string): Promise<void> {
-  const r = await fetch(`/api/admin/v1/agent-releases/${encodeURIComponent(releaseId)}/download`, {
-    headers: { 'X-Requested-With': 'XMLHttpRequest' },
-  })
-  if (r.status === 401) sessionExpiredEvent.dispatchEvent(new Event('expired'))
-  if (!r.ok) throw new ApiError(r.status, 'Download failed', r.headers.get('X-Correlation-Id'))
-
-  const blob = await r.blob()
-  const url = URL.createObjectURL(blob)
-  try {
-    const anchor = document.createElement('a')
-    anchor.href = url
-    anchor.download = fileName
-    anchor.click()
-  } finally {
-    // Give the click a tick to start before the URL is released.
-    setTimeout(() => URL.revokeObjectURL(url), 10_000)
-  }
+export function downloadAgentRelease(releaseId: string, _fileName: string): void {
+  const anchor = document.createElement('a')
+  anchor.href = `/api/admin/v1/agent-releases/${encodeURIComponent(releaseId)}/download`
+  // The server names the file via Content-Disposition; the attribute only
+  // marks the click as a download so the SPA route never changes.
+  anchor.download = ''
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
 }
 
 /** Queues a device's agent self-update to a published release. */

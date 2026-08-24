@@ -63,7 +63,7 @@ function AuthGate() {
           <Route path="software" element={<SoftwarePage />} />
           <Route path="policies" element={<PoliciesPage />} />
           <Route path="updates" element={<UpdatesPage />} />
-          <Route path="agent" element={<AgentReleasesPage />} />
+          <Route path="agent-releases" element={<AgentReleasesPage />} />
           <Route path="security" element={<SecurityPage />} />
           <Route path="tasks" element={<TasksPage />} />
           <Route
