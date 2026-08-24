@@ -114,10 +114,18 @@ export function getServiceInfo(): Promise<ServiceInfo> {
   return request<ServiceInfo>('/')
 }
 
-export function getDevices(page: number, pageSize: number, search: string): Promise<DevicePage> {
+export function getDevices(
+  page: number,
+  pageSize: number,
+  search: string,
+  status?: 'Active' | 'Retired',
+): Promise<DevicePage> {
   const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) })
   if (search.trim().length > 0) {
     params.set('search', search.trim())
+  }
+  if (status) {
+    params.set('status', status)
   }
   return request<DevicePage>(`/admin/v1/devices?${params}`)
 }

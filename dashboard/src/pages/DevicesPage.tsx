@@ -22,20 +22,23 @@ export function DevicesPage() {
   const [data, setData] = useState<DevicePage | null>(null)
   const [page, setPage] = useState(1)
   const [search, setSearch] = useState('')
+  // Active is the working view; removed devices keep their history under
+  // Retired instead of padding the day-to-day estate list.
+  const [view, setView] = useState<'Active' | 'Retired' | 'All'>('Active')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      setData(await getDevices(page, PAGE_SIZE, search))
+      setData(await getDevices(page, PAGE_SIZE, search, view === 'All' ? undefined : view))
       setError(null)
     } catch {
       setError('Could not load devices from the Admin API.')
     } finally {
       setLoading(false)
     }
-  }, [page, search])
+  }, [page, search, view])
 
   useEffect(() => {
     void load()
@@ -70,6 +73,19 @@ export function DevicesPage() {
               }}
             />
           </div>
+          <select
+            aria-label="Filter devices by lifecycle state"
+            style={{ width: 'auto', minWidth: 130 }}
+            value={view}
+            onChange={(e) => {
+              setPage(1)
+              setView(e.target.value as 'Active' | 'Retired' | 'All')
+            }}
+          >
+            <option value="Active">Active</option>
+            <option value="Retired">Retired</option>
+            <option value="All">All</option>
+          </select>
           <div className="spacer" />
           <button type="button" onClick={() => void load()} disabled={loading}>
             <Icon name="refresh" size={14} />
@@ -82,9 +98,13 @@ export function DevicesPage() {
         {data && data.items.length === 0 && (
           <div className="empty-state">
             <Icon name="devices" size={40} strokeWidth={1.25} className="icon" />
-            <div className="title">No devices found</div>
+            <div className="title">
+              {view === 'Retired' ? 'No retired devices' : 'No devices found'}
+            </div>
             <div>
-              {search ? (
+              {view === 'Retired' ? (
+                'Devices removed from management appear here with their full history.'
+              ) : search ? (
                 'No device name or hostname matches this search.'
               ) : (
                 <>
@@ -153,7 +173,8 @@ export function DevicesPage() {
 
             <div className="pagination">
               <span>
-                {data.totalCount} device{data.totalCount === 1 ? '' : 's'}
+                {data.totalCount} {view === 'All' ? '' : view.toLowerCase() + ' '}device
+                {data.totalCount === 1 ? '' : 's'}
               </span>
               <span className="pager">
                 <button

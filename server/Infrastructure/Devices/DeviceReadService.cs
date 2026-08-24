@@ -32,6 +32,7 @@ public sealed class DeviceReadService(
         int page,
         int pageSize,
         string? search,
+        Domain.Devices.DeviceStatus? status = null,
         CancellationToken cancellationToken = default)
     {
         page = Math.Max(1, page);
@@ -40,6 +41,14 @@ public sealed class DeviceReadService(
         var query = _dbContext.Devices
             .AsNoTracking()
             .Where(d => d.OrganizationId == organizationId);
+
+        // The normal working view is Active machines; removed (retired) devices
+        // keep their rows and history and stay reachable through the Retired
+        // view rather than cluttering the estate an administrator manages daily.
+        if (status is { } wanted)
+        {
+            query = query.Where(d => d.Status == wanted);
+        }
 
         if (!string.IsNullOrWhiteSpace(search))
         {

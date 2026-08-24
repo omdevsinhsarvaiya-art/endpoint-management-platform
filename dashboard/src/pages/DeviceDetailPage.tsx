@@ -195,18 +195,20 @@ export function DeviceDetailPage() {
     }
   }
 
-  async function onOffboard() {
+  const [confirmRemoval, setConfirmRemoval] = useState(false)
+
+  async function onRemoveDevice() {
+    setConfirmRemoval(false)
     if (!deviceId) return
-    if (!window.confirm(
-      'Offboard this device? Its credentials are revoked and it is retired: it can no longer check in, '
-      + 'receive tasks, or re-enroll until reactivated. This does not wipe the machine.',
-    )) return
     try {
       await offboardDevice(deviceId)
-      setActionMsg('Device offboarded: credentials revoked and device retired.')
+      setActionMsg(
+        'Device removed from active management: credentials revoked, device retired. '
+        + 'Its record and history remain under the Retired view.',
+      )
       await load()
     } catch {
-      setActionMsg('Could not offboard the device.')
+      setActionMsg('Could not remove the device.')
     }
   }
 
@@ -904,22 +906,41 @@ export function DeviceDetailPage() {
 
           {hasPermission('device.retire') && (
             <div className="action-group destructive">
-              <h3>Lifecycle</h3>
+              <h3>Remove Device</h3>
               <p className="group-note">
-                Offboarding revokes the device's credentials and retires it — reversible via
-                reactivation, which requires the machine to re-enroll. It does not wipe the machine.
+                Removes this machine from active management: its credentials are revoked and it can
+                no longer check in, receive tasks, or re-enroll. The device record and its full
+                audit history are kept under the Retired view — nothing is wiped on the machine
+                itself. Reversible via reactivation, after which the machine must re-enroll.
               </p>
               {device.status === 'Retired' ? (
                 <button type="button" onClick={() => void onReactivate()}>
                   Reactivate device
                 </button>
               ) : (
-                <button type="button" className="btn-danger" onClick={() => void onOffboard()}>
+                <button type="button" className="btn-danger" onClick={() => setConfirmRemoval(true)}>
                   <Icon name="trash" size={14} />
-                  Offboard device
+                  Remove Device
                 </button>
               )}
             </div>
+          )}
+
+          {confirmRemoval && (
+            <ConfirmDialog
+              title={`Remove ${deviceName(device)} from management?`}
+              confirmLabel="Yes, remove device"
+              onCancel={() => setConfirmRemoval(false)}
+              onConfirm={() => void onRemoveDevice()}
+            >
+              <>
+                <strong className="secondary">{deviceName(device)}</strong> will be removed from
+                active management. Its credentials are revoked immediately, it stops appearing in
+                the Active devices view, and it cannot check in or re-enroll unless an
+                administrator reactivates it. The device record and audit history are preserved;
+                nothing on the machine is wiped. This action is audited.
+              </>
+            </ConfirmDialog>
           )}
         </div>
       )}

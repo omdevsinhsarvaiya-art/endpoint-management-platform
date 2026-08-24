@@ -284,15 +284,32 @@ public static class DeviceEndpoints
         string? search,
         CancellationToken cancellationToken,
         int page = 1,
-        int pageSize = 50)
+        int pageSize = 50,
+        string? status = null)
     {
         var organizationId = AdminActor.Required(httpContext.User).OrganizationId;
+
+        Domain.Devices.DeviceStatus? statusFilter = null;
+        if (!string.IsNullOrWhiteSpace(status))
+        {
+            // Unknown filter = 400, not an empty page: silence would read as
+            // "no such devices", which is a claim.
+            if (!Enum.TryParse<Domain.Devices.DeviceStatus>(status, ignoreCase: true, out var parsed))
+            {
+                return Results.Problem(
+                    title: $"Unknown device status '{status}'.",
+                    statusCode: StatusCodes.Status400BadRequest);
+            }
+
+            statusFilter = parsed;
+        }
 
         var result = await deviceReadService.ListAsync(
             organizationId,
             page,
             pageSize,
             search,
+            statusFilter,
             cancellationToken);
 
         return Results.Ok(result);
