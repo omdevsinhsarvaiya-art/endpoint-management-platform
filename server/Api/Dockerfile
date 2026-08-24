@@ -39,7 +39,12 @@ RUN apt-get update \
 
 # Never root: this process needs no privilege beyond binding a high port and
 # talking to PostgreSQL and Redis.
-RUN useradd --system --uid 5001 --create-home appuser
+RUN useradd --system --uid 5001 --create-home appuser     # Owned by the runtime user BEFORE it becomes a volume mount point: on a
+    # named volume's first use Docker copies this directory's ownership into
+    # the volume, so package/agent-release uploads can write there. A root
+    # -owned mount point gave the non-root API EACCES on the very first real
+    # upload (existing volumes need a one-time chown; new ones inherit this).
+    && mkdir -p /var/lib/endpoint-platform/packages     && chown -R appuser:appuser /var/lib/endpoint-platform
 USER appuser
 
 COPY --from=build --chown=appuser:appuser /app ./
