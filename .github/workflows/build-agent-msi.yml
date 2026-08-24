@@ -1,0 +1,238 @@
+name: Build Windows agent MSI
+
+# ---------------------------------------------------------------------------
+# Produces EndpointPlatformAgent-<version>-x64.msi on a Windows runner and
+# publishes it as a workflow artifact. It never publishes a release, never
+# uploads to the platform and never touches AWS -- a build here is a candidate,
+# and promoting it stays a deliberate human act (upload on the dashboard's
+# Agent page, which re-verifies the hash as it stores the bytes).
+#
+# Signing is one clearly isolated step that runs only when the certificate
+# secrets exist. Without them the build still succeeds and the artifact is
+# named and reported UNSIGNED, because a build that quietly skipped signing
+# and looked identical to a signed one is the failure mode worth engineering
+# against.
+#
+# Manual by design: agent releases are cut deliberately, not on every push.
+# ---------------------------------------------------------------------------
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Three-part agent version, e.g. 1.1.2'
+        required: true
+        type: string
+      serverBaseUrl:
+        description: 'Management server the MSI points at (https://, public, not a secret)'
+        required: true
+        default: 'https://65.2.37.254.nip.io'
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  # Pinned toolchain. WiX 5.0.2 is the last MIT-licensed line; v6+ requires
+  # accepting the paid OSMF EULA and fails the build outright without it.
+  WIX_VERSION: '5.0.2'
+  DOTNET_NOLOGO: 'true'
+  DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+
+jobs:
+  build:
+    name: Build MSI (windows-2022)
+    # Pinned runner image, not windows-latest: the MSI is the artifact whose
+    # reproducibility matters most, and "latest" silently changes underneath it.
+    runs-on: windows-2022
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # global.json pins the SDK feature band; this honours it rather than
+      # restating a version that could drift away from the repo's.
+      - name: Set up .NET (from global.json)
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Validate version input
+        shell: pwsh
+        run: |
+          if ('${{ inputs.version }}' -notmatch '^\d+\.\d+\.\d+$') {
+            throw "Version must be three-part numeric, e.g. 1.1.2 (got '${{ inputs.version }}')."
+          }
+          if ('${{ inputs.serverBaseUrl }}' -notmatch '^https://') {
+            throw "Server URL must be https:// -- an agent on plain HTTP would send its credential in clear."
+          }
+
+      - name: Install pinned WiX toolset
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version $env:WIX_VERSION
+          if ($LASTEXITCODE -ne 0) { throw "WiX $env:WIX_VERSION install failed." }
+          wix --version
+
+      # The existing script is the single build definition -- this workflow
+      # drives it, it does not reimplement it.
+      - name: Build MSI
+        shell: pwsh
+        working-directory: agent/EndpointAgent.Installer
+        run: ./build-msi.ps1 -Version '${{ inputs.version }}' -ServerBaseUrl '${{ inputs.serverBaseUrl }}'
+
+      # ---- signing: isolated, and only with real credentials ----------------
+      #
+      # Requires BOTH secrets. Absent either, this step is skipped entirely and
+      # the artifact carries the UNSIGNED name. No self-signed stand-in is ever
+      # generated: a certificate the world does not trust would make the agent's
+      # signature check pass locally while proving nothing.
+      - name: Check for signing credentials
+        id: signing
+        shell: pwsh
+        env:
+          CERT_PFX_BASE64: ${{ secrets.AGENT_SIGNING_CERT_PFX_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.AGENT_SIGNING_CERT_PASSWORD }}
+        run: |
+          $available = -not [string]::IsNullOrWhiteSpace($env:CERT_PFX_BASE64) `
+                   -and -not [string]::IsNullOrWhiteSpace($env:CERT_PASSWORD)
+          "available=$($available.ToString().ToLower())" | Out-File $env:GITHUB_OUTPUT -Append
+          if ($available) {
+            Write-Host 'Signing certificate configured; the MSI will be signed.'
+          } else {
+            Write-Host 'No signing certificate configured; producing an UNSIGNED build.'
+          }
+
+      - name: Sign MSI (Authenticode)
+        if: steps.signing.outputs.available == 'true'
+        shell: pwsh
+        env:
+          CERT_PFX_BASE64: ${{ secrets.AGENT_SIGNING_CERT_PFX_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.AGENT_SIGNING_CERT_PASSWORD }}
+        run: |
+          # The .pfx is written to the runner's temp dir, used, and deleted in a
+          # finally block so it cannot survive a failure. Nothing is echoed:
+          # the password only ever crosses as an argument to signtool.
+          $pfx = Join-Path $env:RUNNER_TEMP 'agent-signing.pfx'
+          try {
+            [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:CERT_PFX_BASE64))
+
+            $signtool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Recurse -Filter signtool.exe |
+              Where-Object { $_.FullName -like '*\x64\*' } |
+              Sort-Object FullName -Descending | Select-Object -First 1
+            if (-not $signtool) { throw 'signtool.exe not found on the runner.' }
+
+            $msi = Get-ChildItem 'build/installer' -Filter '*.msi' | Select-Object -First 1
+
+            # RFC 3161 timestamp: the signature stays valid after the
+            # certificate expires, which matters for an installer that may be
+            # cached and re-run years later.
+            & $signtool.FullName sign `
+              /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com `
+              /f $pfx /p $env:CERT_PASSWORD `
+              $msi.FullName
+            if ($LASTEXITCODE -ne 0) { throw "signtool returned $LASTEXITCODE." }
+
+            & $signtool.FullName verify /pa /v $msi.FullName
+            if ($LASTEXITCODE -ne 0) { throw "Signature verification failed ($LASTEXITCODE)." }
+          }
+          finally {
+            if (Test-Path $pfx) { Remove-Item $pfx -Force }
+          }
+
+      # ---- verification and reporting ---------------------------------------
+
+      - name: Verify MSI and compute SHA-256
+        id: verify
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem 'build/installer' -Filter '*.msi' | Select-Object -First 1
+          if (-not $msi) { throw 'No MSI was produced.' }
+
+          $sha = (Get-FileHash $msi.FullName -Algorithm SHA256).Hash.ToLower()
+          $sizeMb = [math]::Round($msi.Length / 1MB, 1)
+
+          # Read the ProductVersion back out of the built package rather than
+          # trusting the input: this is the number the platform and every agent
+          # will compare against.
+          $installer = New-Object -ComObject WindowsInstaller.Installer
+          $db = $installer.GetType().InvokeMember('OpenDatabase', 'InvokeMethod', $null, $installer, @($msi.FullName, 0))
+          $view = $db.GetType().InvokeMember('OpenView', 'InvokeMethod', $null, $db,
+            @("SELECT Value FROM Property WHERE Property='ProductVersion'"))
+          $view.GetType().InvokeMember('Execute', 'InvokeMethod', $null, $view, $null)
+          $record = $view.GetType().InvokeMember('Fetch', 'InvokeMethod', $null, $view, $null)
+          $productVersion = $record.GetType().InvokeMember('StringData', 'GetProperty', $null, $record, @(1))
+
+          if ($productVersion -ne '${{ inputs.version }}') {
+            throw "MSI ProductVersion is $productVersion but $('${{ inputs.version }}') was requested."
+          }
+
+          $signed = '${{ steps.signing.outputs.available }}' -eq 'true'
+          $suffix = if ($signed) { 'signed' } else { 'UNSIGNED' }
+
+          "sha256=$sha"                  | Out-File $env:GITHUB_OUTPUT -Append
+          "name=$($msi.Name)"            | Out-File $env:GITHUB_OUTPUT -Append
+          "suffix=$suffix"               | Out-File $env:GITHUB_OUTPUT -Append
+          "productVersion=$productVersion" | Out-File $env:GITHUB_OUTPUT -Append
+
+          @"
+          ### Windows agent MSI
+
+          | Field | Value |
+          |---|---|
+          | File | ``$($msi.Name)`` |
+          | ProductVersion | $productVersion |
+          | Size | $sizeMb MB |
+          | SHA-256 | ``$sha`` |
+          | Signing | **$(if ($signed) { 'Signed (Authenticode)' } else { 'UNSIGNED — no certificate configured' })** |
+          | Server URL | ${{ inputs.serverBaseUrl }} |
+
+          Paste this SHA-256 when uploading the release on the dashboard's Agent page; the
+          server recomputes it while storing the bytes and rejects a mismatch.
+          "@ | Out-File $env:GITHUB_STEP_SUMMARY -Append
+
+      # The UNSIGNED marker rides in the artifact name so it is impossible to
+      # download a build without noticing what it is.
+      - name: Upload MSI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: EndpointPlatformAgent-${{ inputs.version }}-x64-${{ steps.verify.outputs.suffix }}
+          path: build/installer/*.msi
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Record SHA-256 alongside the artifact
+        shell: pwsh
+        run: |
+          "${{ steps.verify.outputs.sha256 }} *${{ steps.verify.outputs.name }}" |
+            Out-File 'build/installer/SHA256SUMS.txt' -Encoding ascii
+
+      - name: Upload checksum
+        uses: actions/upload-artifact@v4
+        with:
+          name: EndpointPlatformAgent-${{ inputs.version }}-SHA256SUMS
+          path: build/installer/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+
+  test:
+    name: Agent tests
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET (from global.json)
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      # Agent projects only. The server suites need PostgreSQL and Redis
+      # containers, which is the deploy pipeline's job, not the installer's.
+      - name: Run agent test suites
+        shell: pwsh
+        run: |
+          dotnet test agent/tests/EndpointAgent.Core.Tests/EndpointAgent.Core.Tests.csproj --nologo -v q
+          if ($LASTEXITCODE -ne 0) { throw 'EndpointAgent.Core.Tests failed.' }
+          dotnet test agent/tests/EndpointAgent.Windows.Tests/EndpointAgent.Windows.Tests.csproj --nologo -v q
+          if ($LASTEXITCODE -ne 0) { throw 'EndpointAgent.Windows.Tests failed.' }

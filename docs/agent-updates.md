@@ -114,6 +114,53 @@ consumes the snapshot. This exists for one concrete reason:
 > "Unsupported task type". The first hop is manual; every hop after 1.1.0 is
 > remote and identity-preserving.
 
+## Verified on real Windows
+
+Both hops were run end to end against an enrolled physical machine on the
+production deployment, not a test double.
+
+**1.0.0 → 1.1.0 (manual, the documented one-time hop).** MSI downloaded from
+the dashboard's Agent page and installed by hand. As predicted, the 1.0.0
+uninstall had already destroyed the DPAPI credential, so the agent raised a
+fresh enrollment request, which an administrator approved in the dashboard.
+Result: back to Active/Online reporting **1.1.0**, resolved by machine
+identifier to the **same DeviceId** — one device row, no duplicate — with
+inventory and heartbeat resuming on cadence.
+
+**1.1.0 → 1.1.1 (remote self-update, the mechanism this document describes).**
+Release published, `UpdateAgent` queued from the dashboard. The agent
+re-fetched the release metadata over its own authenticated channel, verified
+version, architecture and SHA-256, scheduled the install, and reported *"Update
+to 1.1.1 verified and started"* — never "succeeded", because the process
+saying it was about to be stopped. The device returned online **40 seconds**
+later reporting **1.1.1**, with:
+
+- the same DeviceId and machine identifier,
+- **the same agent credential** (identical key id before and after),
+- no duplicate row and **zero pending enrollments** — no re-enrollment at all,
+- inventory advancing afterwards (274 services, 60 processes, 6 users, 37 NICs).
+
+Re-queueing the same version afterwards is refused with 409, so a duplicate
+update task cannot be created against an already-current device.
+
+The Milestone 9 actions that the Session 0 fix made possible were exercised on
+the updated agent: `LockDevice` → *"Workstation locked."* and `SignOutUser` →
+*"Interactive user signed out."*
+
+## Building a release
+
+`.github/workflows/build-agent-msi.yml` builds the MSI on a pinned
+`windows-2022` runner using this repository's `build-msi.ps1` — the same script
+used locally, not a second build definition — with WiX pinned to 5.0.2 and the
+SDK taken from `global.json`. It runs on manual dispatch with a version and
+server URL, reads the ProductVersion back out of the built package to confirm
+it matches what was asked for, publishes the MSI plus a `SHA256SUMS.txt` as
+artifacts, and prints the hash in the run summary.
+
+It deliberately **does not publish or deploy**. Promoting a build stays a
+human act: upload it on the dashboard's Agent page with that SHA-256, which the
+server recomputes while storing the bytes.
+
 ## Signing
 
 The platform verifies more than it currently signs:
@@ -124,8 +171,17 @@ The platform verifies more than it currently signs:
   environment, so current builds are published with a null signer — which the
   dashboard displays as an explicit **Unsigned build** badge, and the agent
   logs loudly before installing on hash verification alone.
-- For production: acquire an Authenticode certificate, sign in CI with
-  credentials from CI secrets (never the repository), and publish releases
-  with the signer subject set. From that point unsigned builds are simply not
-  published, and the existing pin does the rest. No self-signed certificate is
-  used as a stand-in for real trust.
+- **The CI signing step already exists and is wired**, in
+  `build-agent-msi.yml`. It activates only when both
+  `AGENT_SIGNING_CERT_PFX_BASE64` and `AGENT_SIGNING_CERT_PASSWORD` repository
+  secrets are set: the .pfx is written to the runner's temp directory, used by
+  `signtool` with an RFC 3161 timestamp, verified, and deleted in a `finally`
+  block. Nothing is echoed and no certificate or key is ever committed.
+- With no certificate configured the build still succeeds and the artifact is
+  named `…-UNSIGNED`, with the run summary saying so — a silent skip that
+  produced an artifact indistinguishable from a signed one would be the
+  dangerous outcome.
+- To go live: obtain an Authenticode certificate, add those two secrets, and
+  set the signer subject when publishing the release. From that point the
+  agent's existing signer pin enforces publisher identity on every install. No
+  self-signed certificate is used as a stand-in for real trust.
