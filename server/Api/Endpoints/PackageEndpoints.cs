@@ -67,6 +67,10 @@ public static class PackageEndpoints
     private static async Task<IResult> CreateAsync(
         SoftwarePackageService packageService, HttpContext httpContext, CancellationToken cancellationToken)
     {
+        // Same 413 trap as the agent-release upload: the 2 GB ceiling below is
+        // unreachable unless Kestrel's per-request cap is lifted first.
+        RequestBodyLimits.AllowUploadOf(httpContext, MaxPackageBytes);
+
         if (!httpContext.Request.HasFormContentType)
         {
             return Results.Problem("Expected a multipart/form-data upload.", statusCode: StatusCodes.Status400BadRequest);

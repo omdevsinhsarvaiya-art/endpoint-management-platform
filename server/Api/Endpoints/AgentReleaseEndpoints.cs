@@ -145,6 +145,10 @@ public static class AgentReleaseEndpoints
     private static async Task<IResult> CreateAsync(
         AgentReleaseService releaseService, HttpContext httpContext, CancellationToken cancellationToken)
     {
+        // Before the form is read: Kestrel's default 30 MB cap otherwise vetoes
+        // the upload before the MaxMsiBytes check below ever runs.
+        RequestBodyLimits.AllowUploadOf(httpContext, MaxMsiBytes);
+
         if (!httpContext.Request.HasFormContentType)
         {
             return Results.Problem("Expected a multipart/form-data upload.", statusCode: StatusCodes.Status400BadRequest);

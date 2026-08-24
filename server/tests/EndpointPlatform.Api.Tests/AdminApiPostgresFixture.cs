@@ -41,9 +41,46 @@ public sealed class AdminApiPostgresFixture : IAsyncLifetime
     private readonly RedisContainer _redis = new RedisBuilder().Build();
 
     private WebApplicationFactory<Program>? _factory;
+    private WebApplicationFactory<Program>? _kestrelFactory;
+    private readonly SemaphoreSlim _kestrelGate = new(1, 1);
 
     public WebApplicationFactory<Program> Factory =>
         _factory ?? throw new InvalidOperationException("Fixture not initialised.");
+
+    /// <summary>
+    /// The same application on a REAL Kestrel socket instead of the in-process
+    /// test server. Exists for exactly one class of test: limits Kestrel itself
+    /// enforces — request-body size above all — which the in-process server
+    /// skips entirely. That skip is how a 29 MB upload could pass every API test
+    /// and still be refused with 413 in production.
+    /// </summary>
+    public async Task<WebApplicationFactory<Program>> GetKestrelFactoryAsync()
+    {
+        if (_kestrelFactory is not null)
+        {
+            return _kestrelFactory;
+        }
+
+        await _kestrelGate.WaitAsync();
+        try
+        {
+            if (_kestrelFactory is null)
+            {
+                var factory = new AdminApiTestFactory(
+                    _container.GetConnectionString(), _redis.GetConnectionString());
+                factory.UseKestrel();
+                // The server binds on first client creation.
+                _ = factory.CreateClient();
+                _kestrelFactory = factory;
+            }
+
+            return _kestrelFactory;
+        }
+        finally
+        {
+            _kestrelGate.Release();
+        }
+    }
 
     public async Task InitializeAsync()
     {
@@ -93,6 +130,11 @@ public sealed class AdminApiPostgresFixture : IAsyncLifetime
 
     public async Task DisposeAsync()
     {
+        if (_kestrelFactory is not null)
+        {
+            await _kestrelFactory.DisposeAsync();
+        }
+
         if (_factory is not null)
         {
             await _factory.DisposeAsync();

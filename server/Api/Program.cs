@@ -44,6 +44,13 @@ public sealed class Program
         {
             var builder = WebApplication.CreateBuilder(args);
 
+            // Form parsing must not cap below what the upload endpoints allow:
+            // Kestrel's per-request limit (raised only on those endpoints) is the
+            // outer gate, and every other endpoint keeps the 30 MB default, so
+            // this global multipart ceiling opens nothing on its own.
+            builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(options =>
+                options.MultipartBodyLengthLimit = 2L * 1024 * 1024 * 1024);
+
             // ENDPOINTPLATFORM_Database__ConnectionString etc. Secrets come from the
             // environment or user-secrets, never from a committed settings file.
             builder.Configuration.AddEnvironmentVariables(prefix: "ENDPOINTPLATFORM_");
