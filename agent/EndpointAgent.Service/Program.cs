@@ -160,6 +160,17 @@ public static class Program
             builder.Services.AddSingleton<EndpointAgent.Core.Tasks.ITaskExecutor, EndpointAgent.Core.Tasks.ControlServiceTaskExecutor>();
             builder.Services.AddSingleton<EndpointAgent.Core.Tasks.ITaskExecutor, EndpointAgent.Core.Tasks.TerminateProcessTaskExecutor>();
             builder.Services.AddSingleton<EndpointAgent.Core.Tasks.ITaskExecutor, EndpointAgent.Core.Tasks.InstallPackageExecutor>();
+
+            // USB and peripheral control (Milestone 11). The enforcer is the only
+            // component here that changes machine state, and the widest state it
+            // can express is read-only.
+            builder.Services.AddSingleton<IUsbDeviceEnumerator, WindowsUsbDeviceEnumerator>();
+            builder.Services.AddSingleton<IUsbPolicyEnforcer, WindowsUsbPolicyEnforcer>();
+            builder.Services.AddSingleton<IUsbDeviceWatcher, WindowsUsbDeviceWatcher>();
+            builder.Services.AddSingleton<IUsbGrantStore, DpapiUsbGrantStore>();
+            builder.Services.AddSingleton<EndpointAgent.Core.Usb.UsbPolicyManager>();
+            builder.Services.AddSingleton<EndpointAgent.Core.Usb.UsbMonitorLoop>();
+            builder.Services.AddSingleton<EndpointAgent.Core.Tasks.ITaskExecutor, EndpointAgent.Core.Tasks.ApplyUsbPolicyExecutor>();
             builder.Services.AddSingleton<EndpointAgent.Core.Abstractions.IAgentUpdateLauncher, EndpointAgent.Windows.WindowsAgentUpdateLauncher>();
             builder.Services.AddSingleton<EndpointAgent.Core.Tasks.ITaskExecutor, EndpointAgent.Core.Tasks.UpdateAgentExecutor>();
             builder.Services.AddSingleton<EndpointAgent.Core.Tasks.ITaskExecutor, EndpointAgent.Core.Tasks.CreateLocalUserExecutor>();

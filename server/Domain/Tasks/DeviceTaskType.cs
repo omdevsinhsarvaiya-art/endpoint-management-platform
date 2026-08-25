@@ -41,6 +41,19 @@ public enum DeviceTaskType
     /// <summary>Terminate a process by PID with an expected-image guard (Phase 9).</summary>
     TerminateProcess = 21,
 
+    /// <summary>
+    /// Apply the complete USB storage access policy for this device (Milestone 11).
+    /// </summary>
+    /// <remarks>
+    /// Deliberately declarative and whole-state rather than one task per
+    /// grant/revoke. The payload carries every live grant the device should
+    /// honour; anything absent from it is restricted. That makes the task
+    /// idempotent, makes revocation the absence of an entry rather than a second
+    /// message that could be lost, and lets a re-send repair drift without the
+    /// server having to reason about what the endpoint currently believes.
+    /// </remarks>
+    ApplyUsbPolicy = 22,
+
     /// <summary>Install an approved, hash-verified package (Phase 11).</summary>
     InstallPackage = 30,
 

@@ -50,6 +50,8 @@ public static class SystemRoles
         // everyone else looking at it, so it stays with the role that owns the
         // estate's naming. Auditor is read-only and never gets it.
         Permissions.Device.Rename,
+        Permissions.Usb.View,
+        Permissions.Usb.Manage,
         Permissions.LocalUser.View,
         Permissions.LocalUser.Create,
         Permissions.LocalUser.Delete,
@@ -78,6 +80,11 @@ public static class SystemRoles
         Permissions.Device.Restart,
         Permissions.Device.Lock,
         Permissions.Device.RefreshInventory,
+        // Helpdesk can see which stick is plugged into which machine — that is
+        // half of every "my USB drive isn't showing up" call — but cannot open
+        // access to it. Granting a data path off an endpoint is a security
+        // decision, so it stays with IT Administrator.
+        Permissions.Usb.View,
         Permissions.LocalUser.View,
         Permissions.LocalUser.Disable,
         Permissions.LocalUser.ResetPassword,
@@ -91,6 +98,10 @@ public static class SystemRoles
     private static readonly string[] AuditorPermissions =
     [
         Permissions.Device.View,
+        // Read-only, like everything else Auditor holds. usb.manage is
+        // deliberately absent: it is the one permission in this area that opens
+        // a data path, and Auditor mutates nothing.
+        Permissions.Usb.View,
         Permissions.LocalUser.View,
         Permissions.Group.View,
         Permissions.Software.View,

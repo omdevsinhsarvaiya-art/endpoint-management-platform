@@ -5,6 +5,7 @@ import { DeviceUsersPanel } from './DeviceUsersPanel'
 import { DeviceGroupsPanel } from './DeviceGroupsPanel'
 import { DeviceServicesPanel } from './DeviceServicesPanel'
 import { DeviceProcessesPanel } from './DeviceProcessesPanel'
+import { DeviceUsbPanel } from './DeviceUsbPanel'
 import { TaskProgress } from '../components/TaskProgress'
 import { useTaskTracker } from '../components/useTaskTracker'
 import {
@@ -38,10 +39,10 @@ interface FeatureSpec {
   count?: number
 }
 
-type Tab = 'overview' | 'hardware' | 'network' | 'users' | 'groups' | 'software' | 'security' | 'updates' | 'services' | 'processes' | 'actions' | 'tasks'
+type Tab = 'overview' | 'hardware' | 'network' | 'users' | 'groups' | 'software' | 'security' | 'usb' | 'updates' | 'services' | 'processes' | 'actions' | 'tasks'
 
 const MODULES: Tab[] = ['overview', 'hardware', 'network', 'users', 'groups', 'software',
-  'security', 'updates', 'services', 'processes', 'actions', 'tasks']
+  'security', 'usb', 'updates', 'services', 'processes', 'actions', 'tasks']
 
 function isModule(value: string | null): value is Tab {
   return value !== null && (MODULES as string[]).includes(value)
@@ -268,6 +269,9 @@ export function DeviceDetailPage() {
     { key: 'software', label: 'Software', icon: 'software', desc: 'installed SW',
       count: device.software.length },
     { key: 'security', label: 'Security', icon: 'security', desc: 'posture' },
+    // No count: the number of attached USB devices is loaded by the module
+    // itself, and a stale count on the card would be worse than none.
+    { key: 'usb', label: 'USB', icon: 'usb', desc: 'peripherals & storage' },
     { key: 'updates', label: 'Updates', icon: 'updates', desc: 'Windows Update',
       count: device.windowsUpdate?.history.length },
     { key: 'services', label: 'Services', icon: 'settings', desc: 'services',
@@ -648,6 +652,8 @@ export function DeviceDetailPage() {
           )}
         </>
       )}
+
+      {tab === 'usb' && <DeviceUsbPanel deviceId={device.id} offline={!device.isOnline} />}
 
       {tab === 'security' && (
         <>

@@ -129,6 +129,28 @@ public sealed class AgentApiClient(HttpClient httpClient, ILogger<AgentApiClient
         return await SendAsync<InventoryResponse>(message, "inventory", cancellationToken);
     }
 
+    public async Task<AgentApiResult<UsbPolicyResponse>> ReportUsbAsync(
+        UsbReport report,
+        DeviceCredential credential,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(report);
+        ArgumentNullException.ThrowIfNull(credential);
+
+        using var message = new HttpRequestMessage(
+            HttpMethod.Post,
+            AgentProtocol.RoutePrefix + AgentProtocol.Routes.Usb)
+        {
+            Content = JsonContent.Create(report),
+        };
+
+        AddProtocolHeaders(message, Core.AgentVersion.Current);
+        message.Headers.Add(AgentProtocol.Headers.Credential, credential.ToHeaderValue());
+        message.Headers.Add(AgentProtocol.Headers.DeviceId, credential.DeviceId.ToString());
+
+        return await SendAsync<UsbPolicyResponse>(message, "usb report", cancellationToken);
+    }
+
     public async Task<AgentApiResult<AgentTaskListResponse>> ClaimTasksAsync(
         DeviceCredential credential,
         CancellationToken cancellationToken = default)

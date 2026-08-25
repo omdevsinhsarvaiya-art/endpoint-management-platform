@@ -41,6 +41,57 @@ public static class TaskPayloads
     /// <param name="Sha256">Expected content hash, cross-checked by the agent.</param>
     public sealed record UpdateAgent(Guid ReleaseId, string Version, string Sha256);
 
+    // ---- USB storage access (Milestone 11) ----
+
+    /// <summary>
+    /// One live grant: this exact hardware may be read until this instant.
+    /// </summary>
+    /// <param name="InstanceId">
+    /// Windows device instance ID, e.g. <c>USB\VID_0781&amp;PID_5581\ABC123</c>. The
+    /// enforcement key. Friendly names are never used to match, because a stick
+    /// chooses its own.
+    /// </param>
+    /// <param name="Policy">
+    /// Always <c>ReadOnly</c> today — the enum has no writable member, so a
+    /// grant cannot express write access even if a payload were tampered with.
+    /// </param>
+    /// <param name="ExpiresAt">
+    /// Absolute UTC deadline. The agent enforces this against its own clock and
+    /// restricts the device when it passes, so a grant lapses on schedule even
+    /// if the machine never reaches the server again.
+    /// </param>
+    public sealed record UsbGrant(string InstanceId, UsbGrantPolicy Policy, DateTimeOffset ExpiresAt);
+
+    /// <remarks>
+    /// Serialised by name, like <see cref="ServiceAction"/> and for the same
+    /// reason. There is no <c>ReadWrite</c> member and adding one would be a
+    /// deliberate, reviewable act rather than a payload someone could craft.
+    /// </remarks>
+    [System.Text.Json.Serialization.JsonConverter(typeof(System.Text.Json.Serialization.JsonStringEnumConverter))]
+    public enum UsbGrantPolicy
+    {
+        ReadOnly = 0,
+    }
+
+    /// <summary>
+    /// The complete USB storage policy for one endpoint.
+    /// </summary>
+    /// <remarks>
+    /// Whole-state, not a delta: every storage device the endpoint sees that is
+    /// not named in <paramref name="Grants"/> is restricted. An empty list is
+    /// therefore a valid and meaningful payload — it means "restrict everything"
+    /// — and it is also what an endpoint falls back to on its own if it never
+    /// receives this task, so the failure mode of the whole channel is the safe
+    /// state.
+    /// </remarks>
+    /// <param name="Grants">Every live grant. Absent device instance IDs are restricted.</param>
+    /// <param name="IssuedAt">
+    /// When the server built this policy. The agent keeps the newest and ignores
+    /// an older one arriving late, so a delayed task cannot resurrect a grant
+    /// that has since been revoked.
+    /// </param>
+    public sealed record ApplyUsbPolicy(IReadOnlyList<UsbGrant> Grants, DateTimeOffset IssuedAt);
+
     /// <param name="ProcessId">PID to terminate.</param>
     /// <param name="ExpectedImageName">
     /// Executable name the PID must currently have (e.g. <c>notepad.exe</c>). Guards

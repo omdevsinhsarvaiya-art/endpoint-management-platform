@@ -6,6 +6,7 @@ import { DeviceDetailPage } from './pages/DeviceDetailPage'
 import { DevicesPage } from './pages/DevicesPage'
 import { PendingEnrollmentsPage } from './pages/PendingEnrollmentsPage'
 import { SecurityPage } from './pages/SecurityPage'
+import { UsbAccessPage } from './pages/UsbAccessPage'
 import { GroupsPage } from './pages/GroupsPage'
 import { PoliciesPage } from './pages/PoliciesPage'
 import { SoftwarePage } from './pages/SoftwarePage'
@@ -65,6 +66,7 @@ function AuthGate() {
           <Route path="updates" element={<UpdatesPage />} />
           <Route path="agent-releases" element={<AgentReleasesPage />} />
           <Route path="security" element={<SecurityPage />} />
+          <Route path="usb-access" element={<UsbAccessPage />} />
           <Route path="tasks" element={<TasksPage />} />
           <Route
             path="audit"

@@ -276,6 +276,111 @@ export function getDeviceTasks(deviceId: string): Promise<DeviceTaskItem[]> {
   return request<DeviceTaskItem[]>(`/admin/v1/devices/${encodeURIComponent(deviceId)}/tasks`)
 }
 
+// ---- USB and peripheral control -------------------------------------------
+
+export type UsbPolicy = 'Restricted' | 'ReadOnly'
+
+/**
+ * What the endpoint is actually doing, as distinct from what was decided.
+ *
+ * `Pending` and `Drifted` are deliberately different words. Pending means the
+ * machine has not reported back yet — usually because it is offline. Drifted
+ * means it reported something other than what was asked, which on Windows
+ * generally means a local administrator re-enabled the device by hand. Only one
+ * of those needs investigating.
+ */
+export type UsbEnforcementState = 'Enforced' | 'Pending' | 'Drifted' | 'Failed' | 'NotApplicable'
+
+export interface UsbDeviceRow {
+  id: string
+  instanceId: string
+  deviceClass: string
+  isStorage: boolean
+  vendorId: string | null
+  productId: string | null
+  /** Null when the device exposes none. Never a placeholder. */
+  serialNumber: string | null
+  manufacturer: string | null
+  product: string | null
+  isConnected: boolean
+  firstSeenAt: string
+  lastSeenAt: string
+  disconnectedAt: string | null
+  policy: UsbPolicy
+  policyExpiresAt: string | null
+  enforcementState: UsbEnforcementState
+  enforcedAt: string | null
+  enforcementError: string | null
+  /** The grant currently in force, if any — what a Revoke button acts on. */
+  liveRequestId: string | null
+}
+
+export interface UsbAccessRequestRow {
+  id: string
+  deviceId: string
+  deviceName: string
+  usbDeviceId: string
+  instanceId: string
+  product: string | null
+  status: 'Pending' | 'Approved' | 'Rejected' | 'Expired' | 'Revoked'
+  source: 'Administrator' | 'Endpoint'
+  justification: string
+  requestedAt: string
+  decidedByDisplay: string | null
+  decidedAt: string | null
+  expiresAt: string | null
+  decisionNote: string | null
+  isLive: boolean
+}
+
+export function getDeviceUsbDevices(deviceId: string): Promise<UsbDeviceRow[]> {
+  return request<UsbDeviceRow[]>(`/admin/v1/devices/${encodeURIComponent(deviceId)}/usb-devices`)
+}
+
+export function getUsbAccessRequests(liveOnly = false, limit = 100): Promise<UsbAccessRequestRow[]> {
+  return request<UsbAccessRequestRow[]>(
+    `/admin/v1/usb-access-requests?liveOnly=${liveOnly}&limit=${limit}`,
+  )
+}
+
+/**
+ * Grants temporary read-only access to one USB storage device.
+ *
+ * There is no parameter for the level of access, because there is only one:
+ * read-only. Write access is not something this API can express.
+ */
+export function grantUsbAccess(
+  deviceId: string,
+  usbDeviceId: string,
+  durationMinutes: number,
+  justification: string,
+): Promise<{ requestId: string; expiresAt: string; policy: UsbPolicy }> {
+  return request<{ requestId: string; expiresAt: string; policy: UsbPolicy }>(
+    `/admin/v1/devices/${encodeURIComponent(deviceId)}/usb-devices/${encodeURIComponent(usbDeviceId)}/grant`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ durationMinutes, justification }),
+    },
+  )
+}
+
+export function revokeUsbAccess(requestId: string, note?: string): Promise<void> {
+  return request<void>(`/admin/v1/usb-access-requests/${encodeURIComponent(requestId)}/revoke`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ note: note ?? null }),
+  })
+}
+
+/** Re-sends the device's current policy. Repairs a Drifted device; grants nothing. */
+export function reapplyUsbPolicy(deviceId: string): Promise<{ taskId: string }> {
+  return request<{ taskId: string }>(
+    `/admin/v1/devices/${encodeURIComponent(deviceId)}/usb-devices/reapply`,
+    { method: 'POST' },
+  )
+}
+
 export async function queueDeviceAction(
   deviceId: string,
   action: 'restart' | 'shutdown' | 'lock' | 'signout',

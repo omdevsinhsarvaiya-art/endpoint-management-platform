@@ -54,6 +54,22 @@ public interface IAgentApiClient
         DeviceCredential credential,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Reports the USB devices attached to this machine and receives the storage
+    /// policy the endpoint must enforce.
+    /// </summary>
+    /// <remarks>
+    /// The response is the authoritative grant set, so this doubles as the
+    /// convergence path: an agent that missed a pushed policy still gets the
+    /// right answer the moment a user plugs something in. Nothing in the request
+    /// can widen the response — grants come only from administrator decisions
+    /// already recorded on the server.
+    /// </remarks>
+    Task<AgentApiResult<UsbPolicyResponse>> ReportUsbAsync(
+        UsbReport report,
+        DeviceCredential credential,
+        CancellationToken cancellationToken = default);
+
     /// <summary>Claims queued tasks for this device.</summary>
     Task<AgentApiResult<AgentTaskListResponse>> ClaimTasksAsync(
         DeviceCredential credential,

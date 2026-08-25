@@ -40,6 +40,7 @@ export type IconName =
   | 'inbox'
   | 'trash'
   | 'key'
+  | 'usb'
 
 const PATHS: Record<IconName, ReactNode> = {
   dashboard: (
@@ -99,6 +100,19 @@ const PATHS: Record<IconName, ReactNode> = {
   ),
   security: (
     <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" />
+  ),
+  // The USB trident: connector body, cable, and the round/square/arrow tips
+  // that make the symbol recognisable at 17px.
+  usb: (
+    <>
+      <circle cx="10" cy="7" r="1" />
+      <circle cx="4" cy="20" r="1" />
+      <path d="M4.7 19.3 19 5" />
+      <path d="m21 3-3 1 2 2Z" />
+      <path d="M9.26 7.68 5 12l2 5" />
+      <path d="m10 14 5 2 3-3" />
+      <path d="M14 19.5V16h3" />
+    </>
   ),
   tasks: (
     <>

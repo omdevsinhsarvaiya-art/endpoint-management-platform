@@ -59,6 +59,14 @@ public static class AgentProtocol
         public const string Heartbeat = "/heartbeat";
         public const string Inventory = "/inventory";
 
+        /// <summary>
+        /// Agent posts its USB device report (POST) here and receives the
+        /// authoritative USB storage policy in the response. Separate from
+        /// <see cref="Inventory"/> because it fires on device arrival and removal
+        /// rather than on the inventory cycle.
+        /// </summary>
+        public const string Usb = "/usb";
+
         /// <summary>Agent claims queued tasks (GET) here.</summary>
         public const string Tasks = "/tasks";
 

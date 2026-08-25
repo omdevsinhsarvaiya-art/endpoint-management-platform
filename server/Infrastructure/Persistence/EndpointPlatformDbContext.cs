@@ -71,6 +71,11 @@ public sealed class EndpointPlatformDbContext(DbContextOptions<EndpointPlatformD
 
     public DbSet<DeviceProcessEntry> DeviceProcesses => Set<DeviceProcessEntry>();
 
+    public DbSet<Domain.Peripherals.UsbDevice> UsbDevices => Set<Domain.Peripherals.UsbDevice>();
+
+    public DbSet<Domain.Peripherals.UsbAccessRequest> UsbAccessRequests =>
+        Set<Domain.Peripherals.UsbAccessRequest>();
+
     public DbSet<SoftwarePackage> SoftwarePackages => Set<SoftwarePackage>();
 
     public DbSet<Domain.Agents.AgentRelease> AgentReleases => Set<Domain.Agents.AgentRelease>();

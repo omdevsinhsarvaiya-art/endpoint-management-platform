@@ -239,6 +239,8 @@ public sealed class UpdateAgentExecutorTests
         public Task<AgentApiResult<EnrollResponse>> EnrollAsync(EnrollRequest r, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<AgentApiResult<HeartbeatResponse>> HeartbeatAsync(HeartbeatRequest r, DeviceCredential c, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<AgentApiResult<InventoryResponse>> UploadInventoryAsync(InventoryReport r, DeviceCredential c, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<AgentApiResult<UsbPolicyResponse>> ReportUsbAsync(UsbReport r, DeviceCredential c, CancellationToken ct = default) => throw new NotSupportedException();
+
         public Task<AgentApiResult<AgentTaskListResponse>> ClaimTasksAsync(DeviceCredential c, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<AgentApiResult<Unit>> PostTaskResultAsync(Guid id, AgentTaskResult r, DeviceCredential c, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<AgentApiResult<AgentPolicyListResponse>> GetPoliciesAsync(DeviceCredential c, CancellationToken ct = default) => throw new NotSupportedException();

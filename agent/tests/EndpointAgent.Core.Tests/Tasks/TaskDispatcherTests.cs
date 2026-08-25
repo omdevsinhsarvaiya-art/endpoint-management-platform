@@ -83,6 +83,13 @@ public sealed class TaskDispatcherTests
 
         public List<(Guid TaskId, AgentTaskResult Result)> Results { get; } = [];
 
+        public Task<AgentApiResult<UsbPolicyResponse>> ReportUsbAsync(
+
+            UsbReport report, DeviceCredential credential, CancellationToken cancellationToken = default) =>
+
+            Task.FromResult(AgentApiResult<UsbPolicyResponse>.Transient());
+
+
         public Task<AgentApiResult<AgentTaskListResponse>> ClaimTasksAsync(
             DeviceCredential credential, CancellationToken cancellationToken = default) =>
             Task.FromResult(AgentApiResult<AgentTaskListResponse>.Success(new AgentTaskListResponse(tasks)));

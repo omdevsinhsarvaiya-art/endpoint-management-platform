@@ -62,6 +62,8 @@ public sealed class Program
 
             // Management-plane background jobs run in the Admin host only.
             builder.Services.AddHostedService<EndpointPlatform.Infrastructure.Tasks.TaskExpirySweeper>();
+            builder.Services
+                .AddHostedService<EndpointPlatform.Infrastructure.Peripherals.UsbGrantExpirySweeper>();
 
             // --- Authentication and authorization (Phase 3) -------------------
             builder.Services.AddOptions<AdminAuthOptions>()
@@ -176,6 +178,7 @@ public sealed class Program
             app.MapGroupEndpoints();
             app.MapTaskEndpoints();
             app.MapAgentReleaseEndpoints();
+            app.MapUsbEndpoints();
 
             app.MapGet("/", () => new ServiceInfoResponse(
                     Service: "admin-api",

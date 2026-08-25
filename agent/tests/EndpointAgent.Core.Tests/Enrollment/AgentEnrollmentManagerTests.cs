@@ -370,6 +370,13 @@ public sealed class AgentEnrollmentManagerTests
             InventoryReport report, DeviceCredential credential, CancellationToken cancellationToken = default) =>
             Task.FromResult(AgentApiResult<InventoryResponse>.Transient());
 
+        public Task<AgentApiResult<UsbPolicyResponse>> ReportUsbAsync(
+
+            UsbReport report, DeviceCredential credential, CancellationToken cancellationToken = default) =>
+
+            Task.FromResult(AgentApiResult<UsbPolicyResponse>.Transient());
+
+
         public Task<AgentApiResult<AgentTaskListResponse>> ClaimTasksAsync(
             DeviceCredential credential, CancellationToken cancellationToken = default) =>
             Task.FromResult(AgentApiResult<AgentTaskListResponse>.Success(new AgentTaskListResponse([])));

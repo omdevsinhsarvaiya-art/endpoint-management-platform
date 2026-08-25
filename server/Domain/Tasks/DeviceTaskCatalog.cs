@@ -39,6 +39,14 @@ public static class DeviceTaskCatalog
             new(DeviceTaskType.SignOutUser, Permissions.Device.SignOutUser, HighRisk: true, 900),
             new(DeviceTaskType.ControlService, Permissions.Task.Execute, HighRisk: true, 900),
             new(DeviceTaskType.TerminateProcess, Permissions.Task.Execute, HighRisk: true, 600),
+            // Short TTL. A grant is time-boxed from the moment it is issued, so a
+            // policy task that sat queued for an hour would arrive describing a
+            // window that has largely elapsed; better to expire it and have the
+            // administrator re-issue against the machine that is actually there.
+            // The safe state needs no delivery: an endpoint that never receives
+            // this task keeps everything restricted.
+            new(DeviceTaskType.ApplyUsbPolicy, Permissions.Usb.Manage, HighRisk: true, 900),
+
             new(DeviceTaskType.InstallPackage, Permissions.Software.Deploy, HighRisk: true, 7200),
             // Software.Deploy on purpose: updating the agent IS deploying
             // software fleet-wide, and the roles trusted with one are exactly

@@ -47,6 +47,10 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { to: '/users', label: 'Users', icon: 'users' },
       { to: '/security', label: 'Security', icon: 'security' },
+      // Under Access rather than Configuration: this page is the ledger of who
+      // currently has a data path open off a managed machine, which is an
+      // access question, not a settings one.
+      { to: '/usb-access', label: 'USB Access', icon: 'usb' },
     ],
   },
   {

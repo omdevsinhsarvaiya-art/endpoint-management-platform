@@ -56,6 +56,9 @@ public static class AgentEndpoints
         group.MapPost(AgentProtocol.Routes.Inventory, InventoryAsync)
             .WithName("AgentInventory");
 
+        group.MapPost(AgentProtocol.Routes.Usb, UsbReportAsync)
+            .WithName("AgentUsbReport");
+
         group.MapGet(AgentProtocol.Routes.Tasks, ClaimTasksAsync)
             .WithName("AgentClaimTasks");
 
@@ -632,6 +635,60 @@ public static class AgentEndpoints
         await inventoryService.ApplyAsync(authentication.Device!, report, cancellationToken);
 
         return Results.Ok(new InventoryResponse(timeProvider.GetUtcNow()));
+    }
+
+    /// <summary>
+    /// Accepts a USB report from an enrolled endpoint and answers with the USB
+    /// storage policy that endpoint must enforce.
+    /// </summary>
+    /// <remarks>
+    /// The report is untrusted input and is treated as such: it can describe
+    /// hardware and confess what the agent is enforcing, but nothing in it can
+    /// create, extend or widen a grant. The response is computed purely from
+    /// administrator decisions already recorded in the database, so an agent
+    /// that lies about its inventory still receives only the access an
+    /// administrator granted for a device instance ID.
+    /// </remarks>
+    private static async Task<IResult> UsbReportAsync(
+        [FromBody] UsbReport report,
+        [FromHeader(Name = AgentProtocol.Headers.Credential)] string? credentialHeader,
+        [FromHeader(Name = AgentProtocol.Headers.ProtocolVersion)] int? protocolVersion,
+        AgentAuthenticationService authenticationService,
+        Infrastructure.Peripherals.UsbService usbService,
+        CancellationToken cancellationToken)
+    {
+        if (protocolVersion != AgentProtocol.Version)
+        {
+            return Results.Problem(
+                title: "Unsupported agent protocol version.",
+                statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        var authentication = await authenticationService.AuthenticateAsync(credentialHeader, cancellationToken);
+
+        if (!authentication.Success)
+        {
+            return Results.Unauthorized();
+        }
+
+        if (report?.Devices is null)
+        {
+            return Results.Problem(
+                title: "A USB report must carry a device list; send an empty array for 'nothing attached'.",
+                statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        if (report.Devices.Count > Infrastructure.Peripherals.UsbService.MaxDevicesPerReport)
+        {
+            return Results.Problem(
+                title: $"A USB report may describe at most "
+                    + $"{Infrastructure.Peripherals.UsbService.MaxDevicesPerReport} devices.",
+                statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        var policy = await usbService.IngestReportAsync(authentication.Device!, report, cancellationToken);
+
+        return Results.Ok(policy);
     }
 
     private static string? ValidateInventoryReport(InventoryReport report)

@@ -90,6 +90,10 @@ public sealed class SystemRoleTests
     [InlineData(Permissions.Software.Deploy)]
     [InlineData(Permissions.Policy.Assign)]
     [InlineData(Permissions.Task.Execute)]
+    // Helpdesk can see which USB device is on which machine, because that is
+    // half of every "my drive isn't showing up" call. Opening a data path off
+    // an endpoint is a security decision and stays with IT Administrator.
+    [InlineData(Permissions.Usb.Manage)]
     [InlineData(Permissions.Platform.UserManage)]
     [InlineData(Permissions.Platform.RoleManage)]
     [InlineData(Permissions.Platform.SettingsManage)]
@@ -123,6 +127,37 @@ public sealed class SystemRoleTests
         itAdmin.ShouldContain(Permissions.Group.Manage);
         itAdmin.ShouldContain(Permissions.Software.Deploy);
         itAdmin.ShouldContain(Permissions.Task.Execute);
+    }
+
+    /// <summary>
+    /// Only IT Administrator and Super Administrator may open USB storage access.
+    /// </summary>
+    /// <remarks>
+    /// Stated as a whole-catalogue assertion rather than one negative per role, so
+    /// that a role added later cannot pick up <c>usb.manage</c> without this
+    /// failing. The permission's entire effect is to make a removable disk
+    /// readable on a managed endpoint, which is a data-egress decision.
+    /// </remarks>
+    [Fact]
+    public void Only_administrators_can_grant_usb_storage_access()
+    {
+        var holders = SystemRoles.All
+            .Where(r => r.Value.PermissionKeys.Contains(Permissions.Usb.Manage, StringComparer.Ordinal))
+            .Select(r => r.Key)
+            .ToArray();
+
+        holders.ShouldBe([SystemRoles.SuperAdministrator, SystemRoles.ItAdministrator], ignoreOrder: true);
+    }
+
+    [Fact]
+    public void Usb_visibility_is_read_only_and_therefore_safe_for_auditor()
+    {
+        var catalogue = Permissions.All.ToDictionary(p => p.Key, StringComparer.Ordinal);
+
+        catalogue[Permissions.Usb.View].HighRisk.ShouldBeFalse();
+        catalogue[Permissions.Usb.Manage].HighRisk.ShouldBeTrue();
+
+        SystemRoles.All[SystemRoles.Auditor].PermissionKeys.ShouldContain(Permissions.Usb.View);
     }
 
     [Fact]

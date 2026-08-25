@@ -33,6 +33,20 @@ public static class Permissions
         public const string Rename = "device.rename";
     }
 
+    /// <summary>
+    /// USB and peripheral control. Split from <see cref="Device"/> so that
+    /// granting someone the ability to restart machines does not also grant them
+    /// the ability to open a data path off those machines.
+    /// </summary>
+    public static class Usb
+    {
+        /// <summary>See the peripheral inventory and current access states.</summary>
+        public const string View = "usb.view";
+
+        /// <summary>Grant, revoke and re-apply USB storage access. Never held by Auditor.</summary>
+        public const string Manage = "usb.manage";
+    }
+
     public static class LocalUser
     {
         public const string View = "user.view";
@@ -99,6 +113,11 @@ public static class Permissions
         // Labelling only. It cannot rename Windows, move a device between
         // organizations, or alter how the machine authenticates.
         new(Device.Rename, "Devices", "Set the console display name for a device", HighRisk: false),
+
+        new(Usb.View, "Peripherals", "View connected USB devices and their access state", HighRisk: false),
+        // High risk on purpose: the only thing this permission can do is open a
+        // read path off a removable device that is otherwise closed.
+        new(Usb.Manage, "Peripherals", "Grant and revoke temporary USB storage access", HighRisk: true),
 
         new(LocalUser.View, "Local accounts", "View Windows local users on a device", HighRisk: false),
         new(LocalUser.Create, "Local accounts", "Create a Windows local user", HighRisk: true),

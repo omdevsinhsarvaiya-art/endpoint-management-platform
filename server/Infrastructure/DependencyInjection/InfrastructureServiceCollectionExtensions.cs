@@ -186,6 +186,8 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddSingleton<Software.IPackageContentStore, Software.FileSystemPackageContentStore>();
         services.AddScoped<Software.SoftwarePackageService>();
         services.AddScoped<Agents.AgentReleaseService>();
+        services.AddScoped<Peripherals.UsbService>();
+        services.AddScoped<Peripherals.UsbReadService>();
 
         return services;
     }
