@@ -88,6 +88,29 @@ public interface IUsbPolicyEnforcer
 
     /// <summary>Enables the device and marks its disks read-only. Idempotent.</summary>
     UsbEnforcementResult AllowReadOnly(string instanceId);
+
+    /// <summary>
+    /// Undoes everything this agent applied to a device, leaving it as Windows
+    /// would have it with no agent installed. Idempotent.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This exists because both enforcement mechanisms outlive the process that
+    /// applied them. Disabling a devnode writes <c>CONFIGFLAG_DISABLED</c> into
+    /// the device's registry key, which Windows honours forever — across reboots,
+    /// across the service being stopped, and across the product being uninstalled.
+    /// Without an explicit release, stopping the agent would leave the machine
+    /// permanently altered, and uninstalling it would leave sticks disabled with
+    /// no remaining mechanism to re-enable them short of Device Manager by hand.
+    /// </para>
+    /// <para>
+    /// Release is therefore not the same as <see cref="AllowReadOnly"/>. Read-only
+    /// is a state this product enforces; release is the absence of enforcement.
+    /// The device comes back enabled <em>and</em> writable, because that is what
+    /// an unmanaged Windows machine does with a USB stick.
+    /// </para>
+    /// </remarks>
+    UsbEnforcementResult Release(string instanceId);
 }
 
 /// <summary>

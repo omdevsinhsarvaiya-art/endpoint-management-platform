@@ -168,6 +168,7 @@ public static class Program
             builder.Services.AddSingleton<IUsbPolicyEnforcer, WindowsUsbPolicyEnforcer>();
             builder.Services.AddSingleton<IUsbDeviceWatcher, WindowsUsbDeviceWatcher>();
             builder.Services.AddSingleton<IUsbGrantStore, DpapiUsbGrantStore>();
+            builder.Services.AddSingleton<IUsbRestrictionLedger, FileUsbRestrictionLedger>();
             builder.Services.AddSingleton<EndpointAgent.Core.Usb.UsbPolicyManager>();
             builder.Services.AddSingleton<EndpointAgent.Core.Usb.UsbMonitorLoop>();
             builder.Services.AddSingleton<EndpointAgent.Core.Tasks.ITaskExecutor, EndpointAgent.Core.Tasks.ApplyUsbPolicyExecutor>();

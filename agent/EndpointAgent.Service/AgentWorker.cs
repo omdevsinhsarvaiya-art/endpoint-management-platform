@@ -30,6 +30,13 @@ public sealed class AgentWorker(
     UsbMonitorLoop usbMonitorLoop,
     ILogger<AgentWorker> logger) : BackgroundService
 {
+    /// <summary>
+    /// How long the release on shutdown may take before the service stops anyway.
+    /// Generous enough for a device to re-enumerate, short enough that the SCM
+    /// does not lose patience and kill us mid-release.
+    /// </summary>
+    private static readonly TimeSpan ReleaseTimeout = TimeSpan.FromSeconds(20);
+
     private readonly HeartbeatLoop _heartbeatLoop = heartbeatLoop
         ?? throw new ArgumentNullException(nameof(heartbeatLoop));
 
@@ -64,7 +71,64 @@ public sealed class AgentWorker(
         finally
         {
             await usb;
+            await ReleaseUsbEnforcementAsync();
             _logger.LogInformation("Endpoint agent worker stopped.");
+        }
+    }
+
+    /// <summary>
+    /// Stands USB enforcement down so a stopped agent leaves an ordinary Windows
+    /// machine behind.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Enforcement is intentionally not durable. Disabling a devnode writes a
+    /// registry flag that Windows honours indefinitely, so without this the
+    /// product would keep controlling the machine while nothing was running to
+    /// manage it — an administrator could not lift a restriction, because the
+    /// agent that would receive the instruction is stopped. The policy itself is
+    /// kept, so a restart re-establishes exactly what was in force.
+    /// </para>
+    /// <para>
+    /// <b>The limit, stated plainly.</b> This runs on an orderly stop: a service
+    /// stop, a restart, a reboot, an upgrade, or an uninstall. It cannot run if
+    /// the process is killed outright, bugchecks, or loses power — Windows offers
+    /// no way to make a SetupAPI disable revert when a user-mode process dies. In
+    /// that case devices stay restricted until the service next starts, which
+    /// releases them and then reapplies the current policy. The uninstaller reads
+    /// the same release list as a backstop.
+    /// </para>
+    /// <para>
+    /// A fresh token, because the shutdown token is already cancelled by the time
+    /// this runs. The timeout is what keeps a wedged release from holding the
+    /// service host open until the SCM kills it — which would be the one outcome
+    /// worse than a slow stop, since a killed process releases nothing.
+    /// </para>
+    /// </remarks>
+    private async Task ReleaseUsbEnforcementAsync()
+    {
+        using var timeout = new CancellationTokenSource(ReleaseTimeout);
+
+        try
+        {
+            var outcome = await _usbMonitorLoop.ReleaseEnforcementAsync(timeout.Token);
+
+            if (outcome.Released > 0 || outcome.Failed > 0)
+            {
+                _logger.LogInformation(
+                    "USB enforcement stood down on stop: {Released} device(s) released, {Failed} could not be.",
+                    outcome.Released, outcome.Failed);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogError(
+                "Releasing USB enforcement did not finish within {Timeout}. Some devices may remain "
+                + "restricted until the agent next starts.", ReleaseTimeout);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Releasing USB enforcement on shutdown failed.");
         }
     }
 

@@ -35,6 +35,7 @@ public sealed class UsbPolicyManager(
     IUsbDeviceEnumerator enumerator,
     IUsbPolicyEnforcer enforcer,
     IUsbGrantStore grantStore,
+    IUsbRestrictionLedger restrictionLedger,
     TimeProvider timeProvider,
     ILogger<UsbPolicyManager> logger)
 {
@@ -46,6 +47,9 @@ public sealed class UsbPolicyManager(
 
     private readonly IUsbGrantStore _grantStore = grantStore
         ?? throw new ArgumentNullException(nameof(grantStore));
+
+    private readonly IUsbRestrictionLedger _restrictionLedger = restrictionLedger
+        ?? throw new ArgumentNullException(nameof(restrictionLedger));
 
     private readonly TimeProvider _timeProvider = timeProvider
         ?? throw new ArgumentNullException(nameof(timeProvider));
@@ -84,6 +88,131 @@ public sealed class UsbPolicyManager(
     /// </remarks>
     private readonly ConcurrentDictionary<string, UsbEnforcementResult> _lastResult =
         new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Device instances this agent currently has state applied to, mirroring the
+    /// persisted ledger.
+    /// </summary>
+    private readonly HashSet<string> _touched = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Releases every device this agent has applied state to, leaving the machine
+    /// as an unmanaged Windows box would have it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Called when the agent stops enforcing — service shutdown, and uninstall.
+    /// The <em>grant store is deliberately left intact</em>: the policy is still
+    /// the administrator's decision, it is merely not being enforced while nothing
+    /// is running to enforce it. That is what lets a restart pick the policy back
+    /// up without a round trip to the server.
+    /// </para>
+    /// <para>
+    /// A device that fails to release stays in the ledger, so the next shutdown or
+    /// the uninstaller gets another attempt rather than silently abandoning it.
+    /// </para>
+    /// </remarks>
+    /// <returns>How many devices were released, and how many could not be.</returns>
+    public async Task<UsbReleaseOutcome> ReleaseAllAsync(CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            var pending = await LoadLedgerAsync(cancellationToken);
+
+            if (pending.Count == 0)
+            {
+                return new UsbReleaseOutcome(0, 0);
+            }
+
+            var released = 0;
+            var failed = new List<string>();
+
+            foreach (var instanceId in pending)
+            {
+                UsbEnforcementResult result;
+                try
+                {
+                    result = _enforcer.Release(instanceId);
+                }
+                catch (Exception ex)
+                {
+                    result = UsbEnforcementResult.Failed(ex.Message);
+                }
+
+                if (result.Succeeded)
+                {
+                    released++;
+                    _lastResult.TryRemove(instanceId, out _);
+                }
+                else
+                {
+                    failed.Add(instanceId);
+                    _logger.LogError(
+                        "Could not release USB device {InstanceId}: {Error}. It stays on the release list so "
+                        + "the next shutdown or the uninstaller can try again.",
+                        instanceId, result.Error);
+                }
+            }
+
+            _touched.Clear();
+            foreach (var instanceId in failed)
+            {
+                _touched.Add(instanceId);
+            }
+
+            await SaveLedgerAsync(cancellationToken);
+
+            _logger.LogInformation(
+                "USB enforcement released: {Released} device(s) returned to normal Windows behaviour, "
+                + "{Failed} could not be released.",
+                released, failed.Count);
+
+            return new UsbReleaseOutcome(released, failed.Count);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    private async ValueTask<IReadOnlyCollection<string>> LoadLedgerAsync(CancellationToken cancellationToken)
+    {
+        if (_touched.Count > 0)
+        {
+            return _touched.ToList();
+        }
+
+        try
+        {
+            foreach (var instanceId in await _restrictionLedger.LoadAsync(cancellationToken))
+            {
+                _touched.Add(instanceId);
+            }
+        }
+        catch (Exception ex)
+        {
+            // Nothing can be released that we cannot name. Loud, because the
+            // consequence is a device left disabled.
+            _logger.LogError(ex, "Could not read the USB release list; devices may stay restricted.");
+        }
+
+        return _touched.ToList();
+    }
+
+    private async ValueTask SaveLedgerAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _restrictionLedger.SaveAsync(_touched.ToList(), cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex, "Could not persist the USB release list. Enforcement still applies, but a device may "
+                + "need re-enabling by hand if the agent is uninstalled before this succeeds.");
+        }
+    }
 
     /// <summary>
     /// Replaces the cached policy with one the server issued, then reconciles.
@@ -221,7 +350,7 @@ public sealed class UsbPolicyManager(
         _loaded = true;
     }
 
-    private Task<UsbReconcileOutcome> ReconcileLockedAsync(CancellationToken cancellationToken)
+    private async Task<UsbReconcileOutcome> ReconcileLockedAsync(CancellationToken cancellationToken)
     {
         var now = _timeProvider.GetUtcNow();
         var devices = SafeEnumerate();
@@ -229,6 +358,12 @@ public sealed class UsbPolicyManager(
         var restricted = 0;
         var readOnly = 0;
         var failed = 0;
+
+        // Anything already on the ledger from a previous run stays on it until it
+        // is released: a device restricted before the last restart is still
+        // restricted now, whether or not it is currently attached.
+        await LoadLedgerAsync(cancellationToken);
+        var ledgerBefore = _touched.Count;
 
         foreach (var device in devices)
         {
@@ -255,6 +390,12 @@ public sealed class UsbPolicyManager(
 
             _lastResult[device.InstanceId] = result;
 
+            // Recorded on the attempt, not on success. A Restrict that reports
+            // failure may still have partially applied — and a device wrongly on
+            // the release list costs one redundant re-enable, while a device
+            // wrongly absent from it stays disabled after uninstall.
+            _touched.Add(device.InstanceId);
+
             if (!result.Succeeded)
             {
                 failed++;
@@ -279,7 +420,12 @@ public sealed class UsbPolicyManager(
         // on a machine that sees many devices.
         PruneExpiredGrants(now);
 
-        return Task.FromResult(new UsbReconcileOutcome(restricted, readOnly, failed));
+        if (_touched.Count != ledgerBefore)
+        {
+            await SaveLedgerAsync(cancellationToken);
+        }
+
+        return new UsbReconcileOutcome(restricted, readOnly, failed);
     }
 
     /// <summary>
@@ -336,3 +482,11 @@ public sealed record UsbReconcileOutcome(int Restricted, int ReadOnly, int Faile
 {
     public int Total => Restricted + ReadOnly + Failed;
 }
+
+/// <summary>Result of standing down enforcement.</summary>
+/// <param name="Released">Devices returned to normal Windows behaviour.</param>
+/// <param name="Failed">
+/// Devices still carrying agent-applied state. These remain on the release list,
+/// so a later shutdown or the uninstaller retries them.
+/// </param>
+public sealed record UsbReleaseOutcome(int Released, int Failed);

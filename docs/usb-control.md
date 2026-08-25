@@ -178,6 +178,71 @@ listener that could approve its own request would be a hole, not a feature. The
 request record carries a `source` field (`Administrator` / `Endpoint`) so that
 flow stays additive rather than a schema migration.
 
+## Enforcement lasts exactly as long as the agent runs
+
+This is a deliberate boundary, and the most important thing to understand about
+how the control behaves in practice: **the product controls USB only while the
+agent is running.** Stop the agent and the machine goes back to being an
+ordinary Windows PC.
+
+| Agent state | USB storage behaviour |
+| --- | --- |
+| **Running** | Restricted by default. Read-only only where an administrator has granted it, and only until the grant expires. Enforced locally, with no dependency on the server being reachable. |
+| **Stopped** | Not enforced. Devices already attached become usable again; newly inserted devices behave normally. |
+| **Restarted** | The persisted policy is reloaded and enforcement is re-established, with no server contact required. A grant that expired during the downtime is not restored. |
+| **Uninstalled** | Not enforced, permanently. Nothing this product installed continues to restrict USB. |
+
+The reason this needs stating is that neither mechanism is naturally temporary.
+Disabling a devnode writes `CONFIGFLAG_DISABLED` into the device's registry key,
+which Windows honours indefinitely — across reboots, across the service being
+stopped, and across the product being removed. Left alone, stopping the agent
+would freeze the machine in whatever state it was last in, and an administrator
+could not lift a restriction because the agent that would receive the
+instruction is not running. Uninstalling would be worse: devices would stay
+disabled with no remaining mechanism to restore them short of Device Manager, by
+hand, per device.
+
+So the agent explicitly stands enforcement down when it stops. It keeps a plain
+JSON record — `usb-restricted-devices.json` in the state directory — of every
+device instance it has applied state to, and on shutdown it re-enables each one
+and clears the read-only attribute.
+
+Two distinctions matter here:
+
+- **Policy is durable; enforcement is not.** The grant set survives a stop, which
+  is what lets a restart re-establish the right state offline. Only the
+  mechanical enforcement is undone.
+- **Release is not the same as revoke.** Revoking a grant returns a device to
+  *Restricted*, because the machine is still managed. Release returns it to
+  *normal*, because the product is standing down. Collapsing the two would mean
+  revoking access handed the user a writable stick.
+
+### The boundary, precisely
+
+Release is user-mode cleanup. It runs when the agent is given the chance to run
+it, and not otherwise.
+
+| Ending | Release runs? | Result |
+| --- | --- | --- |
+| Service stop (`Stop-Service`, SCM stop) | Yes | Devices returned to normal. |
+| Service restart, reboot, shutdown | Yes | Released on the way down, re-enforced on the way up. |
+| MSI upgrade or uninstall | Yes — the installer stops the service first (`Stop="both"`) | Devices returned to normal. |
+| Forced process termination (`taskkill /F`, SCM kill after timeout) | **No** | Devnodes stay disabled. |
+| Crash, bugcheck (BSOD), power loss | **No** | Devnodes stay disabled. |
+
+In the failure rows, a previously disabled devnode **remains disabled** until the
+agent next starts, at which point the ledger tells it what to release and it
+re-applies current policy. Uninstalling the product *while in that state* is the
+one case that can leave a device disabled with nothing left to fix it
+automatically; the ledger file is what makes that recoverable by hand.
+
+This is not a gap that can be closed from user mode. Windows provides no
+mechanism to make a SetupAPI device disable revert automatically when the process
+that applied it dies — no lease, no session-scoped handle, no cleanup callback.
+Only a kernel-mode filter driver could tie enforcement to a live component, and
+this platform deliberately does not ship one (ADR-0005). **No stronger guarantee
+than the table above should be claimed for this feature.**
+
 ## What this does NOT do
 
 Stated explicitly, because a security control that is oversold is worse than
@@ -226,5 +291,30 @@ parsing rule that a Windows-synthesised port-path segment is reported as *no
 serial* rather than passed off as one — because a grant keyed to a port would
 follow the port rather than the approved device.
 
+The agent lifecycle — running, stopped, restarted, uninstalled — is covered by
+`UsbAgentLifecycleTests`, which drives one simulated machine across several agent
+lifetimes over shared persistent state. It pins the transitions that cannot be
+inferred from the single-lifetime tests: stopping releases every device the agent
+was enforcing; the policy survives that release; a restart restores enforcement
+from local state alone; a grant that expired during downtime is *not* restored;
+a device that fails to release is kept for the next attempt rather than
+re-restricted; uninstall releases a device even when it is no longer plugged in;
+and release touches only devices this agent applied state to, leaving alone any
+that an administrator disabled by hand.
+
 Enforcement itself changes real hardware state and is verified on a designated
-test endpoint, never on a developer machine or a CI runner.
+test endpoint, never on a developer machine or a CI runner. The manual
+acceptance script for the lifecycle is:
+
+1. **Running** — attach an unapproved stick; confirm no drive letter appears.
+   Grant read-only; confirm the drive appears and a write is refused. Revoke;
+   confirm the drive disappears again.
+2. **Stopped** — `Stop-Service EndpointPlatformAgent`; confirm the stick becomes
+   accessible and writable, and that a *different*, never-seen stick also mounts
+   normally.
+3. **Restarted** — `Start-Service EndpointPlatformAgent`; confirm the previously
+   restricted stick is restricted again without the server being involved
+   (verifiable by disconnecting the network first).
+4. **Uninstalled** — remove the MSI; confirm both sticks mount and write
+   normally, and that `usb-restricted-devices.json` is gone with the state
+   directory.

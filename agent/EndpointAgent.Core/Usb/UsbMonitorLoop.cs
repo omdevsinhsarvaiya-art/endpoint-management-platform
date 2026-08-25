@@ -95,6 +95,13 @@ public sealed class UsbMonitorLoop(
         }
     }
 
+    /// <summary>
+    /// Stands enforcement down, returning every device this agent touched to
+    /// normal Windows behaviour. The policy is kept for the next start.
+    /// </summary>
+    public Task<UsbReleaseOutcome> ReleaseEnforcementAsync(CancellationToken cancellationToken = default) =>
+        _policyManager.ReleaseAllAsync(cancellationToken);
+
     /// <summary>One enforce-then-report-then-apply cycle.</summary>
     internal async Task RunCycleAsync(CancellationToken cancellationToken)
     {

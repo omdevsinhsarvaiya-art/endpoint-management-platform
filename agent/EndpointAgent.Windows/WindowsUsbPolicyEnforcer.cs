@@ -100,7 +100,7 @@ public sealed class WindowsUsbPolicyEnforcer(ILogger<WindowsUsbPolicyEnforcer> l
 
             foreach (var diskPath in disks)
             {
-                if (!SetDiskReadOnly(diskPath, out var diskError))
+                if (!SetDiskReadOnly(diskPath, readOnly: true, out var diskError))
                 {
                     // Could not make it read-only, so it must not stay writable.
                     // Falling back to Restricted is the only safe outcome: the
@@ -128,6 +128,69 @@ public sealed class WindowsUsbPolicyEnforcer(ILogger<WindowsUsbPolicyEnforcer> l
             // Any unexpected failure ends with the device restricted, never open.
             SetDeviceEnabled(instanceId, enabled: false, out _);
             return UsbEnforcementResult.Failed($"Read-only enforcement failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Returns a device to the state it would be in with no agent installed.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Both mechanisms have to be undone, and the order matters. The read-only
+    /// attribute can only be cleared on a disk that exists, and the disk only
+    /// exists once the devnode is enabled — so enable first, wait for the disk,
+    /// then clear the bit.
+    /// </para>
+    /// <para>
+    /// Unlike <see cref="AllowReadOnly"/>, a failure here does <b>not</b> fall
+    /// back to restricting the device. The whole point of this method is that the
+    /// product is standing down; re-disabling a device because the release went
+    /// wrong would be the exact behaviour it exists to prevent. A failure is
+    /// reported so the caller keeps the device on its release list and tries
+    /// again.
+    /// </para>
+    /// </remarks>
+    public UsbEnforcementResult Release(string instanceId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(instanceId);
+
+        try
+        {
+            if (!SetDeviceEnabled(instanceId, enabled: true, out var error))
+            {
+                return UsbEnforcementResult.Failed(error);
+            }
+
+            // An absent device enables to nothing and has no disks to clear. That
+            // is a complete release: the registry flag is what kept it disabled,
+            // and SetDeviceEnabled has already cleared it.
+            var failures = new List<string>();
+
+            foreach (var diskPath in WaitForDisks(instanceId))
+            {
+                if (!SetDiskWritable(diskPath, out var diskError))
+                {
+                    failures.Add($"{diskPath}: {diskError}");
+                }
+            }
+
+            if (failures.Count > 0)
+            {
+                return UsbEnforcementResult.Failed(
+                    "The device was re-enabled but the read-only attribute could not be cleared on "
+                    + $"{failures.Count} disk(s): {string.Join("; ", failures)}. Unplugging and reattaching "
+                    + "the device clears it, as the attribute was never persisted to the hardware.");
+            }
+
+            _logger.LogInformation(
+                "USB storage device {InstanceId} released; it now behaves as on an unmanaged machine.",
+                instanceId);
+
+            return UsbEnforcementResult.Ok;
+        }
+        catch (Exception ex)
+        {
+            return UsbEnforcementResult.Failed($"Release failed: {ex.Message}");
         }
     }
 
@@ -303,8 +366,17 @@ public sealed class WindowsUsbPolicyEnforcer(ILogger<WindowsUsbPolicyEnforcer> l
         return result;
     }
 
-    /// <summary>Marks one physical disk read-only for this machine.</summary>
-    private bool SetDiskReadOnly(string diskPath, out string error)
+    /// <summary>Clears the read-only attribute this agent set on a disk.</summary>
+    private bool SetDiskWritable(string diskPath, out string error) =>
+        SetDiskReadOnly(diskPath, readOnly: false, out error);
+
+    /// <summary>Sets or clears the read-only attribute on one physical disk.</summary>
+    /// <param name="readOnly">
+    /// True to mark the disk read-only, false to clear the bit. The mask is
+    /// limited to the read-only bit either way, so nothing else Windows tracks on
+    /// the disk — the OFFLINE bit in particular — is disturbed.
+    /// </param>
+    private bool SetDiskReadOnly(string diskPath, bool readOnly, out string error)
     {
         error = "";
 
@@ -332,7 +404,7 @@ public sealed class WindowsUsbPolicyEnforcer(ILogger<WindowsUsbPolicyEnforcer> l
             // other machine is not ours to do.
             Persist = 0,
 
-            Attributes = UsbNative.DISK_ATTRIBUTE_READ_ONLY,
+            Attributes = readOnly ? UsbNative.DISK_ATTRIBUTE_READ_ONLY : 0,
 
             // Mask limited to the read-only bit, so the OFFLINE bit and anything
             // else Windows is tracking is left exactly as it was.
@@ -362,7 +434,7 @@ public sealed class WindowsUsbPolicyEnforcer(ILogger<WindowsUsbPolicyEnforcer> l
                 handle, UsbNative.IOCTL_DISK_UPDATE_PROPERTIES,
                 IntPtr.Zero, 0, IntPtr.Zero, 0, out _, IntPtr.Zero);
 
-            return VerifyReadOnly(handle, out error);
+            return VerifyReadOnly(handle, readOnly, out error);
         }
         finally
         {
@@ -380,7 +452,7 @@ public sealed class WindowsUsbPolicyEnforcer(ILogger<WindowsUsbPolicyEnforcer> l
     /// derived from this answer, so it is a measurement rather than an
     /// assumption.
     /// </remarks>
-    private static bool VerifyReadOnly(SafeFileHandle handle, out string error)
+    private static bool VerifyReadOnly(SafeFileHandle handle, bool expected, out string error)
     {
         error = "";
 
@@ -399,9 +471,13 @@ public sealed class WindowsUsbPolicyEnforcer(ILogger<WindowsUsbPolicyEnforcer> l
 
             var current = Marshal.PtrToStructure<UsbNative.GET_DISK_ATTRIBUTES>(buffer);
 
-            if ((current.Attributes & UsbNative.DISK_ATTRIBUTE_READ_ONLY) == 0)
+            var isReadOnly = (current.Attributes & UsbNative.DISK_ATTRIBUTE_READ_ONLY) != 0;
+
+            if (isReadOnly != expected)
             {
-                error = "the disk did not report the read-only attribute after it was set";
+                error = expected
+                    ? "the disk did not report the read-only attribute after it was set"
+                    : "the disk still reports the read-only attribute after it was cleared";
                 return false;
             }
 

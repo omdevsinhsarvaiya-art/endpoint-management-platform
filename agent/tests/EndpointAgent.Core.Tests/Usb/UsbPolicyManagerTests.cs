@@ -36,7 +36,7 @@ public sealed class UsbPolicyManagerTests
         var clock = new TestClock(Start);
 
         var manager = new UsbPolicyManager(
-            enumerator, enforcer, store, clock, NullLogger<UsbPolicyManager>.Instance);
+            enumerator, enforcer, store, new FakeLedger(), clock, NullLogger<UsbPolicyManager>.Instance);
 
         return (manager, enforcer, store, clock);
     }
@@ -71,7 +71,8 @@ public sealed class UsbPolicyManagerTests
         var store = new FakeGrantStore { ThrowOnLoad = true };
 
         var manager = new UsbPolicyManager(
-            enumerator, enforcer, store, new TestClock(Start), NullLogger<UsbPolicyManager>.Instance);
+            enumerator, enforcer, store, new FakeLedger(), new TestClock(Start),
+            NullLogger<UsbPolicyManager>.Instance);
 
         await manager.ReconcileAsync();
 
@@ -196,7 +197,7 @@ public sealed class UsbPolicyManagerTests
         // A fresh manager over the same store — the reboot case.
         var enforcer = new FakeEnforcer();
         var restarted = new UsbPolicyManager(
-            new FakeEnumerator([Storage()]), enforcer, store,
+            new FakeEnumerator([Storage()]), enforcer, store, new FakeLedger(),
             new TestClock(Start.AddMinutes(1)), NullLogger<UsbPolicyManager>.Instance);
 
         await restarted.ReconcileAsync();
@@ -213,7 +214,7 @@ public sealed class UsbPolicyManagerTests
         var enforcer = new FakeEnforcer { FailWith = "access denied" };
 
         var manager = new UsbPolicyManager(
-            enumerator, enforcer, new FakeGrantStore(),
+            enumerator, enforcer, new FakeGrantStore(), new FakeLedger(),
             new TestClock(Start), NullLogger<UsbPolicyManager>.Instance);
 
         var outcome = await manager.ReconcileAsync();
@@ -233,7 +234,7 @@ public sealed class UsbPolicyManagerTests
         var enforcer = new FakeEnforcer { ThrowWith = "the driver exploded" };
 
         var manager = new UsbPolicyManager(
-            enumerator, enforcer, new FakeGrantStore(),
+            enumerator, enforcer, new FakeGrantStore(), new FakeLedger(),
             new TestClock(Start), NullLogger<UsbPolicyManager>.Instance);
 
         var outcome = await manager.ReconcileAsync();
@@ -265,7 +266,7 @@ public sealed class UsbPolicyManagerTests
     {
         var enforcer = new FakeEnforcer();
         var manager = new UsbPolicyManager(
-            new FakeEnumerator([]) { Throw = true }, enforcer, new FakeGrantStore(),
+            new FakeEnumerator([]) { Throw = true }, enforcer, new FakeGrantStore(), new FakeLedger(),
             new TestClock(Start), NullLogger<UsbPolicyManager>.Instance);
 
         var outcome = await manager.ReconcileAsync();
@@ -296,9 +297,20 @@ public sealed class UsbPolicyManagerTests
 
         public UsbEnforcementResult AllowReadOnly(string instanceId) => Record("AllowReadOnly", instanceId);
 
+        public UsbEnforcementResult Release(string instanceId) => Record("Release", instanceId);
+
+        /// <summary>Instance IDs that <see cref="Release"/> alone should fail for.</summary>
+        public HashSet<string> FailReleaseFor { get; } = new(StringComparer.OrdinalIgnoreCase);
+
         private UsbEnforcementResult Record(string action, string instanceId)
         {
             Calls.Add((action, instanceId));
+
+            if (action == "Release" && FailReleaseFor.Contains(instanceId))
+            {
+                return UsbEnforcementResult.Failed("the device would not re-enable");
+            }
+
 
             if (ThrowWith is not null)
             {
@@ -306,6 +318,25 @@ public sealed class UsbPolicyManagerTests
             }
 
             return FailWith is null ? UsbEnforcementResult.Ok : UsbEnforcementResult.Failed(FailWith);
+        }
+    }
+
+    private sealed class FakeLedger : IUsbRestrictionLedger
+    {
+        public IReadOnlyCollection<string> Saved { get; private set; } = [];
+
+        public bool ThrowOnLoad { get; init; }
+
+        public ValueTask<IReadOnlyCollection<string>> LoadAsync(CancellationToken cancellationToken = default) =>
+            ThrowOnLoad
+                ? throw new IOException("the release list is unreadable")
+                : ValueTask.FromResult(Saved);
+
+        public ValueTask SaveAsync(
+            IReadOnlyCollection<string> instanceIds, CancellationToken cancellationToken = default)
+        {
+            Saved = instanceIds;
+            return ValueTask.CompletedTask;
         }
     }
 

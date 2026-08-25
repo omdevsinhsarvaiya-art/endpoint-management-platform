@@ -36,6 +36,7 @@ public sealed class ApplyUsbPolicyExecutorTests
             new SingleStorageEnumerator(StickId),
             enforcer,
             new InMemoryGrantStore(),
+            new InMemoryLedger(),
             clock,
             NullLogger<UsbPolicyManager>.Instance);
 
@@ -191,7 +192,7 @@ public sealed class ApplyUsbPolicyExecutorTests
         var clock = new TestClock(Start);
         var manager = new UsbPolicyManager(
             new SingleStorageEnumerator(StickId), enforcer, new InMemoryGrantStore(),
-            clock, NullLogger<UsbPolicyManager>.Instance);
+            new InMemoryLedger(), clock, NullLogger<UsbPolicyManager>.Instance);
         var executor = new ApplyUsbPolicyExecutor(
             manager, clock, NullLogger<ApplyUsbPolicyExecutor>.Instance);
 
@@ -229,7 +230,7 @@ public sealed class ApplyUsbPolicyExecutorTests
 
         var manager = new UsbPolicyManager(
             new SingleStorageEnumerator(StickId), enforcer, new InMemoryGrantStore(),
-            clock, NullLogger<UsbPolicyManager>.Instance);
+            new InMemoryLedger(), clock, NullLogger<UsbPolicyManager>.Instance);
 
         var executor = new ApplyUsbPolicyExecutor(manager, clock, NullLogger<ApplyUsbPolicyExecutor>.Instance);
 
@@ -262,10 +263,27 @@ public sealed class ApplyUsbPolicyExecutorTests
 
         public UsbEnforcementResult AllowReadOnly(string instanceId) => Record("AllowReadOnly", instanceId);
 
+        public UsbEnforcementResult Release(string instanceId) => Record("Release", instanceId);
+
         private UsbEnforcementResult Record(string action, string instanceId)
         {
             Calls.Add((action, instanceId));
             return FailWith is null ? UsbEnforcementResult.Ok : UsbEnforcementResult.Failed(FailWith);
+        }
+    }
+
+    private sealed class InMemoryLedger : IUsbRestrictionLedger
+    {
+        private IReadOnlyCollection<string> _ids = [];
+
+        public ValueTask<IReadOnlyCollection<string>> LoadAsync(CancellationToken cancellationToken = default) =>
+            ValueTask.FromResult(_ids);
+
+        public ValueTask SaveAsync(
+            IReadOnlyCollection<string> instanceIds, CancellationToken cancellationToken = default)
+        {
+            _ids = instanceIds;
+            return ValueTask.CompletedTask;
         }
     }
 
