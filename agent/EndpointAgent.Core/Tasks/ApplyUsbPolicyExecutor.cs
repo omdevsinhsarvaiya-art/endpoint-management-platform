@@ -29,6 +29,7 @@ namespace EndpointAgent.Core.Tasks;
 /// </remarks>
 public sealed class ApplyUsbPolicyExecutor(
     UsbPolicyManager policyManager,
+    TimeProvider timeProvider,
     ILogger<ApplyUsbPolicyExecutor> logger) : ITaskExecutor
 {
     /// <summary>Refuses absurd grant counts before parsing them.</summary>
@@ -36,6 +37,19 @@ public sealed class ApplyUsbPolicyExecutor(
 
     private readonly UsbPolicyManager _policyManager = policyManager
         ?? throw new ArgumentNullException(nameof(policyManager));
+
+    /// <summary>
+    /// The injected clock, not <c>DateTimeOffset.UtcNow</c>.
+    /// </summary>
+    /// <remarks>
+    /// Every expiry decision in this feature is made against an injected clock so
+    /// it can be driven deterministically in tests. Reading the wall clock here
+    /// made the executor's behaviour depend on the actual time of day — which is
+    /// how it shipped once, passing locally in the morning and failing in CI
+    /// after the fixture's expiry timestamp had passed.
+    /// </remarks>
+    private readonly TimeProvider _timeProvider = timeProvider
+        ?? throw new ArgumentNullException(nameof(timeProvider));
 
     private readonly ILogger<ApplyUsbPolicyExecutor> _logger = logger
         ?? throw new ArgumentNullException(nameof(logger));
@@ -114,7 +128,7 @@ public sealed class ApplyUsbPolicyExecutor(
                 return false;
             }
 
-            var now = DateTimeOffset.UtcNow;
+            var now = _timeProvider.GetUtcNow();
 
             foreach (var element in grantsElement.EnumerateArray())
             {

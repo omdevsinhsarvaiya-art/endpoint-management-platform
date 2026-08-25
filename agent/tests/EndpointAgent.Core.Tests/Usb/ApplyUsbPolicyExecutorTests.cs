@@ -26,14 +26,20 @@ public sealed class ApplyUsbPolicyExecutorTests
     {
         var enforcer = new RecordingEnforcer();
 
+        // One clock shared by the manager and the executor, fixed at Start. The
+        // fixtures below carry absolute timestamps around Start, so without an
+        // injected clock these tests would quietly change meaning as the real
+        // day advanced past them.
+        var clock = new TestClock(Start);
+
         var manager = new UsbPolicyManager(
             new SingleStorageEnumerator(StickId),
             enforcer,
             new InMemoryGrantStore(),
-            new TestClock(Start),
+            clock,
             NullLogger<UsbPolicyManager>.Instance);
 
-        return (new ApplyUsbPolicyExecutor(manager, NullLogger<ApplyUsbPolicyExecutor>.Instance), enforcer);
+        return (new ApplyUsbPolicyExecutor(manager, clock, NullLogger<ApplyUsbPolicyExecutor>.Instance), enforcer);
     }
 
     private static AgentTask Task(string? payload) =>
@@ -161,6 +167,45 @@ public sealed class ApplyUsbPolicyExecutorTests
         enforcer.Calls.ShouldBe([("Restrict", StickId)]);
     }
 
+    /// <summary>
+    /// Expiry is judged against the injected clock, not the wall clock.
+    /// </summary>
+    /// <remarks>
+    /// The same payload, twice, with only the clock moved: honoured while the
+    /// deadline is ahead, dropped once it is behind. This pins the property that
+    /// the executor's behaviour depends on the injected time and nothing else —
+    /// the first version read <c>DateTimeOffset.UtcNow</c>, which passed locally
+    /// in the morning and failed in CI once the real day had moved past the
+    /// fixture's timestamp.
+    /// </remarks>
+    [Fact]
+    public async Task Whether_a_grant_is_expired_is_decided_by_the_injected_clock()
+    {
+        const string payload = """
+            {"grants":[{"instanceId":"USB\\VID_0781&PID_5581\\ABC123",
+             "policy":"ReadOnly","expiresAt":"2026-08-25T14:00:00+00:00"}],
+             "issuedAt":"2026-08-25T12:00:00+00:00"}
+            """;
+
+        var enforcer = new RecordingEnforcer();
+        var clock = new TestClock(Start);
+        var manager = new UsbPolicyManager(
+            new SingleStorageEnumerator(StickId), enforcer, new InMemoryGrantStore(),
+            clock, NullLogger<UsbPolicyManager>.Instance);
+        var executor = new ApplyUsbPolicyExecutor(
+            manager, clock, NullLogger<ApplyUsbPolicyExecutor>.Instance);
+
+        // 12:00 — the deadline is two hours away.
+        await executor.ExecuteAsync(Task(payload));
+        enforcer.Calls.ShouldBe([("AllowReadOnly", StickId)]);
+
+        // 15:00 — same payload, deadline an hour in the past.
+        enforcer.Calls.Clear();
+        clock.Advance(TimeSpan.FromHours(3));
+        await executor.ExecuteAsync(Task(payload));
+        enforcer.Calls.ShouldBe([("Restrict", StickId)]);
+    }
+
     [Fact]
     public async Task An_absurd_number_of_grants_is_refused_outright()
     {
@@ -180,12 +225,13 @@ public sealed class ApplyUsbPolicyExecutorTests
     public async Task A_device_that_cannot_be_enforced_makes_the_task_fail()
     {
         var enforcer = new RecordingEnforcer { FailWith = "access denied" };
+        var clock = new TestClock(Start);
 
         var manager = new UsbPolicyManager(
             new SingleStorageEnumerator(StickId), enforcer, new InMemoryGrantStore(),
-            new TestClock(Start), NullLogger<UsbPolicyManager>.Instance);
+            clock, NullLogger<UsbPolicyManager>.Instance);
 
-        var executor = new ApplyUsbPolicyExecutor(manager, NullLogger<ApplyUsbPolicyExecutor>.Instance);
+        var executor = new ApplyUsbPolicyExecutor(manager, clock, NullLogger<ApplyUsbPolicyExecutor>.Instance);
 
         var result = await executor.ExecuteAsync(
             Task("""{"grants":[],"issuedAt":"2026-08-25T12:00:00+00:00"}"""));

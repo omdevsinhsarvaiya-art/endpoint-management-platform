@@ -204,6 +204,13 @@ public sealed class WindowsUsbPolicyEnforcer(ILogger<WindowsUsbPolicyEnforcer> l
     }
 
     /// <summary>Polls for the disk interfaces beneath a USB device after enabling it.</summary>
+    /// <remarks>
+    /// The wall clock is deliberate here, and the one place in this feature that
+    /// uses it. Every expiry decision goes through an injected
+    /// <see cref="TimeProvider"/> so it can be driven in tests — but this is not
+    /// a policy decision, it is a bounded wait for real hardware to enumerate.
+    /// A virtual clock would either spin forever or time out instantly.
+    /// </remarks>
     private List<string> WaitForDisks(string instanceId)
     {
         var deadline = DateTime.UtcNow + DiskArrivalTimeout;
