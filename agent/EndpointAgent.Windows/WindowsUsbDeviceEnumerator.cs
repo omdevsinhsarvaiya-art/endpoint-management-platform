@@ -78,12 +78,13 @@ public sealed class WindowsUsbDeviceEnumerator(ILogger<WindowsUsbDeviceEnumerato
                 var friendlyName = GetStringProperty(set, ref info, UsbNative.DEVPKEY_Device_FriendlyName)
                     ?? GetStringProperty(set, ref info, UsbNative.DEVPKEY_Device_DeviceDesc);
                 var hardwareIds = GetStringListProperty(set, ref info, UsbNative.DEVPKEY_Device_HardwareIds);
+                var compatibleIds = GetStringListProperty(set, ref info, UsbNative.DEVPKEY_Device_CompatibleIds);
 
                 var (vendorId, productId, serial) = ParseInstanceId(instanceId);
 
                 results.Add(new UsbDeviceInfo(
                     instanceId,
-                    Classify(instanceId, service, deviceClass),
+                    Classify(instanceId, service, deviceClass, compatibleIds),
                     vendorId,
                     productId,
                     serial,
@@ -160,8 +161,25 @@ public sealed class WindowsUsbDeviceEnumerator(ILogger<WindowsUsbDeviceEnumerato
     /// composite device that contains storage <em>is</em> storage as far as this
     /// control is concerned.
     /// </remarks>
-    internal static UsbClass Classify(string instanceId, string? service, string? deviceClass)
+    internal static UsbClass Classify(
+        string instanceId, string? service, string? deviceClass, string? compatibleIds = null)
     {
+        // A hub is a hub, decided before anything else and never from what is
+        // plugged into it. This ordering is not cosmetic: it is the guard that
+        // stops a hub inheriting the class of its children.
+        if (IsHub(instanceId, service))
+        {
+            return UsbClass.Hub;
+        }
+
+        // Works while the device is disabled, which the descendant walk cannot.
+        // A restricted stick has no driver and no child devnodes, so this is the
+        // only signal left that says "removable storage".
+        if (DeclaresMassStorage(compatibleIds))
+        {
+            return UsbClass.Storage;
+        }
+
         var services = new List<string>();
         var classes = new List<string>();
 
@@ -199,12 +217,96 @@ public sealed class WindowsUsbDeviceEnumerator(ILogger<WindowsUsbDeviceEnumerato
             return UsbClass.NetworkAdapter;
         }
 
-        if (services.Any(s => s.StartsWith("USBHUB", StringComparison.OrdinalIgnoreCase)))
+        return classes.Count > 0 || services.Count > 0 ? UsbClass.Other : UsbClass.Unknown;
+    }
+
+    /// <summary>
+    /// True for a hub, from the device's own identity only.
+    /// </summary>
+    /// <remarks>
+    /// Checked before the storage rules and never from descendants, because the
+    /// descendant walk reaches every device plugged into a hub. Without this
+    /// ordering a hub with a USB stick attached collects <c>USBSTOR</c> from that
+    /// stick and classifies as storage — and the agent then restricts the
+    /// <em>hub</em>, taking every device on it down with it.
+    /// </remarks>
+    internal static bool IsHub(string instanceId, string? service) =>
+        instanceId.StartsWith(@"USB\ROOT_HUB", StringComparison.OrdinalIgnoreCase)
+        || (service is { Length: > 0 } && service.StartsWith("USBHUB", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// True when the device itself advertises the USB mass-storage interface
+    /// class (08) in its compatible IDs.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Compatible IDs are written by the bus driver from the device's own
+    /// descriptors and stay in the registry whether or not the device is
+    /// started. That is what makes this the right signal for a device the agent
+    /// has restricted: the driver service is gone and the child devnodes are
+    /// gone, but <c>USB\Class_08&amp;SubClass_06&amp;Prot_50</c> remains.
+    /// </para>
+    /// <para>
+    /// A composite device whose storage function sits behind an interface child
+    /// advertises <c>USB\COMPOSITE</c> here instead, so this does not catch
+    /// every case on its own; the service and descendant rules below still cover
+    /// those while the device is enabled.
+    /// </para>
+    /// </remarks>
+    internal static bool DeclaresMassStorage(string? compatibleIds) =>
+        compatibleIds is { Length: > 0 }
+        && compatibleIds.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Any(IsMassStorageCompatibleId);
+
+    /// <summary>
+    /// One compatible ID, matched on the whole class token.
+    /// </summary>
+    /// <remarks>
+    /// A plain prefix test would also accept <c>USB\Class_080</c>. USB class
+    /// codes are two hex digits, so that is not a real device — but a
+    /// classification rule that can be widened by appending a character is the
+    /// wrong shape for something that decides whether a control applies.
+    /// </remarks>
+    private static bool IsMassStorageCompatibleId(string id) =>
+        id.Equals(@"USB\Class_08", StringComparison.OrdinalIgnoreCase)
+        || id.StartsWith(@"USB\Class_08&", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Whether the descendant walk may descend from one node into another.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The walk exists to find the function drivers of <em>one physical
+    /// device</em> — the <c>USBSTOR</c> node under a stick, the HID node under a
+    /// keyboard. It must never cross into a different device, and the place that
+    /// happens is a hub, whose children are every other device on the bus.
+    /// </para>
+    /// <para>
+    /// The rule: a child not enumerated by <c>USB</c> belongs to this device
+    /// (<c>USBSTOR\...</c>, <c>SCSI\...</c>, <c>HID\...</c>). A child that
+    /// <em>is</em> <c>USB</c>-enumerated is another device on the bus — unless it
+    /// is an interface of this same composite device, which Windows names with
+    /// the same VID and PID plus an <c>&amp;MI_</c> segment.
+    /// </para>
+    /// </remarks>
+    internal static bool MayDescendInto(string parentInstanceId, string childInstanceId)
+    {
+        if (!childInstanceId.StartsWith(@"USB\", StringComparison.OrdinalIgnoreCase))
         {
-            return UsbClass.Hub;
+            return true;
         }
 
-        return classes.Count > 0 || services.Count > 0 ? UsbClass.Other : UsbClass.Unknown;
+        if (!childInstanceId.Contains("&MI_", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var (parentVid, parentPid, _) = ParseInstanceId(parentInstanceId);
+        var (childVid, childPid, _) = ParseInstanceId(childInstanceId);
+
+        return parentVid is not null
+            && string.Equals(parentVid, childVid, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(parentPid, childPid, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>Walks the devnode subtree, gathering services and classes.</summary>
@@ -215,6 +317,8 @@ public sealed class WindowsUsbDeviceEnumerator(ILogger<WindowsUsbDeviceEnumerato
         {
             return;
         }
+
+        var rootId = instanceId;
 
         // Iterative, with a hard node cap. A cycle in the devnode tree should be
         // impossible, but "should be impossible" is a poor reason to let a
@@ -246,6 +350,14 @@ public sealed class WindowsUsbDeviceEnumerator(ILogger<WindowsUsbDeviceEnumerato
 
             var childId = GetDeviceId(current);
             if (childId is null)
+            {
+                continue;
+            }
+
+            // The boundary between "part of this device" and "a different device
+            // that happens to hang off it". Crossing it is what made a hub look
+            // like storage.
+            if (!MayDescendInto(rootId, childId))
             {
                 continue;
             }

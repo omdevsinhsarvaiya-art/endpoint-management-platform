@@ -178,4 +178,118 @@ public sealed class WindowsUsbEnumeratorTests
             .Classify(@"USB\VID_0000&PID_0000\NOTAREALDEVICE", null, null)
             .ShouldBe(UsbClass.Unknown);
     }
+
+    // ---- a hub is never storage --------------------------------------------
+
+    /// <summary>
+    /// A hub is classified from itself, never from what is plugged into it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This pins the fix for a live defect. <c>Classify</c> gathers driver
+    /// services from the whole devnode subtree, and a hub's subtree is every
+    /// device on the bus. Plugging a USB stick into a laptop therefore made the
+    /// <em>root hub</em> collect <c>USBSTOR</c> and classify as storage — so the
+    /// agent disabled the hub, disconnecting the webcam, fingerprint reader and
+    /// Bluetooth radio along with it, and the stick itself vanished from
+    /// inventory because it was now behind a dead hub.
+    /// </para>
+    /// <para>
+    /// The hub check therefore runs before the storage rules and consults only
+    /// the device's own instance ID and service.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData(@"USB\ROOT_HUB30\4&70DF8FF&0&0", "USBHUB3")]
+    [InlineData(@"USB\ROOT_HUB30\4&3AF0ECE5&0&0", null)]
+    [InlineData(@"USB\ROOT_HUB20\4&6A987E4&0", "usbhub")]
+    [InlineData(@"USB\VID_05E3&PID_0608\5&ABC&0&1", "USBHUB3")]
+    public void A_hub_is_classified_as_a_hub_whatever_is_plugged_into_it(string instanceId, string? service)
+    {
+        WindowsUsbDeviceEnumerator.IsHub(instanceId, service).ShouldBeTrue();
+
+        // Even told outright that a storage driver is present, it stays a hub.
+        WindowsUsbDeviceEnumerator.Classify(instanceId, service, "USB", null)
+            .ShouldBe(UsbClass.Hub);
+
+        // Storage signals arriving from every other direction still lose to it.
+        WindowsUsbDeviceEnumerator.Classify(instanceId, service, "DiskDrive", @"USB\Class_08")
+            .ShouldBe(UsbClass.Hub);
+    }
+
+    [Theory]
+    [InlineData(@"USB\VID_0781&PID_5581\ABC123", "USBSTOR")]
+    [InlineData(@"USB\VID_046D&PID_C31C\5&12345&0&1", "kbdhid")]
+    public void A_non_hub_is_not_mistaken_for_one(string instanceId, string service)
+    {
+        WindowsUsbDeviceEnumerator.IsHub(instanceId, service).ShouldBeFalse();
+    }
+
+    // ---- the descendant boundary -------------------------------------------
+
+    /// <summary>
+    /// The subtree walk stays inside one physical device.
+    /// </summary>
+    /// <remarks>
+    /// Function drivers of the same device (<c>USBSTOR</c>, <c>HID</c>, and the
+    /// <c>&amp;MI_</c> interface children of a composite device) are in scope.
+    /// Another <c>USB</c>-enumerated device hanging off a hub is not — that is
+    /// the crossing that let a hub inherit a stick's class.
+    /// </remarks>
+    [Theory]
+    // Function children of this device: descend.
+    [InlineData(@"USB\VID_0781&PID_5581\ABC123", @"USBSTOR\Disk&Ven_SanDisk&Prod_Cruzer\7&1234&0", true)]
+    [InlineData(@"USB\VID_046D&PID_C31C\5&1&0", @"HID\VID_046D&PID_C31C\6&2&0", true)]
+    [InlineData(@"USB\VID_0781&PID_5581\ABC123", @"SCSI\Disk&Ven_&Prod_\5&1&0", true)]
+    // Interfaces of this same composite device: descend.
+    [InlineData(@"USB\VID_2B7E&PID_B851\SN0001", @"USB\VID_2B7E&PID_B851&MI_00\6&33918DF9&0&0000", true)]
+    // A different device on a hub: do NOT descend.
+    [InlineData(@"USB\ROOT_HUB30\4&70DF8FF&0&0", @"USB\VID_0781&PID_5581\ABC123", false)]
+    [InlineData(@"USB\ROOT_HUB20\4&6A987E4&0", @"USB\VID_13D3&PID_3571\00E04C000001", false)]
+    // A different composite device's interface: do NOT descend.
+    [InlineData(@"USB\VID_2B7E&PID_B851\SN0001", @"USB\VID_9999&PID_1111&MI_00\6&1&0&0", false)]
+    public void The_subtree_walk_stays_within_one_device(string parent, string child, bool expected)
+    {
+        WindowsUsbDeviceEnumerator.MayDescendInto(parent, child).ShouldBe(expected);
+    }
+
+    // ---- storage stays visible while disabled ------------------------------
+
+    /// <summary>
+    /// A restricted stick still classifies as storage.
+    /// </summary>
+    /// <remarks>
+    /// The self-defeating loop this closes: restricting a device disables its
+    /// devnode, which unloads the driver and removes the child devnodes — the
+    /// exact two signals the classifier used to recognise storage. The device
+    /// then looked like an anonymous <c>Other</c>, disappeared from the console's
+    /// storage view, and could no longer be granted access. Compatible IDs are
+    /// written from the device's own descriptors and survive being disabled.
+    /// </remarks>
+    [Theory]
+    [InlineData(@"USB\Class_08&SubClass_06&Prot_50")]
+    [InlineData(@"USB\Class_08&SubClass_06;USB\Class_08")]
+    [InlineData(@"USB\Class_08")]
+    [InlineData(@"USB\DevClass_00&SubClass_00&Prot_00;USB\Class_08&SubClass_06&Prot_50")]
+    public void A_disabled_stick_is_still_storage_by_its_compatible_ids(string compatibleIds)
+    {
+        WindowsUsbDeviceEnumerator.DeclaresMassStorage(compatibleIds).ShouldBeTrue();
+
+        // No service and no children: exactly the state a restricted device is in.
+        WindowsUsbDeviceEnumerator
+            .Classify(@"USB\VID_0781&PID_5581\NOTAREALDEVICE", null, "USB", compatibleIds)
+            .ShouldBe(UsbClass.Storage);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData(@"USB\Class_09&SubClass_00&Prot_01")]
+    [InlineData(@"USB\COMPOSITE")]
+    [InlineData(@"USB\Class_03&SubClass_01&Prot_01")]
+    [InlineData(@"USB\Class_080")]
+    public void Nothing_else_is_read_as_mass_storage(string? compatibleIds)
+    {
+        WindowsUsbDeviceEnumerator.DeclaresMassStorage(compatibleIds).ShouldBeFalse();
+    }
 }
