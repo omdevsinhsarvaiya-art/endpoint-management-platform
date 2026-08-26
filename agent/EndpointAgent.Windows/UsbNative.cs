@@ -92,6 +92,7 @@ internal static class UsbNative
 
     internal static readonly DEVPROPKEY DEVPKEY_Device_DeviceDesc = new() { Fmtid = DevPropClassCommon, Pid = 2 };
     internal static readonly DEVPROPKEY DEVPKEY_Device_HardwareIds = new() { Fmtid = DevPropClassCommon, Pid = 3 };
+    internal static readonly DEVPROPKEY DEVPKEY_Device_CompatibleIds = new() { Fmtid = DevPropClassCommon, Pid = 4 };
     internal static readonly DEVPROPKEY DEVPKEY_Device_Service = new() { Fmtid = DevPropClassCommon, Pid = 6 };
     internal static readonly DEVPROPKEY DEVPKEY_Device_Class = new() { Fmtid = DevPropClassCommon, Pid = 9 };
     internal static readonly DEVPROPKEY DEVPKEY_Device_Manufacturer = new() { Fmtid = DevPropClassCommon, Pid = 13 };

@@ -61,6 +61,22 @@ public sealed class WindowsUsbPolicyEnforcer(ILogger<WindowsUsbPolicyEnforcer> l
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(instanceId);
 
+        // Last line of defence, independent of how the device was classified.
+        // Disabling a hub takes down every device attached to it — a keyboard, a
+        // mouse, a dock — which is exactly the outcome this feature promises
+        // never to cause. A classification bug upstream must not be able to
+        // reach that outcome, so the refusal lives here as well.
+        if (IsHubDevice(instanceId))
+        {
+            _logger.LogError(
+                "Refusing to disable {InstanceId}: it is a USB hub. Disabling a hub would disconnect every "
+                + "device attached to it. This indicates the device was misclassified as storage.",
+                instanceId);
+
+            return UsbEnforcementResult.Failed(
+                "Refused to restrict a USB hub. Disabling a hub would disconnect every device attached to it.");
+        }
+
         try
         {
             if (!SetDeviceEnabled(instanceId, enabled: false, out var error))
@@ -248,6 +264,51 @@ public sealed class WindowsUsbPolicyEnforcer(ILogger<WindowsUsbPolicyEnforcer> l
         catch (Exception ex)
         {
             return UsbEnforcementResult.Failed($"Release failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// True when the instance is a USB hub, read from the device itself.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately independent of <c>WindowsUsbDeviceEnumerator.Classify</c>.
+    /// A guard that consulted the same classification it is guarding against
+    /// would agree with it, including when it is wrong.
+    /// </remarks>
+    private static bool IsHubDevice(string instanceId)
+    {
+        if (instanceId.StartsWith(@"USB\ROOT_HUB", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var set = UsbNative.SetupDiCreateDeviceInfoList(IntPtr.Zero, IntPtr.Zero);
+        if (set == IntPtr.Zero || set == new IntPtr(-1))
+        {
+            return false;
+        }
+
+        try
+        {
+            var info = new UsbNative.SP_DEVINFO_DATA
+            {
+                CbSize = (uint)Marshal.SizeOf<UsbNative.SP_DEVINFO_DATA>(),
+            };
+
+            if (!UsbNative.SetupDiOpenDeviceInfo(set, instanceId, IntPtr.Zero, 0, ref info))
+            {
+                return false;
+            }
+
+            var service = WindowsUsbDeviceEnumerator.GetStringProperty(
+                set, ref info, UsbNative.DEVPKEY_Device_Service);
+
+            return service is { Length: > 0 }
+                && service.StartsWith("USBHUB", StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            UsbNative.SetupDiDestroyDeviceInfoList(set);
         }
     }
 
