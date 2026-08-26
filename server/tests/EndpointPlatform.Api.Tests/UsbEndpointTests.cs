@@ -30,7 +30,6 @@ public sealed class UsbEndpointTests(AdminApiPostgresFixture fixture)
     private async Task<HttpClient> ClientAsync(string email) =>
         _fixture.CreateClientFor(await _fixture.SignInAsync(email));
 
-    /// <summary>Seeds an Active device and returns its id plus a usable agent credential.</summary>
     private async Task<(Guid DeviceId, string CredentialHeader)> SeedDeviceAsync(string hostname)
     {
         await using var db = _fixture.CreateDbContext();
@@ -343,5 +342,168 @@ public sealed class UsbEndpointTests(AdminApiPostgresFixture fixture)
             .GetRequiredService<Infrastructure.Peripherals.UsbService>();
 
         return await usbService.BuildPolicyAsync(deviceId, DateTimeOffset.UtcNow);
+    }
+
+    // ---- what the console can actually display -----------------------------
+
+    /// <summary>
+    /// Every state the console needs to render, read back over HTTP.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Requirement 7 of the acceptance list, asserted at the layer the dashboard
+    /// actually reads. The row carries two separate facts — what an
+    /// administrator decided (<c>policy</c>) and what the endpoint confirmed it
+    /// is doing (<c>enforcementState</c>) — and the console shows both. Merging
+    /// them would let an offline machine display "Restricted" as though the
+    /// control were in place.
+    /// </para>
+    /// <para>
+    /// Written as one test over several seeded devices rather than a theory: the
+    /// login rate limiter is real and in-process, and a theory here would spend
+    /// five sign-ins proving one thing.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task The_console_can_see_attachment_policy_and_enforcement_separately()
+    {
+        var (deviceId, _) = await SeedDeviceAsync("USB-VIEWSTATES");
+
+        var cases = new (string Suffix, UsbStoragePolicy? Enforced, string? Error, string Policy, string State)[]
+        {
+            ("PENDING", null, null, "Restricted", "Pending"),
+            ("ENFORCED", UsbStoragePolicy.Restricted, null, "Restricted", "Enforced"),
+            ("DRIFTRO", UsbStoragePolicy.ReadOnly, null, "Restricted", "Drifted"),
+            ("DRIFTRW", UsbStoragePolicy.Enabled, null, "Restricted", "Drifted"),
+            ("FAILED", null, "access denied", "Restricted", "Failed"),
+        };
+
+        var ids = new Dictionary<string, Guid>();
+
+        foreach (var c in cases)
+        {
+            var usbId = await SeedUsbAsync(deviceId, $@"USB\VID_0781&PID_5581\{c.Suffix}");
+            ids[c.Suffix] = usbId;
+
+            await using var db = _fixture.CreateDbContext();
+            var usb = await db.UsbDevices.SingleAsync(u => u.Id == usbId);
+            usb.ReportEnforcement(c.Enforced, c.Error, DateTimeOffset.UtcNow);
+            await db.SaveChangesAsync();
+        }
+
+        var client = await ClientAsync(AdminApiPostgresFixture.ItAdminEmail);
+        var response = await client.GetAsync($"/admin/v1/devices/{deviceId}/usb-devices");
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var rows = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        foreach (var c in cases)
+        {
+            var row = rows.EnumerateArray().Single(r => r.GetProperty("id").GetGuid() == ids[c.Suffix]);
+
+            row.GetProperty("isStorage").GetBoolean().ShouldBeTrue();
+            row.GetProperty("isConnected").GetBoolean().ShouldBeTrue();
+            row.GetProperty("policy").GetString().ShouldBe(c.Policy, $"policy for {c.Suffix}");
+            row.GetProperty("enforcementState").GetString().ShouldBe(c.State, $"state for {c.Suffix}");
+        }
+    }
+
+    /// <summary>
+    /// A device the endpoint has restricted is still listed as storage, and can
+    /// still be granted access at either level.
+    /// </summary>
+    /// <remarks>
+    /// The regression this pins is the one that made the feature unusable.
+    /// Restricting a stick disables its devnode, which removes the driver and the
+    /// child devnodes the agent used to recognise storage — so it reappeared as
+    /// an anonymous peripheral, dropped out of the console's storage table, and
+    /// could never be granted access again. Recovery depends on it staying in the
+    /// storage view.
+    /// </remarks>
+    [Fact]
+    public async Task A_restricted_storage_device_stays_visible_and_grantable()
+    {
+        var (deviceId, _) = await SeedDeviceAsync("USB-RECOVERY");
+        var usbId = await SeedUsbAsync(deviceId, @"USB\VID_0781&PID_5581\RECOVER1");
+
+        await using (var db = _fixture.CreateDbContext())
+        {
+            var usb = await db.UsbDevices.SingleAsync(u => u.Id == usbId);
+            usb.ReportEnforcement(UsbStoragePolicy.Restricted, null, DateTimeOffset.UtcNow);
+            await db.SaveChangesAsync();
+        }
+
+        var client = await ClientAsync(AdminApiPostgresFixture.ItAdminEmail);
+
+        var rows = await (await client.GetAsync($"/admin/v1/devices/{deviceId}/usb-devices"))
+            .Content.ReadFromJsonAsync<JsonElement>();
+        var row = rows.EnumerateArray().Single(r => r.GetProperty("id").GetGuid() == usbId);
+
+        row.GetProperty("isStorage").GetBoolean().ShouldBeTrue();
+        row.GetProperty("enforcementState").GetString().ShouldBe("Enforced");
+
+        var granted = await client.PostAsync(
+            GrantOf(deviceId, usbId),
+            JsonContent.Create(new
+            {
+                durationMinutes = 60,
+                justification = "Recovering a restricted stick.",
+                policy = "Enabled",
+            }));
+
+        granted.StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await granted.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("policy").GetString().ShouldBe("Enabled");
+    }
+
+    /// <summary>
+    /// No non-storage peripheral is grantable, at either level.
+    /// </summary>
+    /// <remarks>
+    /// The server's half of the defect that disabled a root hub on the acceptance
+    /// machine. The agent no longer classifies a hub as storage, and the server
+    /// independently refuses to grant one — neither side relies on the other
+    /// having got it right.
+    /// </remarks>
+    [Fact]
+    public async Task No_non_storage_peripheral_is_grantable_at_either_level()
+    {
+        var (deviceId, _) = await SeedDeviceAsync("USB-NONSTORAGE");
+
+        var classes = new[]
+        {
+            UsbDeviceClass.Hub,
+            UsbDeviceClass.Keyboard,
+            UsbDeviceClass.Mouse,
+            UsbDeviceClass.NetworkAdapter,
+            UsbDeviceClass.Other,
+        };
+
+        var ids = new List<(UsbDeviceClass Class, Guid Id)>();
+        foreach (var deviceClass in classes)
+        {
+            ids.Add((deviceClass, await SeedUsbAsync(
+                deviceId, $@"USB\ROOT_HUB30\NS_{deviceClass}", deviceClass)));
+        }
+
+        var client = await ClientAsync(AdminApiPostgresFixture.ItAdminEmail);
+
+        foreach (var (deviceClass, usbId) in ids)
+        {
+            foreach (var level in new[] { "ReadOnly", "Enabled" })
+            {
+                var response = await client.PostAsync(
+                    GrantOf(deviceId, usbId),
+                    JsonContent.Create(new
+                    {
+                        durationMinutes = 60,
+                        justification = "Should never be permitted.",
+                        policy = level,
+                    }));
+
+                response.StatusCode.ShouldBe(
+                    HttpStatusCode.Conflict, $"{deviceClass} at {level}");
+            }
+        }
     }
 }
