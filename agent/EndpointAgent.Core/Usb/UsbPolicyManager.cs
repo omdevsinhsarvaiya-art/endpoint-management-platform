@@ -304,9 +304,7 @@ public sealed class UsbPolicyManager(
                 }
                 else
                 {
-                    enforced = Desired(device.InstanceId, now) == UsbEnforcedState.ReadOnly
-                        ? nameof(UsbEnforcedState.ReadOnly)
-                        : nameof(UsbEnforcedState.Restricted);
+                    enforced = Desired(device.InstanceId, now).ToString();
                 }
             }
 
@@ -357,6 +355,7 @@ public sealed class UsbPolicyManager(
 
         var restricted = 0;
         var readOnly = 0;
+        var enabled = 0;
         var failed = 0;
 
         // Anything already on the ledger from a previous run stays on it until it
@@ -379,9 +378,15 @@ public sealed class UsbPolicyManager(
             UsbEnforcementResult result;
             try
             {
-                result = desired == UsbEnforcedState.ReadOnly
-                    ? _enforcer.AllowReadOnly(device.InstanceId)
-                    : _enforcer.Restrict(device.InstanceId);
+                result = desired switch
+                {
+                    UsbEnforcedState.Enabled => _enforcer.AllowReadWrite(device.InstanceId),
+                    UsbEnforcedState.ReadOnly => _enforcer.AllowReadOnly(device.InstanceId),
+
+                    // Restricted, and anything this agent does not recognise.
+                    // An unknown state is not a reason to guess upwards.
+                    _ => _enforcer.Restrict(device.InstanceId),
+                };
             }
             catch (Exception ex)
             {
@@ -405,13 +410,17 @@ public sealed class UsbPolicyManager(
                 continue;
             }
 
-            if (desired == UsbEnforcedState.ReadOnly)
+            switch (desired)
             {
-                readOnly++;
-            }
-            else
-            {
-                restricted++;
+                case UsbEnforcedState.ReadOnly:
+                    readOnly++;
+                    break;
+                case UsbEnforcedState.Enabled:
+                    enabled++;
+                    break;
+                default:
+                    restricted++;
+                    break;
             }
         }
 
@@ -425,21 +434,29 @@ public sealed class UsbPolicyManager(
             await SaveLedgerAsync(cancellationToken);
         }
 
-        return new UsbReconcileOutcome(restricted, readOnly, failed);
+        return new UsbReconcileOutcome(restricted, readOnly, enabled, failed);
     }
 
     /// <summary>
-    /// The heart of the security model: read-only if and only if a grant for
-    /// this exact device instance is present and has not lapsed.
+    /// The heart of the security model: a device gets the level named by a
+    /// grant for that exact instance which has not lapsed, and Restricted
+    /// otherwise.
     /// </summary>
+    /// <remarks>
+    /// A grant carrying Restricted is ignored rather than honoured. Restricted
+    /// is the absence of a grant, so an entry claiming to grant it is
+    /// malformed — and treating it as "no grant" is the same answer this method
+    /// gives for every other malformed case.
+    /// </remarks>
     private UsbEnforcedState Desired(string instanceId, DateTimeOffset now)
     {
         foreach (var grant in _grants.Grants)
         {
             if (string.Equals(grant.InstanceId, instanceId, StringComparison.OrdinalIgnoreCase)
-                && grant.ExpiresAt > now)
+                && grant.ExpiresAt > now
+                && grant.Policy is UsbEnforcedState.ReadOnly or UsbEnforcedState.Enabled)
             {
-                return UsbEnforcedState.ReadOnly;
+                return grant.Policy;
             }
         }
 
@@ -478,9 +495,9 @@ public sealed class UsbPolicyManager(
 }
 
 /// <param name="Failed">Devices whose desired state could not be applied. Never hidden from the server.</param>
-public sealed record UsbReconcileOutcome(int Restricted, int ReadOnly, int Failed)
+public sealed record UsbReconcileOutcome(int Restricted, int ReadOnly, int Enabled, int Failed)
 {
-    public int Total => Restricted + ReadOnly + Failed;
+    public int Total => Restricted + ReadOnly + Enabled + Failed;
 }
 
 /// <summary>Result of standing down enforcement.</summary>

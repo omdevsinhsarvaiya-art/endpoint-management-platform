@@ -12,15 +12,35 @@ never enrolled, cannot reach the network, or has just booted with a stick
 already in the port. Access is the exception, and it requires a positive,
 unexpired, administrator-issued grant naming that exact device.
 
+There are exactly three states, and only two of them can be granted:
+
+| State | What the user gets | How it is reached |
+| --- | --- | --- |
+| **Restricted** | Nothing. The device instance is disabled, so no drive letter appears. | The default. Also where revoke and expiry land. |
+| **Read-only** | Files can be opened and copied *off* the device. Windows refuses writes, creates, renames and deletes. | An explicit grant. |
+| **Enabled** | Ordinary Windows read/write access. | An explicit grant, named as such. |
+
+**Restricted is not grantable.** It is the absence of a grant, reached by
+revoking rather than by asking for it, and every layer rejects an attempt to
+grant it — the domain throws, the API returns 400, the agent drops the entry.
+Attaching an expiry to a state that has none would mean a device silently
+becoming accessible when the "grant" lapsed.
+
+Read-only is the default everywhere a level is not stated: an omitted API field,
+a grant cached by an older agent, an unparseable policy value. Read/write has to
+be named explicitly, in exactly that spelling, to be reached at all — the ordinal
+`2` and the string `"2"` are both refused, so a payload carrying a bare number
+cannot obtain write access without naming it.
+
 Access, when granted, is always:
 
-- **read-only** — there is no state in this system that permits writing to a
-  removable device, and no payload, API call or role can express one;
 - **time-boxed** — an absolute deadline between 5 minutes and 24 hours, chosen
   at grant time and never extended;
 - **per device** — keyed to one Windows device instance ID on one endpoint;
 - **justified and audited** — a reason is required, and the grant, its
-  revocation and its expiry are each an audit record.
+  revocation and its expiry are each an audit record. A read/write grant is
+  audited as `usb.access.enable` rather than `usb.access.grant`, so the widest
+  decisions can be reported on separately from the narrow ones.
 
 Non-storage peripherals — keyboards, mice, hubs, cameras, network adapters —
 are inventoried and never restricted. Disabling an input device would lock the
@@ -28,13 +48,18 @@ user out of their own machine.
 
 ## How it is enforced on Windows
 
-Two mechanisms, both per-device, both documented public API, neither of them a
-shell command or a kernel driver (ADR-0005):
+Per-device, documented public API, no shell command and no kernel driver
+(ADR-0005):
 
 | State | Mechanism | Effect |
 |---|---|---|
 | Restricted | SetupAPI `DIF_PROPERTYCHANGE` / `DICS_DISABLE` on the device instance | The device does not start. No volume, no drive letter, nothing to open. |
 | Read-only | Device enabled, then `IOCTL_DISK_SET_DISK_ATTRIBUTES` with `DISK_ATTRIBUTE_READ_ONLY` on each disk beneath it | Windows itself refuses writes, creates, renames and deletes. |
+| Enabled | Device enabled, then the same IOCTL with the read-only bit *cleared* | Ordinary Windows behaviour. |
+
+The attribute mask is limited to the read-only bit in both directions, so
+nothing else Windows tracks on the disk — the OFFLINE bit in particular — is
+disturbed.
 
 Restricting is what Device Manager's *Disable* does. The read-only attribute is
 set with `Persist = false`, so it governs this endpoint only and does not follow
@@ -48,15 +73,21 @@ all-or-nothing for every removable device on the machine, so neither can express
 entire requirement.
 
 After setting the attribute the agent **reads it back** and treats the operation
-as failed unless the disk reports read-only. And if read-only cannot be applied
-for any reason, the device is restricted instead — never left enabled and
-writable.
+as failed unless the disk reports the state that was asked for.
+
+The two grant paths fail in opposite directions, deliberately. If read-only
+cannot be applied, the device is **restricted** instead — never left enabled and
+writable, because the alternative is a writable disk the console believes is
+read-only. If read/write cannot be fully applied, the device is **left as it
+is** and the failure reported: the device ends up narrower than the grant
+allows, which is the safe direction, and re-restricting would revoke a decision
+an administrator had just made.
 
 ## How a grant travels
 
 ```
-administrator grants read-only access (usb.manage, justification, duration)
-        ↓ audited; device marked ReadOnly with an absolute deadline
+administrator grants access (usb.manage, level, justification, duration)
+        ↓ audited; device marked ReadOnly or Enabled with an absolute deadline
 ApplyUsbPolicy task queued, carrying the endpoint's COMPLETE grant set
         ↓
 agent replaces its cached policy and reconciles every attached storage device
@@ -122,6 +153,8 @@ Every path lands on Restricted.
 | malformed policy payload | rejected; the previous policy stays in force |
 | one malformed or already-expired grant entry | that entry dropped, the rest honoured |
 | policy names an access level this agent does not implement | that grant dropped |
+| policy names an access level as a number rather than a name | that grant dropped — a bare ordinal can never reach read/write |
+| grant cached by an older agent, with no level recorded | read as read-only, never as read/write |
 | stale policy arrives after a newer one | ignored (issued-at wins), so a late task cannot reinstate revoked access |
 | read-only cannot be applied | device restricted, task reported failed |
 | device enumeration fails | nothing evaluated; already-restricted devices stay disabled |
@@ -248,6 +281,11 @@ than the table above should be claimed for this feature.**
 Stated explicitly, because a security control that is oversold is worse than
 one that is absent.
 
+- **Read/write access is exactly what it says.** A device under an `Enabled`
+  grant behaves like one on an unmanaged machine for the life of the grant: data
+  can be copied off the endpoint onto it. The controls that remain are that it is
+  time-boxed, keyed to one device instance, attributable to a named
+  administrator, and recorded. It is not a data-loss-prevention control.
 - **Read-only does not prevent malware.** It stops the endpoint writing *to*
   the device. A malicious file already on the stick can still be copied *from*
   it and run. This is a data-egress and device-hygiene control, not an

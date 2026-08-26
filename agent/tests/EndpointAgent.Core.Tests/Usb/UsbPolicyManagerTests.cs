@@ -297,6 +297,9 @@ public sealed class UsbPolicyManagerTests
 
         public UsbEnforcementResult AllowReadOnly(string instanceId) => Record("AllowReadOnly", instanceId);
 
+        public UsbEnforcementResult AllowReadWrite(string instanceId) =>
+            Record("AllowReadWrite", instanceId);
+
         public UsbEnforcementResult Release(string instanceId) => Record("Release", instanceId);
 
         /// <summary>Instance IDs that <see cref="Release"/> alone should fail for.</summary>

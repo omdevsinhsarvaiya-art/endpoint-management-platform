@@ -20,6 +20,19 @@ public enum UsbEnforcedState
 
     /// <summary>Device enabled with the disk marked read-only by Windows.</summary>
     ReadOnly = 1,
+
+    /// <summary>
+    /// Device enabled and writable: ordinary Windows behaviour, for as long as
+    /// the grant lasts.
+    /// </summary>
+    /// <remarks>
+    /// The widest state this agent can be put into, and the only one that
+    /// permits writing. It still requires a live, in-date, administrator-issued
+    /// grant naming this exact device — it is not a way to mark a device
+    /// permanently trusted, and the device returns to <see cref="Restricted"/>
+    /// the moment the grant lapses, with or without contact from the server.
+    /// </remarks>
+    Enabled = 2,
 }
 
 /// <summary>One USB device as seen on the local machine.</summary>
@@ -76,9 +89,11 @@ public interface IUsbDeviceEnumerator
 /// edits through free-form commands, no kernel driver (ADR-0005).
 /// </para>
 /// <para>
-/// There is deliberately no method that grants write access. The widest state
-/// this interface can express is read-only, so no caller — and no tampered task
-/// payload — can produce a writable removable disk through it.
+/// Write access is expressible, through <see cref="AllowReadWrite"/> alone, and
+/// only ever as the enforcement of a live administrator-issued grant. Every
+/// path that is not such a grant — no policy, an expired one, a malformed one,
+/// an unreachable server, an unreadable cache — resolves to
+/// <see cref="Restrict"/> rather than to access.
 /// </para>
 /// </remarks>
 public interface IUsbPolicyEnforcer
@@ -88,6 +103,20 @@ public interface IUsbPolicyEnforcer
 
     /// <summary>Enables the device and marks its disks read-only. Idempotent.</summary>
     UsbEnforcementResult AllowReadOnly(string instanceId);
+
+    /// <summary>
+    /// Enables the device and clears any read-only marking, giving ordinary
+    /// read/write access. Idempotent.
+    /// </summary>
+    /// <remarks>
+    /// Mechanically the same operations as <see cref="Release"/>, and
+    /// deliberately kept as a separate method anyway, because the two mean
+    /// opposite things. This is enforcement of a live grant that the agent will
+    /// withdraw when the deadline passes; Release is the agent standing down
+    /// altogether. Collapsing them would make the ledger — which exists to
+    /// record what still needs undoing — unable to tell the two apart.
+    /// </remarks>
+    UsbEnforcementResult AllowReadWrite(string instanceId);
 
     /// <summary>
     /// Undoes everything this agent applied to a device, leaving it as Windows

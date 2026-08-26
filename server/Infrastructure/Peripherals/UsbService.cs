@@ -23,6 +23,8 @@ public enum UsbGrantOutcome
     NotStorage,
     /// <summary>Asked-for duration is outside the permitted window.</summary>
     InvalidDuration,
+    /// <summary>The requested access level is not one the platform grants.</summary>
+    InvalidPolicy,
     /// <summary>A live grant already covers this device.</summary>
     AlreadyGranted,
 }
@@ -74,6 +76,11 @@ public sealed class UsbService(
     // insert would fail at the database, taking the grant down with it.
     private const string RestrictedState = """{"policy":"Restricted"}""";
     private const string ReadOnlyState = """{"policy":"ReadOnly"}""";
+    private const string EnabledState = """{"policy":"Enabled"}""";
+
+    /// <summary>The prior-state document for an audit row about a live grant.</summary>
+    private static string GrantedState(UsbStoragePolicy policy) =>
+        policy == UsbStoragePolicy.Enabled ? EnabledState : ReadOnlyState;
 
     private readonly EndpointPlatformDbContext _dbContext = dbContext
         ?? throw new ArgumentNullException(nameof(dbContext));
@@ -234,14 +241,14 @@ public sealed class UsbService(
                 && r.Status == UsbAccessRequestStatus.Approved
                 && r.ExpiresAt != null
                 && r.ExpiresAt > now)
-            .Select(r => new { r.InstanceId, r.ExpiresAt })
+            .Select(r => new { r.InstanceId, r.ExpiresAt, r.GrantedPolicy })
             .ToListAsync(cancellationToken);
 
         return new UsbPolicyResponse(
             grants
                 .Select(g => new UsbPolicyGrant(
                     g.InstanceId,
-                    nameof(UsbStoragePolicy.ReadOnly),
+                    g.GrantedPolicy.ToString(),
                     g.ExpiresAt!.Value))
                 .ToList(),
             now);
@@ -250,8 +257,8 @@ public sealed class UsbService(
     // ---- administrator-facing ---------------------------------------------
 
     /// <summary>
-    /// Grants temporary read-only access to one USB storage device and pushes
-    /// the new policy to the endpoint.
+    /// Grants temporary access to one USB storage device at the requested level
+    /// and pushes the new policy to the endpoint.
     /// </summary>
     /// <remarks>
     /// The caller's <c>usb.manage</c> permission has already been enforced at the
@@ -260,16 +267,25 @@ public sealed class UsbService(
     /// storage, that the duration is inside the permitted window — because a
     /// permission check answers "may this person act", not "is this action sane".
     /// </remarks>
-    public async Task<(UsbGrantOutcome Outcome, UsbAccessRequest? Request)> GrantReadOnlyAsync(
+    public async Task<(UsbGrantOutcome Outcome, UsbAccessRequest? Request)> GrantAsync(
         Guid organizationId,
         Guid deviceId,
         Guid usbDeviceId,
+        UsbStoragePolicy policy,
         string justification,
         TimeSpan duration,
         Guid actorId,
         string actorDisplay,
         CancellationToken cancellationToken = default)
     {
+        // Restricted is not a grant, and an undefined value is not a policy.
+        // Checked before anything else touches the database, so a malformed
+        // request cannot get as far as creating a row.
+        if (policy == UsbStoragePolicy.Restricted || !Enum.IsDefined(policy))
+        {
+            return (UsbGrantOutcome.InvalidPolicy, null);
+        }
+
         if (duration < UsbAccessRequest.MinimumDuration || duration > UsbAccessRequest.MaximumDuration)
         {
             return (UsbGrantOutcome.InvalidDuration, null);
@@ -315,17 +331,19 @@ public sealed class UsbService(
 
         var request = UsbAccessRequest.GrantByAdministrator(
             organizationId, deviceId, usb.Id, usb.InstanceId,
-            justification, actorId, actorDisplay, duration, now);
+            policy, justification, actorId, actorDisplay, duration, now);
 
         _dbContext.UsbAccessRequests.Add(request);
-        usb.GrantReadOnly(request.ExpiresAt!.Value, now);
+        usb.Grant(policy, request.ExpiresAt!.Value, now);
 
         _auditWriter.Stage(
             organizationId,
             AuditActorType.PlatformUser,
             actorId,
             actorDisplay,
-            action: "usb.access.grant",
+            action: policy == UsbStoragePolicy.Enabled
+                ? "usb.access.enable"
+                : "usb.access.grant",
             AuditResult.Success,
             audit => audit
                 .OnDevice(device.Id, device.Hostname)
@@ -335,7 +353,7 @@ public sealed class UsbService(
                     RestrictedState,
                     System.Text.Json.JsonSerializer.Serialize(new
                     {
-                        policy = nameof(UsbStoragePolicy.ReadOnly),
+                        policy = policy.ToString(),
                         instanceId = usb.InstanceId,
                         expiresAt = request.ExpiresAt,
                         justification,
@@ -344,8 +362,8 @@ public sealed class UsbService(
         await _dbContext.SaveChangesAsync(cancellationToken);
 
         _logger.LogInformation(
-            "Read-only USB access granted on {DeviceId} for {InstanceId} until {ExpiresAt} by {Actor}.",
-            deviceId, usb.InstanceId, request.ExpiresAt, actorDisplay);
+            "{Policy} USB access granted on {DeviceId} for {InstanceId} until {ExpiresAt} by {Actor}.",
+            policy, deviceId, usb.InstanceId, request.ExpiresAt, actorDisplay);
 
         await PushPolicyAsync(organizationId, deviceId, actorId, actorDisplay, now, cancellationToken);
 
@@ -392,7 +410,7 @@ public sealed class UsbService(
                 .OnDevice(request.DeviceId, request.DeviceId.ToString())
                 .OnTarget("usb_access_request", request.Id.ToString(), request.InstanceId)
                 .Requiring(Permissions.Usb.Manage)
-                .WithStateChange(ReadOnlyState, RestrictedState));
+                .WithStateChange(GrantedState(request.GrantedPolicy), RestrictedState));
 
         await _dbContext.SaveChangesAsync(cancellationToken);
 
@@ -465,7 +483,7 @@ public sealed class UsbService(
                 audit => audit
                     .OnDevice(request.DeviceId, request.DeviceId.ToString())
                     .OnTarget("usb_access_request", request.Id.ToString(), request.InstanceId)
-                    .WithStateChange(ReadOnlyState, RestrictedState));
+                    .WithStateChange(GrantedState(request.GrantedPolicy), RestrictedState));
         }
 
         await _dbContext.SaveChangesAsync(cancellationToken);
@@ -502,7 +520,9 @@ public sealed class UsbService(
             policy.Grants
                 .Select(g => new TaskPayloads.UsbGrant(
                     g.InstanceId,
-                    TaskPayloads.UsbGrantPolicy.ReadOnly,
+                    string.Equals(g.Policy, nameof(UsbStoragePolicy.Enabled), StringComparison.OrdinalIgnoreCase)
+                        ? TaskPayloads.UsbGrantPolicy.Enabled
+                        : TaskPayloads.UsbGrantPolicy.ReadOnly,
                     g.ExpiresAt))
                 .ToList(),
             now);
@@ -554,6 +574,8 @@ public sealed class UsbService(
                 => UsbStoragePolicy.Restricted,
             var s when string.Equals(s, nameof(UsbStoragePolicy.ReadOnly), StringComparison.OrdinalIgnoreCase)
                 => UsbStoragePolicy.ReadOnly,
+            var s when string.Equals(s, nameof(UsbStoragePolicy.Enabled), StringComparison.OrdinalIgnoreCase)
+                => UsbStoragePolicy.Enabled,
             _ => null,
         };
 

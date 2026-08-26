@@ -6,6 +6,7 @@ import {
   revokeUsbAccess,
   type UsbDeviceRow,
   type UsbEnforcementState,
+  type UsbGrantablePolicy,
 } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import { Icon } from '../components/Icon'
@@ -125,12 +126,17 @@ export function DeviceUsbPanel({
     void load()
   }, [load])
 
-  async function grant(device: UsbDeviceRow, minutes: number, justification: string) {
+  async function grant(
+    device: UsbDeviceRow,
+    minutes: number,
+    justification: string,
+    policy: UsbGrantablePolicy,
+  ) {
     setGranting(null)
     setBusy(true)
     setError(null)
     try {
-      await grantUsbAccess(deviceId, device.id, minutes, justification)
+      await grantUsbAccess(deviceId, device.id, minutes, justification, policy)
       await load()
     } catch {
       setError(`Could not grant access to "${describe(device)}".`)
@@ -228,7 +234,11 @@ export function DeviceUsbPanel({
               <tbody>
                 {storage.map((device) => {
                   const state = ENFORCEMENT[device.enforcementState]
-                  const live = device.policy === 'ReadOnly' && device.liveRequestId !== null
+                  // Either grantable level counts as live access. Restricted
+                  // is the absence of one, so it is deliberately not here.
+                  const live =
+                    (device.policy === 'ReadOnly' || device.policy === 'Enabled') &&
+                    device.liveRequestId !== null
 
                   return (
                     <tr key={device.id}>
@@ -255,7 +265,15 @@ export function DeviceUsbPanel({
                       <td>
                         {live ? (
                           <div>
-                            <span className="badge warn">Read-only</span>
+                            {/* Read/write is the wider grant, so it gets the
+                                louder badge. An administrator scanning this
+                                column should be able to spot writable media
+                                without reading the label. */}
+                            <span
+                              className={`badge ${device.policy === 'Enabled' ? 'crit' : 'warn'}`}
+                            >
+                              {device.policy === 'Enabled' ? 'Read/write' : 'Read-only'}
+                            </span>
                             <span className="row-sub">{remaining(device.policyExpiresAt)}</span>
                           </div>
                         ) : (
@@ -297,7 +315,7 @@ export function DeviceUsbPanel({
                             onClick={() => setGranting(device)}
                             disabled={busy}
                           >
-                            Grant read-only…
+                            Grant access…
                           </button>
                         )}
                       </td>
@@ -363,7 +381,9 @@ export function DeviceUsbPanel({
         <GrantDialog
           device={granting}
           onCancel={() => setGranting(null)}
-          onConfirm={(minutes, justification) => void grant(granting, minutes, justification)}
+          onConfirm={(minutes, justification, policy) =>
+            void grant(granting, minutes, justification, policy)
+          }
         />
       )}
 
@@ -400,12 +420,17 @@ function GrantDialog({
 }: {
   device: UsbDeviceRow
   onCancel: () => void
-  onConfirm: (minutes: number, justification: string) => void
+  onConfirm: (minutes: number, justification: string, policy: UsbGrantablePolicy) => void
 }) {
   useDialogDismiss(onCancel)
 
   const [minutes, setMinutes] = useState(DURATIONS[1].minutes)
   const [justification, setJustification] = useState('')
+
+  // Read-only is preselected. The narrower level is the default so that
+  // read/write is something an administrator chooses, never something they
+  // arrive at by leaving a control alone.
+  const [policy, setPolicy] = useState<UsbGrantablePolicy>('ReadOnly')
 
   const trimmed = justification.trim()
   const ready = trimmed.length >= 3
@@ -413,15 +438,15 @@ function GrantDialog({
   function onSubmit(event: FormEvent) {
     event.preventDefault()
     if (!ready) return
-    onConfirm(minutes, trimmed)
+    onConfirm(minutes, trimmed, policy)
   }
 
   return (
     <div className="overlay" role="dialog" aria-modal="true" aria-labelledby="grant-usb-title">
       <form className="dialog" style={{ maxWidth: 520 }} onSubmit={onSubmit}>
         <div className="dialog-header">
-          <h2 id="grant-usb-title">Grant read-only USB access</h2>
-          <div className="sub">Temporary, read-only, and limited to this one device.</div>
+          <h2 id="grant-usb-title">Grant USB access</h2>
+          <div className="sub">Temporary, time-boxed, and limited to this one device.</div>
         </div>
 
         <div className="dialog-body">
@@ -441,6 +466,46 @@ function GrantDialog({
               )}
             </dd>
           </dl>
+
+          <div className="form-section">Access level</div>
+
+          {/* Radios rather than a dropdown, deliberately. Both levels stay on
+              screen at once, so choosing read/write is a visible decision
+              rather than the result of not opening a menu. */}
+          <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
+            <label className="check-row">
+              <input
+                type="radio"
+                name="usb-grant-policy"
+                checked={policy === 'ReadOnly'}
+                onChange={() => setPolicy('ReadOnly')}
+              />
+              Read-only
+            </label>
+            <label className="check-row">
+              <input
+                type="radio"
+                name="usb-grant-policy"
+                checked={policy === 'Enabled'}
+                onChange={() => setPolicy('Enabled')}
+              />
+              Read/write
+            </label>
+          </div>
+
+          <div className="field-hint">
+            {policy === 'Enabled'
+              ? 'Ordinary Windows access, including writing to the device.'
+              : 'Files can be opened and copied off the device. Windows itself refuses writes, renames and deletes.'}
+          </div>
+
+          {policy === 'Enabled' && (
+            <div className="warn-banner" style={{ marginTop: 10, marginBottom: 0 }}>
+              This is the <strong>widest access this platform grants</strong>. Data can be
+              copied off this machine onto the device until the grant expires or is
+              revoked. The grant and its justification are recorded in the audit log.
+            </div>
+          )}
 
           <div className="field">
             <label className="field-label" htmlFor="usb-grant-duration">
@@ -473,7 +538,11 @@ function GrantDialog({
               value={justification}
               maxLength={1000}
               autoFocus
-              placeholder="Why does this user need to read this device?"
+              placeholder={
+                policy === 'Enabled'
+                  ? 'Why does this user need to write to this device?'
+                  : 'Why does this user need to read this device?'
+              }
               onChange={(e) => setJustification(e.target.value)}
               aria-describedby="usb-grant-justification-hint"
             />

@@ -66,6 +66,11 @@ internal sealed class UsbAccessRequestConfiguration : IEntityTypeConfiguration<U
         builder.Property(r => r.Status).HasConversion<string>().HasMaxLength(16).IsRequired();
         builder.Property(r => r.Source).HasConversion<string>().HasMaxLength(16).IsRequired();
 
+        // Text, and required. Rows written before read/write grants existed are
+        // backfilled to ReadOnly by the migration, which is the truth for them:
+        // read-only was the only level the platform could issue at the time.
+        builder.Property(r => r.GrantedPolicy).HasConversion<string>().HasMaxLength(16).IsRequired();
+
         builder.Property(r => r.RequestedAt).IsRequired();
         builder.Property(r => r.CreatedAt).IsRequired();
         builder.Property(r => r.UpdatedAt).IsRequired();

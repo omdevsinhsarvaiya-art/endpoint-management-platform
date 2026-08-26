@@ -47,6 +47,19 @@ public enum UsbStoragePolicy
     /// by Windows itself.
     /// </summary>
     ReadOnly = 1,
+
+    /// <summary>
+    /// Temporary administrator-granted read/write access: ordinary Windows
+    /// behaviour for the duration of the grant.
+    /// </summary>
+    /// <remarks>
+    /// The widest state the platform can express, and the only one that permits
+    /// writing to removable media. It is time-boxed and audited exactly like
+    /// <see cref="ReadOnly"/> — it is not a way to mark a device permanently
+    /// trusted, and it still returns to <see cref="Restricted"/> the moment the
+    /// grant lapses or is revoked.
+    /// </remarks>
+    Enabled = 2,
 }
 
 /// <summary>
@@ -169,12 +182,12 @@ public sealed class UsbDevice : AuditableEntity
     public bool IsStorage => DeviceClass == UsbDeviceClass.Storage;
 
     /// <summary>
-    /// True when a read-only grant is currently live. Expiry is evaluated
+    /// True when a grant of any kind is currently live. Expiry is evaluated
     /// against the clock rather than stored as a flag, so a grant cannot outlive
     /// its deadline because a sweep did not run.
     /// </summary>
     public bool HasLiveGrant(DateTimeOffset now) =>
-        Policy == UsbStoragePolicy.ReadOnly && PolicyExpiresAt is { } expiry && expiry > now;
+        Policy != UsbStoragePolicy.Restricted && PolicyExpiresAt is { } expiry && expiry > now;
 
     /// <summary>Records a fresh sighting from an agent report.</summary>
     public void Seen(
@@ -202,8 +215,15 @@ public sealed class UsbDevice : AuditableEntity
         DisconnectedAt = now;
     }
 
-    /// <summary>Grants temporary read-only access. Storage only.</summary>
-    public void GrantReadOnly(DateTimeOffset expiresAt, DateTimeOffset now)
+    /// <summary>Grants temporary access at the given level. Storage only.</summary>
+    /// <param name="policy">
+    /// <see cref="UsbStoragePolicy.ReadOnly"/> or <see cref="UsbStoragePolicy.Enabled"/>.
+    /// Passing <see cref="UsbStoragePolicy.Restricted"/> throws: restricting is
+    /// the absence of a grant, expressed through <see cref="Restrict"/>, and
+    /// letting it in here would make "grant" a verb that can also take access
+    /// away — with an expiry attached to a state that has none.
+    /// </param>
+    public void Grant(UsbStoragePolicy policy, DateTimeOffset expiresAt, DateTimeOffset now)
     {
         if (!IsStorage)
         {
@@ -211,12 +231,23 @@ public sealed class UsbDevice : AuditableEntity
                 $"Access policy applies to storage devices only; {InstanceId} is {DeviceClass}.");
         }
 
+        if (policy == UsbStoragePolicy.Restricted)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(policy), "Restricted is the absence of a grant; use Restrict().");
+        }
+
+        if (!Enum.IsDefined(policy))
+        {
+            throw new ArgumentOutOfRangeException(nameof(policy), $"Unknown USB storage policy {policy}.");
+        }
+
         if (expiresAt <= now)
         {
             throw new ArgumentOutOfRangeException(nameof(expiresAt), "A grant must expire in the future.");
         }
 
-        Policy = UsbStoragePolicy.ReadOnly;
+        Policy = policy;
         PolicyExpiresAt = expiresAt;
     }
 

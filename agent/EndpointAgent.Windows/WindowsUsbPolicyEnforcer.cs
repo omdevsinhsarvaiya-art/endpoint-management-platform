@@ -19,6 +19,9 @@ namespace EndpointAgent.Windows;
 ///   (<c>DIF_PROPERTYCHANGE</c> / <c>DICS_DISABLE</c>), exactly what Device
 ///   Manager's Disable does. No volume is created, so there is no drive letter
 ///   and nothing to race against.</item>
+///   <item><b>Enabled</b> — the device is enabled and the read-only marking is
+///   cleared, so Windows behaves exactly as it would unmanaged. Time-boxed
+///   like every other grant.</item>
 ///   <item><b>Read-only</b> — the device is enabled and each physical disk
 ///   beneath it is marked read-only with
 ///   <c>IOCTL_DISK_SET_DISK_ATTRIBUTES</c>. Windows itself then refuses writes,
@@ -128,6 +131,60 @@ public sealed class WindowsUsbPolicyEnforcer(ILogger<WindowsUsbPolicyEnforcer> l
             // Any unexpected failure ends with the device restricted, never open.
             SetDeviceEnabled(instanceId, enabled: false, out _);
             return UsbEnforcementResult.Failed($"Read-only enforcement failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Enables the device and makes sure its disks are writable, enforcing an
+    /// administrator-issued read/write grant.
+    /// </summary>
+    /// <remarks>
+    /// Unlike <see cref="AllowReadOnly"/>, a disk that fails to become writable
+    /// is not a security failure — the device is merely narrower than the grant
+    /// allows, which is the safe direction — so this does not fall back to
+    /// restricting. It is still reported as a failure, because the console must
+    /// not show read/write for a device that is actually read-only.
+    /// </remarks>
+    public UsbEnforcementResult AllowReadWrite(string instanceId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(instanceId);
+
+        try
+        {
+            if (!SetDeviceEnabled(instanceId, enabled: true, out var error))
+            {
+                return UsbEnforcementResult.Failed(error);
+            }
+
+            var failures = new List<string>();
+
+            foreach (var diskPath in WaitForDisks(instanceId))
+            {
+                if (!SetDiskWritable(diskPath, out var diskError))
+                {
+                    failures.Add($"{diskPath}: {diskError}");
+                }
+            }
+
+            if (failures.Count > 0)
+            {
+                return UsbEnforcementResult.Failed(
+                    "The device was enabled but stayed read-only on "
+                    + $"{failures.Count} disk(s): {string.Join("; ", failures)}.");
+            }
+
+            _logger.LogInformation(
+                "USB storage device {InstanceId} is enabled for read/write.", instanceId);
+
+            return UsbEnforcementResult.Ok;
+        }
+        catch (Exception ex)
+        {
+            // Unlike the read-only path there is no fall back to Restrict here.
+            // The grant is live and the administrator has asked for access; a
+            // transient error applying it should leave the device where it is
+            // and be reported, not silently revoke a decision.
+            return UsbEnforcementResult.Failed($"Read/write enforcement failed: {ex.Message}");
         }
     }
 

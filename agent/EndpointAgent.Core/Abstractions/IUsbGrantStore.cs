@@ -2,12 +2,21 @@ namespace EndpointAgent.Core.Abstractions;
 
 /// <summary>One administrator-issued grant, as the endpoint remembers it.</summary>
 /// <param name="InstanceId">The exact device this covers.</param>
+/// <param name="Policy">
+/// The level granted. Defaults to <see cref="UsbEnforcedState.ReadOnly"/> so
+/// that a grant deserialised from a cache written by an older agent — which
+/// had no such field — is read as the narrower level rather than as write
+/// access nobody granted.
+/// </param>
 /// <param name="ExpiresAt">
 /// Absolute UTC deadline. The agent compares this against its own clock, which
 /// is what makes a grant lapse on time on a machine that never reaches the
 /// server again.
 /// </param>
-public sealed record UsbGrantRecord(string InstanceId, DateTimeOffset ExpiresAt);
+public sealed record UsbGrantRecord(
+    string InstanceId,
+    DateTimeOffset ExpiresAt,
+    UsbEnforcedState Policy = UsbEnforcedState.ReadOnly);
 
 /// <summary>The endpoint's cached copy of the policy the server issued.</summary>
 /// <param name="IssuedAt">

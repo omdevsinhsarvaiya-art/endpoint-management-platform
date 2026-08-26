@@ -156,7 +156,7 @@ public sealed class UsbReportTests(AgentApiPostgresFixture fixture)
             var usb = await db.UsbDevices.SingleAsync(u => u.DeviceId == deviceId);
 
             db.UsbAccessRequests.Add(UsbAccessRequest.GrantByAdministrator(
-                orgId, deviceId, usb.Id, usb.InstanceId, "Vendor firmware.",
+                orgId, deviceId, usb.Id, usb.InstanceId, UsbStoragePolicy.ReadOnly, "Vendor firmware.",
                 Guid.CreateVersion7(), "admin@test", TimeSpan.FromHours(2), DateTimeOffset.UtcNow));
 
             await db.SaveChangesAsync();
@@ -193,7 +193,7 @@ public sealed class UsbReportTests(AgentApiPostgresFixture fixture)
             // Granted three hours ago for one hour: lapsed two hours ago.
             var grantedAt = DateTimeOffset.UtcNow.AddHours(-3);
             db.UsbAccessRequests.Add(UsbAccessRequest.GrantByAdministrator(
-                orgId, deviceId, usb.Id, usb.InstanceId, "Expired grant.",
+                orgId, deviceId, usb.Id, usb.InstanceId, UsbStoragePolicy.ReadOnly, "Expired grant.",
                 Guid.CreateVersion7(), "admin@test", TimeSpan.FromHours(1), grantedAt));
 
             await db.SaveChangesAsync();
@@ -225,7 +225,7 @@ public sealed class UsbReportTests(AgentApiPostgresFixture fixture)
             var usb = await db.UsbDevices.SingleAsync(u => u.DeviceId == deviceA);
 
             db.UsbAccessRequests.Add(UsbAccessRequest.GrantByAdministrator(
-                orgId, deviceA, usb.Id, usb.InstanceId, "Only for A.",
+                orgId, deviceA, usb.Id, usb.InstanceId, UsbStoragePolicy.ReadOnly, "Only for A.",
                 Guid.CreateVersion7(), "admin@test", TimeSpan.FromHours(2), DateTimeOffset.UtcNow));
 
             await db.SaveChangesAsync();

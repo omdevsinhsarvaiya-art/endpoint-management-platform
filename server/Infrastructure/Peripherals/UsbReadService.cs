@@ -4,7 +4,10 @@ using Microsoft.EntityFrameworkCore;
 
 namespace EndpointPlatform.Infrastructure.Peripherals;
 
-/// <param name="Policy">What the console has decided: Restricted or ReadOnly.</param>
+/// <param name="Policy">
+/// What the console has decided: <c>Restricted</c>, <c>ReadOnly</c> or
+/// <c>Enabled</c>.
+/// </param>
 /// <param name="EnforcementState">
 /// What the endpoint is actually doing about it, as one of <c>Enforced</c>,
 /// <c>Pending</c>, <c>Drifted</c>, <c>Failed</c> or <c>NotApplicable</c>. Kept
@@ -42,6 +45,10 @@ public sealed record UsbAccessRequestView(
     string? Product,
     string Status,
     string Source,
+
+    /// <summary>The access level granted: <c>ReadOnly</c> or <c>Enabled</c>.</summary>
+    string GrantedPolicy,
+
     string Justification,
     DateTimeOffset RequestedAt,
     string? DecidedByDisplay,
@@ -156,6 +163,7 @@ public sealed class UsbReadService(EndpointPlatformDbContext dbContext, TimeProv
             products.TryGetValue(x.Request.UsbDeviceId, out var product) ? product : null,
             x.Request.Status.ToString(),
             x.Request.Source.ToString(),
+            x.Request.GrantedPolicy.ToString(),
             x.Request.Justification,
             x.Request.RequestedAt,
             x.Request.DecidedByDisplay,

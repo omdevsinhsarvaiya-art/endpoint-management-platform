@@ -114,10 +114,22 @@ public static class UsbEndpoints
 
         var actor = AdminActor.Required(httpContext.User);
 
-        var (outcome, granted) = await usbService.GrantReadOnlyAsync(
+        // Absent policy means ReadOnly. The narrower of the two levels is the
+        // default so that an older client, or a request that simply omits the
+        // field, cannot end up handing out write access by accident.
+        if (!TryParsePolicy(request.Policy, out var policy))
+        {
+            return Results.Problem(
+                $"Unknown USB access level '{request.Policy}'. Valid values are "
+                + $"'{nameof(UsbStoragePolicy.ReadOnly)}' and '{nameof(UsbStoragePolicy.Enabled)}'.",
+                statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        var (outcome, granted) = await usbService.GrantAsync(
             actor.OrganizationId,
             deviceId,
             usbDeviceId,
+            policy,
             request.Justification,
             TimeSpan.FromMinutes(request.DurationMinutes),
             actor.UserId,
@@ -130,7 +142,7 @@ public static class UsbEndpoints
             {
                 requestId = granted!.Id,
                 expiresAt = granted.ExpiresAt,
-                policy = nameof(UsbStoragePolicy.ReadOnly),
+                policy = granted.GrantedPolicy.ToString(),
             }),
 
             UsbGrantOutcome.DeviceNotFound or UsbGrantOutcome.UsbDeviceNotFound => Results.NotFound(),
@@ -144,6 +156,11 @@ public static class UsbEndpoints
                 "This device already has a live grant. Revoke it before issuing another, so that the "
                 + "expiry time stays unambiguous.",
                 statusCode: StatusCodes.Status409Conflict),
+
+            UsbGrantOutcome.InvalidPolicy => Results.Problem(
+                "Restricted is the absence of a grant, not something to grant. Use the revoke "
+                + "endpoint to return a device to Restricted.",
+                statusCode: StatusCodes.Status400BadRequest),
 
             UsbGrantOutcome.InvalidDuration => Results.Problem(
                 $"A grant must last between {UsbAccessRequest.MinimumDuration.TotalMinutes:0} minutes "
@@ -204,12 +221,50 @@ public static class UsbEndpoints
                 statusCode: StatusCodes.Status409Conflict)
             : Results.Accepted($"/admin/v1/devices/{deviceId}/tasks", new { taskId = task.Id });
     }
+
+    /// <summary>
+    /// Maps the wire value onto a grantable access level.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately not <c>Enum.TryParse</c> on its own. That would accept
+    /// "Restricted", and it would accept the ordinal "2" as
+    /// <see cref="UsbStoragePolicy.Enabled"/> — so a client sending a bare number
+    /// could obtain write access without ever naming it. Only the two exact
+    /// level names are accepted.
+    /// </remarks>
+    private static bool TryParsePolicy(string? value, out UsbStoragePolicy policy)
+    {
+        policy = UsbStoragePolicy.ReadOnly;
+
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return true;
+        }
+
+        if (string.Equals(value, nameof(UsbStoragePolicy.ReadOnly), StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (string.Equals(value, nameof(UsbStoragePolicy.Enabled), StringComparison.OrdinalIgnoreCase))
+        {
+            policy = UsbStoragePolicy.Enabled;
+            return true;
+        }
+
+        return false;
+    }
 }
 
 /// <param name="DurationMinutes">
-/// How long read-only access should last. Bounded here and again in the domain,
-/// because a validation attribute is a convenience and the invariant belongs to
-/// the entity.
+/// How long access should last. Bounded here and again in the domain, because a
+/// validation attribute is a convenience and the invariant belongs to the
+/// entity.
+/// </param>
+/// <param name="Policy">
+/// <c>ReadOnly</c> or <c>Enabled</c>. Omitted means <c>ReadOnly</c>: the
+/// narrower level is the default, so a caller has to name write access
+/// explicitly to receive it.
 /// </param>
 /// <param name="Justification">
 /// Why access is needed. Required: a grant nobody can explain later is not an
@@ -217,6 +272,7 @@ public static class UsbEndpoints
 /// </param>
 public sealed record GrantUsbAccessRequest(
     [property: Range(5, 1440)] int DurationMinutes,
-    [property: Required, StringLength(1000, MinimumLength = 3)] string Justification);
+    [property: Required, StringLength(1000, MinimumLength = 3)] string Justification,
+    [property: StringLength(16)] string? Policy = null);
 
 public sealed record RevokeUsbAccessRequest([property: StringLength(1000)] string? Note);

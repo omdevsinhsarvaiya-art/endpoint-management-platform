@@ -69,8 +69,9 @@ public sealed class ApplyUsbPolicyExecutor(
         var outcome = await _policyManager.ApplyPolicyAsync(grants, issuedAt, cancellationToken);
 
         _logger.LogInformation(
-            "USB policy applied: {ReadOnly} read-only, {Restricted} restricted, {Failed} failed.",
-            outcome.ReadOnly, outcome.Restricted, outcome.Failed);
+            "USB policy applied: {Enabled} read/write, {ReadOnly} read-only, {Restricted} restricted, "
+            + "{Failed} failed.",
+            outcome.Enabled, outcome.ReadOnly, outcome.Restricted, outcome.Failed);
 
         // A partial failure is reported as a failure. The alternative — saying
         // "applied" when a device could not actually be restricted — would put a
@@ -79,7 +80,7 @@ public sealed class ApplyUsbPolicyExecutor(
         {
             return new AgentTaskResult(
                 false,
-                $"USB policy applied to {outcome.Restricted + outcome.ReadOnly} device(s), but "
+                $"USB policy applied to {outcome.Restricted + outcome.ReadOnly + outcome.Enabled} device(s), but "
                 + $"{outcome.Failed} could not be enforced. Those devices are reported unenforced.",
                 null);
         }
@@ -88,7 +89,8 @@ public sealed class ApplyUsbPolicyExecutor(
             true,
             outcome.Total == 0
                 ? "USB policy applied. No USB storage is currently attached."
-                : $"USB policy applied: {outcome.ReadOnly} read-only, {outcome.Restricted} restricted.",
+                : $"USB policy applied: {outcome.Enabled} read/write, {outcome.ReadOnly} read-only, "
+                    + $"{outcome.Restricted} restricted.",
             null);
     }
 
@@ -178,17 +180,18 @@ public sealed class ApplyUsbPolicyExecutor(
             return false;
         }
 
-        // The only accepted value. An unrecognised policy — including any future
-        // attempt to express write access, and including the enum-as-number
-        // serialisation that has bitten this codebase before — is refused rather
-        // than approximated, so this agent cannot be talked into a state it does
-        // not implement.
+        // Exactly two accepted values, both as strings. Anything else — an
+        // unknown name, "Restricted" (which is the absence of a grant, not
+        // something to grant), or the enum-as-number serialisation that has
+        // bitten this codebase before — is refused rather than approximated,
+        // so a payload cannot talk this agent into a state it does not
+        // implement, and above all cannot reach write access by accident.
         if (!element.TryGetProperty("policy", out var policyElement)
             || policyElement.ValueKind != JsonValueKind.String
-            || !string.Equals(
-                policyElement.GetString(), nameof(UsbEnforcedState.ReadOnly), StringComparison.OrdinalIgnoreCase))
+            || !TryParsePolicy(policyElement.GetString(), out var policy))
         {
-            reason = $"its policy was not the string '{nameof(UsbEnforcedState.ReadOnly)}'";
+            reason = $"its policy was not '{nameof(UsbEnforcedState.ReadOnly)}' "
+                + $"or '{nameof(UsbEnforcedState.Enabled)}'";
             return false;
         }
 
@@ -206,7 +209,34 @@ public sealed class ApplyUsbPolicyExecutor(
             return false;
         }
 
-        grant = new UsbGrantRecord(instanceId, expiresAt);
+        grant = new UsbGrantRecord(instanceId, expiresAt, policy);
         return true;
+    }
+
+    /// <summary>
+    /// Maps a wire policy name onto a state this agent enforces.
+    /// </summary>
+    /// <remarks>
+    /// Written out rather than delegated to <c>Enum.TryParse</c> on purpose.
+    /// That helper accepts "Restricted", and it accepts the ordinal "2" as
+    /// <see cref="UsbEnforcedState.Enabled"/> — which would mean a payload
+    /// carrying a bare number could obtain write access without ever naming it.
+    /// </remarks>
+    private static bool TryParsePolicy(string? value, out UsbEnforcedState policy)
+    {
+        if (string.Equals(value, nameof(UsbEnforcedState.ReadOnly), StringComparison.OrdinalIgnoreCase))
+        {
+            policy = UsbEnforcedState.ReadOnly;
+            return true;
+        }
+
+        if (string.Equals(value, nameof(UsbEnforcedState.Enabled), StringComparison.OrdinalIgnoreCase))
+        {
+            policy = UsbEnforcedState.Enabled;
+            return true;
+        }
+
+        policy = UsbEnforcedState.Restricted;
+        return false;
     }
 }

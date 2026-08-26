@@ -7,10 +7,11 @@ namespace EndpointPlatform.Domain.Tests.Peripherals;
 /// </summary>
 /// <remarks>
 /// These are the rules the whole feature rests on: storage starts restricted,
-/// only storage can be granted, grants are read-only and time-boxed, and expiry
-/// is decided by the clock rather than by a sweep having run. A change that
-/// breaks one of them should fail here, loudly, rather than at three in the
-/// morning on somebody's laptop.
+/// only storage can be granted, a grant names one of exactly two access levels
+/// and is time-boxed, Restricted is never itself grantable, and expiry is decided
+/// by the clock rather than by a sweep having run. A change that breaks one of
+/// them should fail here, loudly, rather than at three in the morning on
+/// somebody's laptop.
 /// </remarks>
 public sealed class UsbDeviceTests
 {
@@ -44,7 +45,7 @@ public sealed class UsbDeviceTests
     public void A_grant_is_live_until_its_deadline_and_not_a_moment_after()
     {
         var device = NewDevice();
-        device.GrantReadOnly(Now.AddHours(2), Now);
+        device.Grant(UsbStoragePolicy.ReadOnly, Now.AddHours(2), Now);
 
         device.Policy.ShouldBe(UsbStoragePolicy.ReadOnly);
         device.HasLiveGrant(Now).ShouldBeTrue();
@@ -67,7 +68,7 @@ public sealed class UsbDeviceTests
         {
             var device = NewDevice(deviceClass);
 
-            Should.Throw<InvalidOperationException>(() => device.GrantReadOnly(Now.AddHours(1), Now));
+            Should.Throw<InvalidOperationException>(() => device.Grant(UsbStoragePolicy.ReadOnly, Now.AddHours(1), Now));
         }
     }
 
@@ -76,8 +77,8 @@ public sealed class UsbDeviceTests
     {
         var device = NewDevice();
 
-        Should.Throw<ArgumentOutOfRangeException>(() => device.GrantReadOnly(Now.AddSeconds(-1), Now));
-        Should.Throw<ArgumentOutOfRangeException>(() => device.GrantReadOnly(Now, Now));
+        Should.Throw<ArgumentOutOfRangeException>(() => device.Grant(UsbStoragePolicy.ReadOnly, Now.AddSeconds(-1), Now));
+        Should.Throw<ArgumentOutOfRangeException>(() => device.Grant(UsbStoragePolicy.ReadOnly, Now, Now));
     }
 
     /// <summary>
@@ -91,7 +92,7 @@ public sealed class UsbDeviceTests
     public void Policy_survives_a_disconnect_and_reconnect()
     {
         var device = NewDevice();
-        device.GrantReadOnly(Now.AddHours(2), Now);
+        device.Grant(UsbStoragePolicy.ReadOnly, Now.AddHours(2), Now);
 
         device.Disconnected(Now.AddMinutes(5));
         device.IsConnected.ShouldBeFalse();
@@ -110,7 +111,7 @@ public sealed class UsbDeviceTests
     public void Restricting_is_idempotent_and_clears_the_deadline()
     {
         var device = NewDevice();
-        device.GrantReadOnly(Now.AddHours(1), Now);
+        device.Grant(UsbStoragePolicy.ReadOnly, Now.AddHours(1), Now);
 
         device.Restrict();
         device.Restrict();
@@ -139,7 +140,7 @@ public sealed class UsbDeviceTests
         device.IsPolicyEnforced.ShouldBeTrue();
 
         // The console grants access; the endpoint has not confirmed it yet.
-        device.GrantReadOnly(Now.AddHours(1), Now);
+        device.Grant(UsbStoragePolicy.ReadOnly, Now.AddHours(1), Now);
         device.IsPolicyEnforced.ShouldBeFalse();
 
         device.ReportEnforcement(UsbStoragePolicy.ReadOnly, null, Now.AddSeconds(5));
@@ -174,6 +175,7 @@ public sealed class UsbAccessRequestTests
         UsbAccessRequest.GrantByAdministrator(
             Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(),
             @"USB\VID_0781&PID_5581\ABC123",
+            UsbStoragePolicy.ReadOnly,
             "Vendor delivered firmware on a stick.",
             Guid.CreateVersion7(), "admin@company.local",
             duration, Now);
@@ -266,7 +268,136 @@ public sealed class UsbAccessRequestTests
         Should.Throw<ArgumentException>(() => UsbAccessRequest.GrantByAdministrator(
             Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(),
             @"USB\VID_0781&PID_5581\ABC123",
+            UsbStoragePolicy.ReadOnly,
             justification: "   ",
+            Guid.CreateVersion7(), "admin", TimeSpan.FromHours(1), Now));
+    }
+}
+
+/// <summary>
+/// The three access levels: Restricted, ReadOnly and Enabled.
+/// </summary>
+/// <remarks>
+/// Enabled is the widest state the platform can express and the only one that
+/// permits writing to removable media, so the invariants around it are asserted
+/// separately rather than folded into the general grant tests. The rules that
+/// matter: it is time-boxed exactly like read-only, it returns to Restricted on
+/// revoke and on expiry, it cannot be issued for a non-storage device, and
+/// Restricted itself is never grantable.
+/// </remarks>
+public sealed class UsbAccessLevelTests
+{
+    private static readonly DateTimeOffset Now = new(2026, 8, 26, 12, 0, 0, TimeSpan.Zero);
+
+    private static UsbDevice NewDevice(UsbDeviceClass deviceClass = UsbDeviceClass.Storage) =>
+        new(
+            Guid.CreateVersion7(),
+            Guid.CreateVersion7(),
+            @"USB\VID_0781&PID_5581\ABC123",
+            deviceClass,
+            "0781",
+            "5581",
+            "ABC123",
+            "SanDisk",
+            "Cruzer Fit",
+            @"USB\VID_0781&PID_5581",
+            Now);
+
+
+    [Fact]
+    public void A_read_write_grant_is_live_and_expires_like_any_other()
+    {
+        var device = NewDevice();
+        device.Grant(UsbStoragePolicy.Enabled, Now.AddHours(2), Now);
+
+        device.Policy.ShouldBe(UsbStoragePolicy.Enabled);
+        device.HasLiveGrant(Now).ShouldBeTrue();
+        device.HasLiveGrant(Now.AddHours(2)).ShouldBeFalse();
+        device.HasLiveGrant(Now.AddHours(3)).ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// Restricted is the absence of a grant, so it cannot be granted.
+    /// </summary>
+    /// <remarks>
+    /// Rejected rather than quietly treated as a revoke. A caller asking to
+    /// "grant Restricted" has misunderstood something, and an expiry attached to
+    /// a state that has none would be meaningless — the device would silently
+    /// become accessible when it lapsed.
+    /// </remarks>
+    [Fact]
+    public void Restricted_cannot_be_granted()
+    {
+        var device = NewDevice();
+
+        Should.Throw<ArgumentOutOfRangeException>(
+            () => device.Grant(UsbStoragePolicy.Restricted, Now.AddHours(1), Now));
+
+        device.Policy.ShouldBe(UsbStoragePolicy.Restricted);
+        device.PolicyExpiresAt.ShouldBeNull();
+    }
+
+    [Fact]
+    public void An_undefined_access_level_cannot_be_granted()
+    {
+        var device = NewDevice();
+
+        Should.Throw<ArgumentOutOfRangeException>(
+            () => device.Grant((UsbStoragePolicy)99, Now.AddHours(1), Now));
+    }
+
+    [Fact]
+    public void Revoking_a_read_write_grant_returns_the_device_to_restricted()
+    {
+        var device = NewDevice();
+        device.Grant(UsbStoragePolicy.Enabled, Now.AddHours(2), Now);
+
+        device.Restrict();
+
+        device.Policy.ShouldBe(UsbStoragePolicy.Restricted);
+        device.PolicyExpiresAt.ShouldBeNull();
+        device.HasLiveGrant(Now).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void A_read_write_grant_cannot_be_issued_for_a_keyboard()
+    {
+        var keyboard = NewDevice(UsbDeviceClass.Keyboard);
+
+        Should.Throw<InvalidOperationException>(
+            () => keyboard.Grant(UsbStoragePolicy.Enabled, Now.AddHours(1), Now));
+    }
+
+    /// <summary>
+    /// The request row remembers which level was granted.
+    /// </summary>
+    /// <remarks>
+    /// The device row only ever carries its current state, so months later the
+    /// question "was this person given write access, or only read?" is answerable
+    /// from the request and nowhere else.
+    /// </remarks>
+    [Fact]
+    public void A_request_records_the_level_that_was_granted()
+    {
+        var request = UsbAccessRequest.GrantByAdministrator(
+            Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(),
+            @"USB\VID_0781&PID_5581\ABC123",
+            UsbStoragePolicy.Enabled,
+            "Field engineer needs to write logs to the stick.",
+            Guid.CreateVersion7(), "admin@company.local", TimeSpan.FromHours(1), Now);
+
+        request.GrantedPolicy.ShouldBe(UsbStoragePolicy.Enabled);
+        request.Status.ShouldBe(UsbAccessRequestStatus.Approved);
+    }
+
+    [Fact]
+    public void A_request_cannot_be_created_for_restricted()
+    {
+        Should.Throw<ArgumentOutOfRangeException>(() => UsbAccessRequest.GrantByAdministrator(
+            Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(),
+            @"USB\VID_0781&PID_5581\ABC123",
+            UsbStoragePolicy.Restricted,
+            "Nonsense.",
             Guid.CreateVersion7(), "admin", TimeSpan.FromHours(1), Now));
     }
 }

@@ -47,9 +47,11 @@ public enum UsbAccessRequestStatus
 /// <para>
 /// The row is the durable record of the decision, kept after the grant lapses so
 /// "who let this stick onto that machine, and when" is answerable months later.
-/// Approval never widens beyond read-only: there is no member of
-/// <see cref="UsbStoragePolicy"/> that permits writing, so no combination of
-/// requests can produce a writable device.
+/// Every request names the access level it is for — read-only, or full
+/// read/write — and that level is fixed at creation. A grant cannot be widened
+/// after the fact: an administrator wanting to move a device from read-only to
+/// read/write revokes and re-grants, which leaves two audit rows recording two
+/// distinct decisions rather than one row that quietly changed meaning.
 /// </para>
 /// <para>
 /// Expiry is an absolute instant chosen at approval, not a duration counted from
@@ -77,9 +79,18 @@ public sealed class UsbAccessRequest : AuditableEntity
         Guid usbDeviceId,
         string instanceId,
         UsbAccessRequestSource source,
+        UsbStoragePolicy grantedPolicy,
         string justification,
         DateTimeOffset now)
     {
+        if (grantedPolicy == UsbStoragePolicy.Restricted || !Enum.IsDefined(grantedPolicy))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(grantedPolicy),
+                "A request must be for ReadOnly or Enabled; Restricted is the absence of a grant.");
+        }
+
+        GrantedPolicy = grantedPolicy;
         OrganizationId = Guard.NotEmpty(organizationId);
         DeviceId = Guard.NotEmpty(deviceId);
         UsbDeviceId = Guard.NotEmpty(usbDeviceId);
@@ -100,6 +111,7 @@ public sealed class UsbAccessRequest : AuditableEntity
         Guid deviceId,
         Guid usbDeviceId,
         string instanceId,
+        UsbStoragePolicy grantedPolicy,
         string justification,
         Guid approverId,
         string approverDisplay,
@@ -108,7 +120,7 @@ public sealed class UsbAccessRequest : AuditableEntity
     {
         var request = new UsbAccessRequest(
             organizationId, deviceId, usbDeviceId, instanceId,
-            UsbAccessRequestSource.Administrator, justification, now);
+            UsbAccessRequestSource.Administrator, grantedPolicy, justification, now);
 
         request.Approve(approverId, approverDisplay, duration, now);
         return request;
@@ -128,6 +140,18 @@ public sealed class UsbAccessRequest : AuditableEntity
     public string InstanceId { get; private set; }
 
     public UsbAccessRequestSource Source { get; private set; }
+
+    /// <summary>
+    /// The access level this request is for. Never
+    /// <see cref="UsbStoragePolicy.Restricted"/>.
+    /// </summary>
+    /// <remarks>
+    /// Stored on the request rather than read from the device, because the
+    /// device row carries only its current state. Months later the audit
+    /// question is "what was this person actually given", and only the request
+    /// row can still answer it.
+    /// </remarks>
+    public UsbStoragePolicy GrantedPolicy { get; private set; }
 
     public UsbAccessRequestStatus Status { get; private set; }
 

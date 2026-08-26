@@ -278,7 +278,15 @@ export function getDeviceTasks(deviceId: string): Promise<DeviceTaskItem[]> {
 
 // ---- USB and peripheral control -------------------------------------------
 
-export type UsbPolicy = 'Restricted' | 'ReadOnly'
+export type UsbPolicy = 'Restricted' | 'ReadOnly' | 'Enabled'
+
+/**
+ * The two levels an administrator can actually grant.
+ *
+ * `Restricted` is deliberately absent: it is the absence of a grant, reached
+ * by revoking rather than by granting, and the server rejects it here.
+ */
+export type UsbGrantablePolicy = Exclude<UsbPolicy, 'Restricted'>
 
 /**
  * What the endpoint is actually doing, as distinct from what was decided.
@@ -354,13 +362,14 @@ export function grantUsbAccess(
   usbDeviceId: string,
   durationMinutes: number,
   justification: string,
+  policy: UsbGrantablePolicy = 'ReadOnly',
 ): Promise<{ requestId: string; expiresAt: string; policy: UsbPolicy }> {
   return request<{ requestId: string; expiresAt: string; policy: UsbPolicy }>(
     `/admin/v1/devices/${encodeURIComponent(deviceId)}/usb-devices/${encodeURIComponent(usbDeviceId)}/grant`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ durationMinutes, justification }),
+      body: JSON.stringify({ durationMinutes, justification, policy }),
     },
   )
 }

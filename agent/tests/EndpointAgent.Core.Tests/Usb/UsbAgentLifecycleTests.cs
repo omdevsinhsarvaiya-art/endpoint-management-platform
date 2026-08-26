@@ -391,6 +391,9 @@ public sealed class UsbAgentLifecycleTests
 
         public UsbEnforcementResult AllowReadOnly(string instanceId) => Record("AllowReadOnly", instanceId);
 
+        public UsbEnforcementResult AllowReadWrite(string instanceId) =>
+            Record("AllowReadWrite", instanceId);
+
         public UsbEnforcementResult Release(string instanceId) => Record("Release", instanceId);
 
         private UsbEnforcementResult Record(string action, string instanceId)

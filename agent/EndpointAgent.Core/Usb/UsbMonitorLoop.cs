@@ -114,8 +114,9 @@ public sealed class UsbMonitorLoop(
             if (enforced.Total > 0)
             {
                 _logger.LogDebug(
-                    "USB reconcile: {ReadOnly} read-only, {Restricted} restricted, {Failed} failed.",
-                    enforced.ReadOnly, enforced.Restricted, enforced.Failed);
+                    "USB reconcile: {Enabled} read/write, {ReadOnly} read-only, {Restricted} restricted, "
+                    + "{Failed} failed.",
+                    enforced.Enabled, enforced.ReadOnly, enforced.Restricted, enforced.Failed);
             }
 
             // 2. Tell the server what is attached and what we are enforcing.
@@ -144,14 +145,31 @@ public sealed class UsbMonitorLoop(
             var grants = new List<UsbGrantRecord>();
             foreach (var grant in response.Value.Grants ?? [])
             {
+                // Same two-name rule as the pushed task, and for the same
+                // reason: this is the other channel by which a policy can reach
+                // the endpoint, so a value the task path would reject must not
+                // be accepted here.
                 if (string.IsNullOrWhiteSpace(grant.InstanceId)
-                    || !string.Equals(grant.Policy, nameof(UsbEnforcedState.ReadOnly), StringComparison.OrdinalIgnoreCase)
                     || grant.ExpiresAt <= _timeProvider.GetUtcNow())
                 {
                     continue;
                 }
 
-                grants.Add(new UsbGrantRecord(grant.InstanceId, grant.ExpiresAt));
+                UsbEnforcedState policy;
+                if (string.Equals(grant.Policy, nameof(UsbEnforcedState.ReadOnly), StringComparison.OrdinalIgnoreCase))
+                {
+                    policy = UsbEnforcedState.ReadOnly;
+                }
+                else if (string.Equals(grant.Policy, nameof(UsbEnforcedState.Enabled), StringComparison.OrdinalIgnoreCase))
+                {
+                    policy = UsbEnforcedState.Enabled;
+                }
+                else
+                {
+                    continue;
+                }
+
+                grants.Add(new UsbGrantRecord(grant.InstanceId, grant.ExpiresAt, policy));
             }
 
             await _policyManager.ApplyPolicyAsync(grants, response.Value.IssuedAt, cancellationToken);

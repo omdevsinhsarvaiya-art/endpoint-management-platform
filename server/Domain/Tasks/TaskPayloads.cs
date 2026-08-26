@@ -64,13 +64,26 @@ public static class TaskPayloads
 
     /// <remarks>
     /// Serialised by name, like <see cref="ServiceAction"/> and for the same
-    /// reason. There is no <c>ReadWrite</c> member and adding one would be a
-    /// deliberate, reviewable act rather than a payload someone could craft.
+    /// reason: an ordinal on the wire is one reordering away from silently
+    /// meaning something else, and the agent refuses any value that is not one
+    /// of these exact strings.
     /// </remarks>
     [System.Text.Json.Serialization.JsonConverter(typeof(System.Text.Json.Serialization.JsonStringEnumConverter))]
     public enum UsbGrantPolicy
     {
+        /// <summary>Readable, not writable. Windows itself refuses the writes.</summary>
         ReadOnly = 0,
+
+        /// <summary>
+        /// Ordinary read/write access for the life of the grant.
+        /// </summary>
+        /// <remarks>
+        /// The widest value the protocol can carry. It is still time-boxed —
+        /// there is no member meaning "permanently trusted" — so the endpoint
+        /// returns to Restricted when the deadline passes, with or without
+        /// further contact from the server.
+        /// </remarks>
+        Enabled = 1,
     }
 
     /// <summary>
