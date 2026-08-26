@@ -14,6 +14,8 @@ import {
   type LocalGroupRow,
   type CreateLocalUserBody,
   type LocalUserRow,
+  getLocalAdminPosture,
+  type LocalAdminPosture,
 } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import { CreateLocalUserDialog } from './CreateLocalUserDialog'
@@ -50,6 +52,7 @@ function stageFor(status: string): string {
 export function DeviceUsersPanel({ deviceId, deviceName }: { deviceId: string; deviceName: string }) {
   const { hasPermission } = useAuth()
   const [users, setUsers] = useState<LocalUserRow[]>([])
+  const [posture, setPosture] = useState<LocalAdminPosture | null>(null)
   const [groups, setGroups] = useState<LocalGroupRow[]>([])
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -61,9 +64,16 @@ export function DeviceUsersPanel({ deviceId, deviceName }: { deviceId: string; d
 
   const load = useCallback(async () => {
     try {
-      const [u, g] = await Promise.all([getLocalUsers(deviceId), getLocalGroups(deviceId)])
+      const [u, g, p] = await Promise.all([
+        getLocalUsers(deviceId),
+        getLocalGroups(deviceId),
+        // Loaded alongside the accounts it is derived from, so the verdict and
+        // the rows behind it are always from the same moment.
+        getLocalAdminPosture(deviceId),
+      ])
       setUsers(u)
       setGroups(g)
+      setPosture(p)
       setError(null)
     } catch {
       setError('Could not load local accounts for this device.')
@@ -149,6 +159,7 @@ export function DeviceUsersPanel({ deviceId, deviceName }: { deviceId: string; d
 
   return (
     <div className="card">
+      {posture && <AdminPostureSummary posture={posture} />}
       {error && (
         <div className="error-banner" role="alert">
           <Icon name="alert" size={15} />
@@ -554,3 +565,83 @@ function UserDetail({
   )
 }
 
+/**
+ * The endpoint's local-administrator posture.
+ *
+ * Reports; never remediates. Milestone 11b deliberately offers no button here —
+ * an administrator account is removed only by an explicit, separately authorized
+ * action, never as a side effect of looking at a compliance view.
+ *
+ * The verdict is shown with the evidence behind it rather than alone. Someone
+ * looking at a Compliant machine that visibly has an Administrator account needs
+ * to see why it was discounted, or they will not believe the verdict — so the
+ * excluded accounts stay on screen with their reason.
+ */
+function AdminPostureSummary({ posture }: { posture: LocalAdminPosture }) {
+  const { compliance, interactiveAdministrators, findings, lastReportedAt } = posture
+
+  // Unknown is a warning, not a neutral: an endpoint we know nothing about is
+  // not an endpoint we have cleared.
+  const badge =
+    compliance === 'Compliant' ? 'ok' : compliance === 'NonCompliant' ? 'crit' : 'warn'
+
+  const label =
+    compliance === 'Compliant'
+      ? 'Standard user'
+      : compliance === 'NonCompliant'
+        ? 'Interactive administrator'
+        : 'Not yet reported'
+
+  const excluded = findings.filter((f) => f.isAdministrator && !f.countsAgainstCompliance)
+
+  return (
+    <div className="form-section" style={{ marginTop: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <span>Local administrator posture</span>
+        <span className={`badge ${badge}`}>{label}</span>
+        <span className="row-sub">
+          {lastReportedAt
+            ? `Last reported ${new Date(lastReportedAt).toLocaleString()}`
+            : 'No account inventory has been received from this endpoint yet.'}
+        </span>
+      </div>
+
+      {compliance === 'NonCompliant' && (
+        <div className="warn-banner" style={{ marginTop: 10, marginBottom: 0 }}>
+          <div>
+            {interactiveAdministrators.length === 1
+              ? 'This account is an interactive local administrator:'
+              : 'These accounts are interactive local administrators:'}
+          </div>
+          <div style={{ marginTop: 6 }}>
+            {interactiveAdministrators.map((a) => (
+              <code key={a.sid} className="row-sub mono-sub" title={a.sid}>
+                {a.username}
+              </code>
+            ))}
+          </div>
+          <div className="row-sub" style={{ marginTop: 8 }}>
+            Nothing has been changed on this endpoint. Removing administrator rights is a
+            separate, explicit action.
+          </div>
+        </div>
+      )}
+
+      {excluded.length > 0 && (
+        <div className="row-sub" style={{ marginTop: 8 }}>
+          Not counted:{' '}
+          {excluded.map((f, i) => (
+            <span key={f.sid}>
+              {i > 0 && '; '}
+              <strong>{f.username}</strong> — {f.excludedReason}
+            </span>
+          ))}
+        </div>
+      )}
+
+      <div className="row-sub" style={{ marginTop: 8 }}>
+        {posture.limitation}
+      </div>
+    </div>
+  )
+}

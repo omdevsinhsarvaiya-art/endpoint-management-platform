@@ -805,6 +805,42 @@ export interface LocalGroupRow {
   collectedAt: string
 }
 
+/**
+ * Whether this endpoint's interactive accounts are standard users.
+ *
+ * Derived by the server from the accounts the endpoint last reported, so this is
+ * a view, not a control — reading it changes nothing on the machine.
+ */
+export type LocalAdminCompliance = 'Compliant' | 'NonCompliant' | 'Unknown'
+
+export interface LocalAdminFinding {
+  sid: string
+  username: string
+  enabled: boolean
+  isAdministrator: boolean
+  /** Why this account was discounted, or null when it counts towards the verdict. */
+  excludedReason: string | null
+  countsAgainstCompliance: boolean
+}
+
+export interface LocalAdminPosture {
+  deviceId: string
+  hostname: string
+  displayName: string | null
+  compliance: LocalAdminCompliance
+  /** Null when nothing has been reported — which is what Unknown means. */
+  lastReportedAt: string | null
+  interactiveAdministrators: { sid: string; username: string; enabled: boolean }[]
+  findings: LocalAdminFinding[]
+  limitation: string
+}
+
+export function getLocalAdminPosture(deviceId: string): Promise<LocalAdminPosture> {
+  return request<LocalAdminPosture>(
+    `/admin/v1/devices/${encodeURIComponent(deviceId)}/local-admin-posture`,
+  )
+}
+
 export function getLocalUsers(deviceId: string): Promise<LocalUserRow[]> {
   return request<LocalUserRow[]>(`/admin/v1/devices/${encodeURIComponent(deviceId)}/local-users`)
 }

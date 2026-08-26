@@ -41,6 +41,14 @@ public static class LocalAccountEndpoints
             .WithName("GetDeviceLocalUser")
             .RequirePermission(Permissions.LocalUser.View);
 
+        // Reuses user.view rather than introducing a posture-specific
+        // permission. It is the same data, on the same device, behind the same
+        // scope check — a second permission over the identical rows would
+        // fragment an existing grant without narrowing anything.
+        group.MapGet("/local-admin-posture", GetAdminPostureAsync)
+            .WithName("GetDeviceLocalAdminPosture")
+            .RequirePermission(Permissions.LocalUser.View);
+
         group.MapGet("/local-user-profiles", ListProfilesAsync)
             .WithName("ListUserConfigurationProfiles")
             .RequirePermission(Permissions.LocalUser.View);
@@ -91,6 +99,100 @@ public static class LocalAccountEndpoints
     }
 
     // ------------------------------------------------------------------ reads
+
+    /// <summary>
+    /// Whether this endpoint's interactive accounts are standard users.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Derived on read from the reported accounts rather than stored. The facts
+    /// it needs — group membership and enabled state — already live on
+    /// <see cref="DeviceLocalUser"/>, so a cached verdict would be a second copy
+    /// that can disagree with them. It is computed by
+    /// <see cref="LocalAdministratorPosture"/>, the same pure function the policy
+    /// engine will call, so the console and a compliance evaluation can never
+    /// reach different conclusions from the same rows.
+    /// </para>
+    /// <para>
+    /// Read-only. Milestone 11b evaluates and reports; nothing here changes an
+    /// account, and specifically nothing downgrades an existing administrator.
+    /// </para>
+    /// </remarks>
+    private static async Task<IResult> GetAdminPostureAsync(
+        Guid deviceId, EndpointPlatformDbContext dbContext, DeviceScopeAuthorizer scope,
+        HttpContext httpContext, CancellationToken cancellationToken)
+    {
+        var actor = AdminActor.Required(httpContext.User);
+        if (!await scope.CanActOnDeviceAsync(actor.UserId, actor.OrganizationId, deviceId, cancellationToken))
+        {
+            return OutOfScope();
+        }
+
+        var device = await dbContext.Devices
+            .AsNoTracking()
+            .Where(d => d.Id == deviceId && d.OrganizationId == actor.OrganizationId)
+            .Select(d => new { d.Id, d.Hostname, d.DisplayName })
+            .SingleOrDefaultAsync(cancellationToken);
+
+        if (device is null)
+        {
+            return Results.NotFound();
+        }
+
+        var accounts = await dbContext.DeviceLocalUsers
+            .AsNoTracking()
+            .Where(u => u.DeviceId == deviceId)
+            .Select(u => new { u.Sid, u.Name, u.Enabled, u.IsLocalAdministrator, u.CollectedAt })
+            .ToListAsync(cancellationToken);
+
+        var posture = LocalAdministratorPosture.Evaluate(
+            accounts
+                .Select(a => new LocalAccountView(a.Sid, a.Name, a.Enabled, a.IsLocalAdministrator))
+                .ToList());
+
+        return Results.Ok(new
+        {
+            deviceId = device.Id,
+            hostname = device.Hostname,
+            displayName = device.DisplayName,
+
+            compliance = posture.Compliance.ToString(),
+
+            // Null when nothing has been reported, which is exactly the case
+            // Unknown exists for. An absent timestamp is the evidence that the
+            // verdict is absent too.
+            lastReportedAt = accounts.Count == 0
+                ? (DateTimeOffset?)null
+                : accounts.Max(a => a.CollectedAt),
+
+            // The accounts that make this endpoint non-compliant. Empty when it
+            // is compliant, and empty when nothing is known.
+            interactiveAdministrators = posture.InteractiveAdministrators
+                .Select(f => new { sid = f.Sid, username = f.Username, enabled = f.Enabled })
+                .ToList(),
+
+            // Every account considered, including the ones set aside and why.
+            // An operator looking at a Compliant machine that visibly has an
+            // Administrator account needs to see the reason it was discounted.
+            findings = posture.Findings
+                .Select(f => new
+                {
+                    sid = f.Sid,
+                    username = f.Username,
+                    enabled = f.Enabled,
+                    isAdministrator = f.IsAdministrator,
+                    excludedReason = f.ExcludedReason,
+                    countsAgainstCompliance = f.CountsAgainstCompliance,
+                })
+                .ToList(),
+
+            // Carried in the payload rather than left to the console to know.
+            // A caller acting on this verdict should see its stated scope.
+            limitation =
+                "Administrator rights held only through a nested group are not detected. "
+                + "Membership is read from direct membership of the local Administrators group.",
+        });
+    }
 
     private static async Task<IResult> ListUsersAsync(
         Guid deviceId, EndpointPlatformDbContext dbContext, DeviceScopeAuthorizer scope,

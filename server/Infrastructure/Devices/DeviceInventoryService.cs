@@ -1,6 +1,8 @@
 using System.Text.Json;
 using EndpointPlatform.Contracts.Agent;
+using EndpointPlatform.Domain.Auditing;
 using EndpointPlatform.Domain.Devices;
+using EndpointPlatform.Infrastructure.Auditing;
 using EndpointPlatform.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -28,6 +30,7 @@ namespace EndpointPlatform.Infrastructure.Devices;
 public sealed class DeviceInventoryService(
     EndpointPlatformDbContext dbContext,
     TimeProvider timeProvider,
+    AuditWriter auditWriter,
     ILogger<DeviceInventoryService> logger)
 {
     /// <summary>Caps that no legitimate machine exceeds; anything above is a hostile payload.</summary>
@@ -49,6 +52,9 @@ public sealed class DeviceInventoryService(
 
     private readonly TimeProvider _timeProvider = timeProvider
         ?? throw new ArgumentNullException(nameof(timeProvider));
+
+    private readonly AuditWriter _auditWriter = auditWriter
+        ?? throw new ArgumentNullException(nameof(auditWriter));
 
     private readonly ILogger<DeviceInventoryService> _logger = logger
         ?? throw new ArgumentNullException(nameof(logger));
@@ -151,6 +157,77 @@ public sealed class DeviceInventoryService(
             disks.Length);
     }
 
+    private static List<LocalAccountView> ToAccountViews(IEnumerable<DeviceLocalUser> users) =>
+        users
+            .Select(u => new LocalAccountView(u.Sid, u.Name, u.Enabled, u.IsLocalAdministrator))
+            .ToList();
+
+    /// <summary>
+    /// Records a change in local-administrator posture, and only a change.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Deliberately not an event per evaluation. The verdict is derived on
+    /// read, so evaluating it is not a mutation, and an endpoint reporting its
+    /// inventory every few minutes would otherwise write thousands of identical
+    /// rows into an append-only store — burying the transitions that matter in
+    /// the ones that do not.
+    /// </para>
+    /// <para>
+    /// The transition is the security event: a machine that was standard-user
+    /// and now has an interactive administrator is worth an alert, and so is the
+    /// reverse, because somebody changed something. Attributed to the agent,
+    /// because no operator performed this — the endpoint reported a new fact.
+    /// </para>
+    /// </remarks>
+    private void AuditPostureTransition(
+        Device device, LocalAdminPostureResult before, LocalAdminPostureResult after)
+    {
+        if (before.Compliance == after.Compliance)
+        {
+            return;
+        }
+
+        // Unknown -> anything on the first report is not a change in the
+        // machine, only the arrival of evidence about it. Recording that as a
+        // posture change would make every enrollment look like a security
+        // transition.
+        if (before.Compliance == LocalAdminCompliance.Unknown)
+        {
+            return;
+        }
+
+        _auditWriter.Stage(
+            device.OrganizationId,
+            AuditActorType.Agent,
+            device.Id,
+            device.Hostname,
+            action: "localuser.posture.changed",
+            after.Compliance == LocalAdminCompliance.NonCompliant
+                ? AuditResult.Failure
+                : AuditResult.Success,
+            audit => audit
+                .OnDevice(device.Id, device.Hostname)
+                .OnTarget("device", device.Id.ToString(), device.Hostname)
+                .WithStateChange(
+                    System.Text.Json.JsonSerializer.Serialize(new
+                    {
+                        compliance = before.Compliance.ToString(),
+                        interactiveAdministrators = before.InteractiveAdministrators
+                            .Select(a => a.Username).ToList(),
+                    }),
+                    System.Text.Json.JsonSerializer.Serialize(new
+                    {
+                        compliance = after.Compliance.ToString(),
+                        interactiveAdministrators = after.InteractiveAdministrators
+                            .Select(a => a.Username).ToList(),
+                    })));
+
+        _logger.LogInformation(
+            "Local administrator posture on {Hostname} changed from {Before} to {After}.",
+            device.Hostname, before.Compliance, after.Compliance);
+    }
+
     private async Task ApplyLocalAccountsAsync(
         Device device,
         InventoryLocalAccounts localAccounts,
@@ -161,11 +238,20 @@ public sealed class DeviceInventoryService(
         var existingUsers = await _dbContext.DeviceLocalUsers
             .Where(u => u.DeviceId == device.Id)
             .ToListAsync(cancellationToken);
+
+        // The verdict this report replaces, computed before the rows go. Both
+        // sets are already in hand here, which is the one place a change in
+        // posture can be noticed without storing a cached verdict to compare
+        // against.
+        var postureBefore = LocalAdministratorPosture.Evaluate(ToAccountViews(existingUsers));
+
         _dbContext.DeviceLocalUsers.RemoveRange(existingUsers);
+
+        var reportedUsers = new List<DeviceLocalUser>();
 
         foreach (var user in (localAccounts.Users ?? []).Take(MaxLocalUsers))
         {
-            _dbContext.DeviceLocalUsers.Add(new DeviceLocalUser(
+            reportedUsers.Add(new DeviceLocalUser(
                 device.Id,
                 user.Sid,
                 user.Name,
@@ -178,6 +264,10 @@ public sealed class DeviceInventoryService(
                 user.IsLocalAdministrator,
                 now));
         }
+
+        _dbContext.DeviceLocalUsers.AddRange(reportedUsers);
+        AuditPostureTransition(device, postureBefore, LocalAdministratorPosture.Evaluate(
+            ToAccountViews(reportedUsers)));
 
         var existingGroups = await _dbContext.DeviceLocalGroups
             .Where(g => g.DeviceId == device.Id)

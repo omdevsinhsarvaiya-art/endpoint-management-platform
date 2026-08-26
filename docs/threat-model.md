@@ -143,3 +143,55 @@ privileged boundary:
 4. All input — including from enrolled agents — is untrusted and validated.
 5. The agent initiates all connections; no listening sockets on endpoints.
 6. No arbitrary command execution surface, on server or agent, ever.
+
+## Local administrator posture (Milestone 11b)
+
+**What it answers.** Whether an endpoint's interactive accounts are standard
+users, derived from the accounts the agent reports rather than stored as a
+cached verdict — the facts it needs already live on the account rows, and a
+second copy could disagree with them.
+
+**Three verdicts.** `Unknown` is distinct from `Compliant` and never collapses
+into it. A machine that has reported nothing is not evidence of good posture,
+and rendering it as clean would overstate how much of the estate has been
+checked. The API returns a null `lastReportedAt` alongside it, so the absence of
+evidence is visible rather than implied.
+
+**Two exclusions**, both answering whether a person could actually sign in and
+act as an administrator:
+
+- *Disabled* accounts confer nothing interactively. Still reported: a disabled
+  administrator is one setting away from being live.
+- *Built-in* accounts are excluded because the platform refuses to delete or
+  disable RID 500 precisely so an organization cannot lock itself out. Counting
+  an account we protect by policy would mark every Windows machine permanently
+  non-compliant with no available remedy, and a finding nobody can act on is not
+  a finding.
+
+Excluded is not hidden — every discounted account is returned with its reason.
+
+**Built-ins are matched by RID, never by name.** Renaming the built-in
+Administrator is standard hardening and the names are localized, so a name-based
+rule would fail on a German install or after a rename — silently, in the
+direction of excusing an administrator. A malformed SID resolves to *not*
+built-in, which counts the account towards the verdict rather than excusing it:
+the SID arrives from an endpoint, so it is input, and a garbled report must not
+be able to produce a clean bill of health.
+
+**It evaluates; it does not remediate.** No path in 11b removes an account from
+Administrators, and the console offers no control to do so. Remediation is
+Milestone 12, behind its own explicit authorization.
+
+**Audit.** `localuser.posture.changed` is raised on a *transition*, detected at
+inventory ingest where the previous and new account sets are both in hand. There
+is deliberately no per-evaluation event: the verdict is derived on read, so
+evaluating is not a mutation, and an endpoint reporting every few minutes would
+otherwise bury real transitions under thousands of identical rows in an
+append-only store. The first report after enrollment is not treated as a
+transition — that is evidence arriving, not the machine changing.
+
+**Limitation, stated in the payload itself.** Administrator rights held only
+through a nested group are not detected; membership is read from direct
+membership of the local Administrators group. The limitation travels with the
+verdict so a caller acting on it can see its scope without reading this
+document.
