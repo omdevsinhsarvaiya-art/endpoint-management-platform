@@ -356,3 +356,51 @@ acceptance script for the lifecycle is:
 4. **Uninstalled** — remove the MSI; confirm both sticks mount and write
    normally, and that `usb-restricted-devices.json` is gone with the state
    directory.
+
+## Acceptance — Milestone 11a, closed 2026-08-27
+
+Signed off against **Agent 1.1.4** on `LAPTOP-LVCHEQ2H`, with real removable
+media on a real machine. Every state, transition and lifecycle path below was
+exercised by hand and behaved as specified:
+
+| Exercised | Result |
+|---|---|
+| Default state on attach | Restricted — no drive letter |
+| Read-only grant | Files readable and copyable *off* the device; writes refused by Windows |
+| Read/write grant | Ordinary Windows access, including writing to the device |
+| Timed access | Access ended on its own deadline |
+| Revoke | Returned to Restricted immediately |
+| Agent stopped | Device returned to normal, unmanaged Windows behaviour |
+| Agent restarted | Persisted policy re-applied without server involvement |
+
+Two defects were found by this acceptance rather than by the automated suites,
+which is the argument for running it on hardware at all:
+
+**A hub was classified from what was plugged into it.** The classifier gathered
+driver services from the whole devnode subtree — and a hub's subtree is every
+device on the bus. A root hub with a stick attached therefore collected
+`USBSTOR` from that stick, classified as storage, and was disabled: the webcam,
+fingerprint reader, Bluetooth radio and composite device on that hub all went
+dark at the same instant, and the stick itself never appeared in inventory
+because it now sat behind a dead hub. No automated test caught it because none
+of them had a real device tree. Fixed by deciding hub-ness from the device's own
+identity, before any storage rule, and by keeping the subtree walk inside one
+physical device.
+
+**Restricting a device destroyed the evidence that it was storage.** Disabling a
+devnode unloads its driver and removes its child devnodes — the two signals the
+classifier used to recognise removable storage. A restricted stick therefore
+reappeared as an anonymous peripheral, dropped out of the console's storage
+table, and could never be granted access again. Fixed by also recognising
+storage from compatible IDs, which come from the device's own descriptors and
+survive being disabled.
+
+Both are covered by tests now, and the guard added alongside them refuses to
+disable a hub regardless of classification — a guard that consulted the
+classification it guards against would agree with it, including when it is
+wrong.
+
+The boundary stated earlier in this document is unchanged and was not
+re-litigated by this acceptance: release is user-mode cleanup, so forced
+termination, a crash, a bugcheck or power loss leave a disabled devnode disabled
+until the agent next starts. No stronger claim is made.
