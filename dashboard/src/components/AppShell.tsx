@@ -3,6 +3,12 @@ import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
 import { getPendingEnrollments } from '../api/client'
 import { Icon, type IconName } from './Icon'
+import {
+  browserPreferenceStorage,
+  readSidebarCollapsed,
+  toggleLabel,
+  writeSidebarCollapsed,
+} from './sidebarPreference'
 
 interface NavItem {
   to: string
@@ -89,9 +95,23 @@ export function AppShell() {
   const { user, logout, hasPermission } = useAuth()
   const title = TITLES[location.pathname] ?? 'Endpoint Platform'
   const pendingCount = usePendingEnrollmentCount(hasPermission('device.enroll'))
+  const [collapsed, setCollapsed] = useState(() =>
+    readSidebarCollapsed(browserPreferenceStorage()),
+  )
+
+  // Written on the interaction rather than in an effect on `collapsed`, so
+  // that simply loading the page never writes a value back. Nothing should
+  // end up stored unless somebody actually chose it.
+  function toggleSidebar() {
+    setCollapsed((wasCollapsed) => {
+      const next = !wasCollapsed
+      writeSidebarCollapsed(browserPreferenceStorage(), next)
+      return next
+    })
+  }
 
   return (
-    <div className="app-shell">
+    <div className={collapsed ? 'app-shell is-collapsed' : 'app-shell'}>
       <aside className="sidebar">
         <div className="sidebar-brand">
           <div className="mark">
@@ -103,7 +123,7 @@ export function AppShell() {
           </div>
         </div>
 
-        <nav className="sidebar-nav" aria-label="Primary">
+        <nav id="primary-nav" className="sidebar-nav" aria-label="Primary">
           {NAV_SECTIONS.map((section, index) => (
             <div key={section.heading ?? `section-${index}`}>
               {section.heading && <div className="nav-group">{section.heading}</div>}
@@ -132,6 +152,29 @@ export function AppShell() {
 
       <div className="main">
         <header className="topbar">
+          {/*
+            In the topbar rather than in the sidebar itself. At 60px wide
+            the collapsed rail has no room for a control beside the brand
+            mark, and a toggle that moves or shrinks depending on the state
+            it controls is hard to find precisely when it is needed.
+
+            aria-expanded describes the navigation, not the button, and
+            aria-controls names it — so the state is announced without
+            depending on the label. The label names the action rather than
+            the current state, because "Collapse sidebar" tells someone what
+            pressing it will do.
+          */}
+          <button
+            type="button"
+            className="sidebar-toggle"
+            onClick={toggleSidebar}
+            aria-expanded={!collapsed}
+            aria-controls="primary-nav"
+            aria-label={toggleLabel(collapsed)}
+            title={toggleLabel(collapsed)}
+          >
+            <Icon name={collapsed ? 'chevron-right' : 'chevron-left'} size={16} />
+          </button>
           <h1>{title}</h1>
           <div className="topbar-user">
             <span className="avatar" aria-hidden="true">
