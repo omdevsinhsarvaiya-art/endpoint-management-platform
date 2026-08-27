@@ -1,4 +1,4 @@
-using EndpointPlatform.Contracts;
+﻿using EndpointPlatform.Contracts;
 using EndpointPlatform.Contracts.Agent;
 using EndpointPlatform.Domain.Enrollment;
 using EndpointPlatform.Infrastructure.Configuration;
@@ -83,6 +83,11 @@ public static class AgentEndpoints
                 GetPackageContentAsync)
             .WithName("AgentGetPackageContent");
 
+        group.MapGet(
+                AgentProtocol.Routes.DriverPackages + "/{packageId:guid}" + AgentProtocol.Routes.PackageContentSuffix,
+                GetDriverPackageContentAsync)
+            .WithName("AgentGetDriverPackageContent");
+
         group.MapPost(AgentProtocol.Routes.SecretRedeem, RedeemSecretAsync)
             .WithName("AgentRedeemSecret");
 
@@ -159,6 +164,57 @@ public static class AgentEndpoints
         }
 
         // The agent re-hashes and re-verifies the signer; these headers are hints, not trust.
+        return Results.File(stream, "application/octet-stream", package.FileName, enableRangeProcessing: false);
+    }
+
+    /// <summary>
+    /// Streams an approved driver package's archive to the requesting device.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately a separate handler from the software-package stream rather than a
+    /// shared one parameterised by catalogue. The two artefacts have different
+    /// verification gates on the endpoint, and one route serving both would mean an id
+    /// resolving to whichever catalogue happened to contain it.
+    /// </remarks>
+    private static async Task<IResult> GetDriverPackageContentAsync(
+        Guid packageId,
+        [FromHeader(Name = AgentProtocol.Headers.Credential)] string? credentialHeader,
+        [FromHeader(Name = AgentProtocol.Headers.ProtocolVersion)] int? protocolVersion,
+        AgentAuthenticationService authenticationService,
+        Infrastructure.Drivers.DriverPackageService driverPackageService,
+        Infrastructure.Software.IPackageContentStore contentStore,
+        CancellationToken cancellationToken)
+    {
+        if (protocolVersion != AgentProtocol.Version)
+        {
+            return Results.Problem(
+                title: "Unsupported agent protocol version.", statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        var auth = await authenticationService.AuthenticateAsync(credentialHeader, cancellationToken);
+        if (!auth.Success)
+        {
+            return Results.Unauthorized();
+        }
+
+        // Must belong to the device's own organization and not be withdrawn. A
+        // withdrawn package stops being downloadable immediately, so a task queued
+        // before the withdrawal cannot still fetch it.
+        var package = await driverPackageService.GetDeployableAsync(
+            auth.Device!.OrganizationId, packageId, cancellationToken);
+        if (package is null)
+        {
+            return Results.NotFound();
+        }
+
+        var stream = await contentStore.OpenReadAsync(package.Sha256, cancellationToken);
+        if (stream is null)
+        {
+            return Results.NotFound();
+        }
+
+        // The agent re-hashes the archive and verifies the catalogue signature and
+        // signer pin itself. This transfer is not a trust boundary.
         return Results.File(stream, "application/octet-stream", package.FileName, enableRangeProcessing: false);
     }
 

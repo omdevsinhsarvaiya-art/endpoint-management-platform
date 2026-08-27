@@ -782,6 +782,86 @@ export function getFleetReport(): Promise<FleetReport> {
 
 // ---- Windows local account management (Device -> Users / Groups) ----
 
+/**
+ * One temporary local-administrator elevation, as the console reads it.
+ *
+ * `state` is the platform's authorization. Whether Windows has actually applied
+ * it is answered separately by the account's own `isLocalAdministrator`, because
+ * the two can disagree -- see `describeEnforcement`.
+ */
+export type ElevationState =
+  | 'Requested'
+  | 'Approved'
+  | 'Active'
+  | 'Rejected'
+  | 'Expired'
+  | 'Revoked'
+  | 'Failed'
+
+export interface ElevationRow {
+  id: string
+  deviceId: string
+  /** The identity a decision was recorded against; a username can be renamed. */
+  targetSid: string
+  targetUsername: string
+  state: ElevationState
+  /** Computed server-side from the clock, so a row the sweeper has not reached still reads correctly. */
+  isLive: boolean
+  justification: string
+  requestedAt: string
+  requestedBy: string
+  approvedAt: string | null
+  approvedBy: string | null
+  activatedAt: string | null
+  expiresAt: string | null
+  revokedAt: string | null
+  decisionNote: string | null
+  failureReason: string | null
+}
+
+export function getElevations(deviceId: string): Promise<ElevationRow[]> {
+  return request<ElevationRow[]>(`/admin/v1/devices/${encodeURIComponent(deviceId)}/elevations`)
+}
+
+/**
+ * Requests an elevation, approving it in the same act when a duration is given.
+ *
+ * Omitting the duration leaves the request pending. The two states stay distinct
+ * server-side, so a genuine second-person approval can be introduced later
+ * without changing this call.
+ */
+export function requestElevation(
+  deviceId: string,
+  targetSid: string,
+  justification: string,
+  durationMinutes: number | null,
+): Promise<{ id: string; state: ElevationState; expiresAt: string | null }> {
+  return request(`/admin/v1/devices/${encodeURIComponent(deviceId)}/elevations`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ targetSid, justification, durationMinutes }),
+  })
+}
+
+export function approveElevation(
+  elevationId: string,
+  durationMinutes: number,
+): Promise<{ id: string; state: ElevationState; expiresAt: string | null }> {
+  return request(`/admin/v1/elevations/${encodeURIComponent(elevationId)}/approve`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ durationMinutes }),
+  })
+}
+
+export function revokeElevation(elevationId: string, note: string | null): Promise<void> {
+  return request(`/admin/v1/elevations/${encodeURIComponent(elevationId)}/revoke`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ note }),
+  })
+}
+
 export interface LocalUserRow {
   sid: string
   name: string

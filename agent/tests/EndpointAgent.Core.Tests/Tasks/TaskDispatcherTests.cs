@@ -1,4 +1,4 @@
-using EndpointAgent.Core.Abstractions;
+﻿using EndpointAgent.Core.Abstractions;
 using EndpointAgent.Core.Tasks;
 using EndpointPlatform.Contracts.Agent;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -113,6 +113,10 @@ public sealed class TaskDispatcherTests
             throw new NotSupportedException();
 
         public Task<AgentApiResult<Unit>> DownloadPackageAsync(Guid packageId, Stream destination, DeviceCredential c, CancellationToken ct = default) =>
+            throw new NotSupportedException();
+
+        public Task<AgentApiResult<Unit>> DownloadDriverPackageAsync(
+            Guid packageId, Stream destination, DeviceCredential c, CancellationToken ct = default) =>
             throw new NotSupportedException();
 
         public Task<AgentApiResult<RedeemSecretResponse>> RedeemSecretAsync(string secretReference, DeviceCredential c, CancellationToken ct = default) =>

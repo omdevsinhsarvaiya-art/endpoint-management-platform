@@ -1,4 +1,4 @@
-using System.Collections.Frozen;
+﻿using System.Collections.Frozen;
 
 namespace EndpointPlatform.Domain.Authorization;
 
@@ -47,6 +47,39 @@ public static class Permissions
         public const string Manage = "usb.manage";
     }
 
+    /// <summary>
+    /// Device drivers and driver health. Split from <see cref="Device"/> because
+    /// reading which machines have a faulted device is a diagnostic activity that
+    /// belongs to first-line support, while changing a driver is not.
+    /// </summary>
+    public static class Driver
+    {
+        /// <summary>See the driver inventory and each device's health verdict.</summary>
+        public const string View = "driver.view";
+
+        /// <summary>
+        /// Approve driver packages and install them on endpoints.
+        /// </summary>
+        /// <remarks>
+        /// High risk, and separate from <see cref="View"/>, because a driver runs in
+        /// the kernel: this is the most privileged code this platform can put on a
+        /// machine. Reading why a device is unhealthy is a support activity; deciding
+        /// what kernel code it runs is not.
+        /// </remarks>
+        public const string Manage = "driver.manage";
+    }
+
+    /// <summary>
+    /// BitLocker volume encryption. Only the read half exists so far: encrypting,
+    /// suspending and above all decrypting a volume are separate decisions that will
+    /// arrive as their own permissions rather than being folded into this one.
+    /// </summary>
+    public static class BitLocker
+    {
+        /// <summary>See volume encryption state and readiness. Never a recovery key.</summary>
+        public const string View = "bitlocker.view";
+    }
+
     public static class LocalUser
     {
         public const string View = "user.view";
@@ -56,6 +89,18 @@ public static class Permissions
         public const string ResetPassword = "user.reset_password";
         public const string ChangeType = "user.change_type";
         public const string ForcePasswordChange = "user.force_password_change";
+
+        /// <summary>
+        /// Grant, approve and revoke temporary local administrator rights.
+        /// </summary>
+        /// <remarks>
+        /// Separate from <see cref="ChangeType"/>, which permanently changes an
+        /// account. This one hands out administrator rights on a deadline, and the
+        /// two are different decisions with different blast radii -- somebody
+        /// trusted to grant a two-hour window is not necessarily trusted to make an
+        /// account an administrator forever, and the reverse is also true.
+        /// </remarks>
+        public const string Elevate = "localuser.elevate";
     }
 
     public static class Group
@@ -119,6 +164,11 @@ public static class Permissions
         // read path off a removable device that is otherwise closed.
         new(Usb.Manage, "Peripherals", "Grant and revoke temporary USB storage access", HighRisk: true),
 
+        new(Driver.View, "Drivers", "View device drivers and driver health", HighRisk: false),
+        new(Driver.Manage, "Drivers", "Approve driver packages and install them on devices", HighRisk: true),
+
+        new(BitLocker.View, "BitLocker", "View volume encryption state and readiness", HighRisk: false),
+
         new(LocalUser.View, "Local accounts", "View Windows local users on a device", HighRisk: false),
         new(LocalUser.Create, "Local accounts", "Create a Windows local user", HighRisk: true),
         new(LocalUser.Delete, "Local accounts", "Delete a Windows local user", HighRisk: true),
@@ -126,6 +176,7 @@ public static class Permissions
         new(LocalUser.ResetPassword, "Local accounts", "Reset a Windows local user password", HighRisk: true),
         new(LocalUser.ChangeType, "Local accounts", "Change account type (standard/administrator)", HighRisk: true),
         new(LocalUser.ForcePasswordChange, "Local accounts", "Force a password change at next logon", HighRisk: true),
+        new(LocalUser.Elevate, "Local accounts", "Grant temporary local administrator rights", HighRisk: true),
 
         new(Group.View, "Groups", "View device groups and Windows local groups", HighRisk: false),
         new(Group.Manage, "Groups", "Create, modify and delete groups and memberships", HighRisk: true),

@@ -1,4 +1,4 @@
-using System.Reflection;
+﻿using System.Reflection;
 using System.Threading.RateLimiting;
 using EndpointPlatform.Api.Endpoints;
 using EndpointPlatform.Api.Security;
@@ -63,7 +63,8 @@ public sealed class Program
             // Management-plane background jobs run in the Admin host only.
             builder.Services.AddHostedService<EndpointPlatform.Infrastructure.Tasks.TaskExpirySweeper>();
             builder.Services
-                .AddHostedService<EndpointPlatform.Infrastructure.Peripherals.UsbGrantExpirySweeper>();
+                .AddHostedService<EndpointPlatform.Infrastructure.Peripherals.UsbGrantExpirySweeper>()
+                .AddHostedService<EndpointPlatform.Infrastructure.Identity.LocalAdminElevationExpirySweeper>();
 
             // --- Authentication and authorization (Phase 3) -------------------
             builder.Services.AddOptions<AdminAuthOptions>()
@@ -169,6 +170,10 @@ public sealed class Program
             app.MapEnrollmentApprovalEndpoints();
             app.MapDeviceEndpoints();
             app.MapLocalAccountEndpoints();
+            app.MapLocalAdminElevationEndpoints();
+            app.MapDriverEndpoints();
+            app.MapBitLockerEndpoints();
+            app.MapDriverPackageEndpoints();
             app.MapSoftwareEndpoints();
             app.MapPackageEndpoints();
             app.MapSecurityEndpoints();

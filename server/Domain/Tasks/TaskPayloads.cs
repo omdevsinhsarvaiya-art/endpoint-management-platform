@@ -1,4 +1,4 @@
-namespace EndpointPlatform.Domain.Tasks;
+﻿namespace EndpointPlatform.Domain.Tasks;
 
 /// <summary>
 /// Typed payloads for task types that carry parameters. Serialised to the task's
@@ -105,6 +105,37 @@ public static class TaskPayloads
     /// </param>
     public sealed record ApplyUsbPolicy(IReadOnlyList<UsbGrant> Grants, DateTimeOffset IssuedAt);
 
+    /// <summary>One account authorized to hold local administrator rights.</summary>
+    /// <param name="Sid">
+    /// The account's Windows SID. The identity enforcement is matched on, because a
+    /// local account can be renamed and a rename must not retarget an elevation.
+    /// </param>
+    /// <param name="ExpiresAt">
+    /// Absolute deadline. The endpoint compares this against its own clock, which is
+    /// what makes an elevation lapse on time on a machine that never hears from the
+    /// server again.
+    /// </param>
+    public sealed record LocalAdminElevationGrant(string Sid, DateTimeOffset ExpiresAt);
+
+    /// <summary>
+    /// The complete set of live administrator elevations for one endpoint.
+    /// </summary>
+    /// <remarks>
+    /// Whole-state, not a delta: an account absent from <paramref name="Elevations"/>
+    /// must not remain elevated. An empty list is therefore valid and meaningful --
+    /// it means "nobody is authorized" -- and it is also what an endpoint converges
+    /// to on its own when a grant lapses, so the failure mode of the whole channel is
+    /// the narrow state.
+    /// </remarks>
+    /// <param name="IssuedAt">
+    /// When the server built this set. The agent keeps the newest and ignores an
+    /// older one arriving late, so a task queued before a revocation cannot reinstate
+    /// the access it removed.
+    /// </param>
+    public sealed record ApplyLocalAdminElevation(
+        IReadOnlyList<LocalAdminElevationGrant> Elevations,
+        DateTimeOffset IssuedAt);
+
     /// <param name="ProcessId">PID to terminate.</param>
     /// <param name="ExpectedImageName">
     /// Executable name the PID must currently have (e.g. <c>notepad.exe</c>). Guards
@@ -138,6 +169,53 @@ public static class TaskPayloads
         string? RequiredSignerSubject,
         string PackageName,
         string Version);
+
+
+    // ---- Driver installation (Milestone 13-3) ----
+    //
+    // Everything the endpoint needs to decide, on its own, whether to install: the
+    // content pin, the signer pin, what the package claims to drive, and what must
+    // be observable afterwards. Nothing here is a secret -- the hash is an integrity
+    // pin, not a credential -- so the payload is safe in the task audit record that
+    // DeviceTaskService writes for every queued task.
+
+    /// <param name="PackageId">Approved package to download from the Agent API. Never a URL.</param>
+    /// <param name="Sha256">
+    /// Lowercase-hex hash the downloaded archive must match. Checked before a single
+    /// entry is extracted, so tampered bytes are never unpacked.
+    /// </param>
+    /// <param name="InfFileName">Bare INF name inside the archive. Resolved beneath the extraction directory.</param>
+    /// <param name="HardwareId">
+    /// What the package drives. The endpoint refuses to touch the driver store unless
+    /// a present device actually matches this.
+    /// </param>
+    /// <param name="RequiredSignerSubject">
+    /// Substring the catalogue signer's subject must contain. Mandatory for drivers:
+    /// a trusted signature alone is not enough for kernel code.
+    /// </param>
+    /// <param name="ExpectedProvider">Driver provider that must be observable afterwards, when known.</param>
+    /// <param name="ExpectedDriverVersion">Driver version that must be observable afterwards, when known.</param>
+    /// <param name="AllowDowngrade">
+    /// Whether the endpoint may install over a newer driver. False by default and
+    /// carried explicitly, so a downgrade is always a decision somebody made and the
+    /// audit records which one.
+    /// </param>
+    /// <param name="IssuedAt">
+    /// When the server issued this instruction. The endpoint refuses a payload older
+    /// than its freshness window, so a captured task cannot be replayed into an
+    /// install months later.
+    /// </param>
+    public sealed record InstallDriverPackage(
+        Guid PackageId,
+        string Sha256,
+        string InfFileName,
+        string HardwareId,
+        string RequiredSignerSubject,
+        string? ExpectedProvider,
+        string? ExpectedDriverVersion,
+        bool AllowDowngrade,
+        string PackageName,
+        DateTimeOffset IssuedAt);
 
     // ---- Local Windows account management (Phase 4 write side) ----
     //

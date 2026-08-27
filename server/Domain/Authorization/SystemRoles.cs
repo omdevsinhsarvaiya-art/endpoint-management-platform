@@ -1,4 +1,4 @@
-using System.Collections.Frozen;
+﻿using System.Collections.Frozen;
 
 namespace EndpointPlatform.Domain.Authorization;
 
@@ -52,12 +52,23 @@ public static class SystemRoles
         Permissions.Device.Rename,
         Permissions.Usb.View,
         Permissions.Usb.Manage,
+        Permissions.Driver.View,
+        // Deliberately not granted to Helpdesk. Installing a driver is putting kernel
+        // code on a machine, which is a change-control decision rather than a support
+        // action -- and Helpdesk can already see the fault and escalate it.
+        Permissions.Driver.Manage,
+        Permissions.BitLocker.View,
         Permissions.LocalUser.View,
         Permissions.LocalUser.Create,
         Permissions.LocalUser.Delete,
         Permissions.LocalUser.Disable,
         Permissions.LocalUser.ResetPassword,
         Permissions.LocalUser.ChangeType,
+        // Deliberately not granted to Helpdesk. Handing out administrator rights,
+        // even on a deadline, is an authorization decision rather than a support
+        // action -- and Helpdesk already holds enough to reset a password and get
+        // someone working again without it.
+        Permissions.LocalUser.Elevate,
         Permissions.LocalUser.ForcePasswordChange,
         Permissions.Group.View,
         Permissions.Group.Manage,
@@ -85,6 +96,14 @@ public static class SystemRoles
         // access to it. Granting a data path off an endpoint is a security
         // decision, so it stays with IT Administrator.
         Permissions.Usb.View,
+        // Reading why a device is not working is first-line diagnosis, and the
+        // permission grants nothing but reading. Changing a driver will be a
+        // separate permission that Helpdesk does not get.
+        Permissions.Driver.View,
+        // Knowing whether a laptop is encrypted is a support question as often as a
+        // security one. Reading it grants nothing: encrypting, suspending and
+        // decrypting are separate permissions Helpdesk does not hold.
+        Permissions.BitLocker.View,
         Permissions.LocalUser.View,
         Permissions.LocalUser.Disable,
         Permissions.LocalUser.ResetPassword,
@@ -102,6 +121,8 @@ public static class SystemRoles
         // deliberately absent: it is the one permission in this area that opens
         // a data path, and Auditor mutates nothing.
         Permissions.Usb.View,
+        Permissions.Driver.View,
+        Permissions.BitLocker.View,
         Permissions.LocalUser.View,
         Permissions.Group.View,
         Permissions.Software.View,

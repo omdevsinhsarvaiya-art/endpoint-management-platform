@@ -1,4 +1,4 @@
-using System.Security.Cryptography;
+﻿using System.Security.Cryptography;
 using EndpointAgent.Core;
 using EndpointAgent.Core.Abstractions;
 using EndpointAgent.Core.Tasks;
@@ -247,6 +247,10 @@ public sealed class UpdateAgentExecutorTests
         public Task<AgentApiResult<Unit>> PostComplianceAsync(AgentPolicyComplianceReport r, DeviceCredential c, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<AgentApiResult<RedeemSecretResponse>> RedeemSecretAsync(string secretReference, DeviceCredential c, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<AgentApiResult<Unit>> DownloadPackageAsync(Guid packageId, Stream destination, DeviceCredential c, CancellationToken ct = default) => throw new NotSupportedException();
+
+        public Task<AgentApiResult<Unit>> DownloadDriverPackageAsync(
+            Guid packageId, Stream destination, DeviceCredential c, CancellationToken ct = default) =>
+            throw new NotSupportedException();
     }
 
     private sealed class FakeCredentialStore : IDeviceCredentialStore

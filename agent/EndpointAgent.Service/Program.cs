@@ -1,4 +1,4 @@
-using System.Runtime.Versioning;
+﻿using System.Runtime.Versioning;
 using EndpointAgent.Core;
 using EndpointAgent.Core.Abstractions;
 using EndpointAgent.Core.Communication;
@@ -135,8 +135,22 @@ public static class Program
             builder.Services.AddSingleton<IEnrollmentStateStore, DpapiEnrollmentStateStore>();
             builder.Services.AddSingleton<ILocalAccountsCollector, WindowsLocalAccountsCollector>();
             builder.Services.AddSingleton<ISoftwareCollector, WindowsSoftwareCollector>();
-            builder.Services.AddSingleton<ISecurityPostureCollector, WindowsSecurityPostureCollector>();
+            builder.Services.AddSingleton<WindowsSecurityPostureCollector>();
+            builder.Services.AddSingleton<ISecurityPostureCollector>(
+                sp => sp.GetRequiredService<WindowsSecurityPostureCollector>());
+
+            // The same instance behind both faces: one reader of
+            // Win32_EncryptableVolume, so the posture summary and the volume list
+            // can never disagree about the same machine.
+            builder.Services.AddSingleton<IBitLockerCollector>(
+                sp => sp.GetRequiredService<WindowsSecurityPostureCollector>());
             builder.Services.AddSingleton<IWindowsUpdateCollector, WindowsUpdateCollector>();
+            builder.Services.AddSingleton<IDriverCollector, WindowsDriverCollector>();
+
+            // Writing drivers is registered separately from reading them: the
+            // collector is read-only by contract, and the installer is the only
+            // component that can change what kernel code this machine runs.
+            builder.Services.AddSingleton<IDriverInstaller, WindowsDriverInstaller>();
             builder.Services.AddSingleton<WindowsServiceProcessProvider>();
             builder.Services.AddSingleton<IServiceProcessCollector>(sp => sp.GetRequiredService<WindowsServiceProcessProvider>());
             builder.Services.AddSingleton<IServiceProcessControl>(sp => sp.GetRequiredService<WindowsServiceProcessProvider>());
@@ -169,6 +183,10 @@ public static class Program
             builder.Services.AddSingleton<IUsbDeviceWatcher, WindowsUsbDeviceWatcher>();
             builder.Services.AddSingleton<IUsbGrantStore, DpapiUsbGrantStore>();
             builder.Services.AddSingleton<IUsbRestrictionLedger, FileUsbRestrictionLedger>();
+            builder.Services.AddSingleton<IElevationLedger, FileElevationLedger>();
+            builder.Services.AddSingleton<EndpointAgent.Core.Identity.LocalAdminElevationManager>();
+            builder.Services.AddSingleton<EndpointAgent.Core.Tasks.ITaskExecutor, EndpointAgent.Core.Tasks.ApplyLocalAdminElevationExecutor>();
+            builder.Services.AddSingleton<EndpointAgent.Core.Tasks.ITaskExecutor, EndpointAgent.Core.Tasks.InstallDriverPackageExecutor>();
             builder.Services.AddSingleton<EndpointAgent.Core.Usb.UsbPolicyManager>();
             builder.Services.AddSingleton<EndpointAgent.Core.Usb.UsbMonitorLoop>();
             builder.Services.AddSingleton<EndpointAgent.Core.Tasks.ITaskExecutor, EndpointAgent.Core.Tasks.ApplyUsbPolicyExecutor>();

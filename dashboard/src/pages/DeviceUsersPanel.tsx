@@ -22,6 +22,7 @@ import { CreateLocalUserDialog } from './CreateLocalUserDialog'
 import { Icon } from '../components/Icon'
 import { waitForFreshInventory } from '../components/inventorySync'
 import { ConfirmDialog } from '../components/ConfirmDialog'
+import { DeviceElevationPanel } from './DeviceElevationPanel'
 import { useDialogDismiss } from '../components/useDialogDismiss'
 
 type Pending = { taskId: string; label: string; stage: string }
@@ -158,6 +159,7 @@ export function DeviceUsersPanel({ deviceId, deviceName }: { deviceId: string; d
   const canManageGroups = hasPermission('group.manage')
 
   return (
+    <>
     <div className="card">
       {posture && <AdminPostureSummary posture={posture} />}
       {error && (
@@ -315,6 +317,14 @@ export function DeviceUsersPanel({ deviceId, deviceName }: { deviceId: string; d
         </ConfirmDialog>
       )}
     </div>
+
+    {/* A separate card, deliberately below the account list: the accounts are
+        the ground truth this panel is read against. It receives the same loaded
+        accounts, so eligibility and drift are computed from the snapshot the
+        reader is already looking at rather than a second fetch that could
+        disagree with it. */}
+    <DeviceElevationPanel deviceId={deviceId} accounts={users} onChanged={() => void load()} />
+    </>
   )
 }
 

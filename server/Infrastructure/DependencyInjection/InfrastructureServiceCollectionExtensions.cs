@@ -1,4 +1,4 @@
-using EndpointPlatform.Infrastructure.Configuration;
+﻿using EndpointPlatform.Infrastructure.Configuration;
 using EndpointPlatform.Infrastructure.Persistence;
 using EndpointPlatform.Infrastructure.Persistence.Interceptors;
 using EndpointPlatform.Infrastructure.Persistence.Seeding;
@@ -185,9 +185,11 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<Enrollment.EnrollmentApprovalService>();
         services.AddSingleton<Software.IPackageContentStore, Software.FileSystemPackageContentStore>();
         services.AddScoped<Software.SoftwarePackageService>();
+        services.AddScoped<Drivers.DriverPackageService>();
         services.AddScoped<Agents.AgentReleaseService>();
         services.AddScoped<Peripherals.UsbService>();
         services.AddScoped<Peripherals.UsbReadService>();
+        services.AddScoped<Identity.LocalAdminElevationService>();
 
         return services;
     }

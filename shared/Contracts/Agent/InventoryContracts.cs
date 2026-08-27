@@ -1,4 +1,4 @@
-namespace EndpointPlatform.Contracts.Agent;
+﻿namespace EndpointPlatform.Contracts.Agent;
 
 /// <summary>
 /// Request body for <c>POST /agent/v1/inventory</c>: a full snapshot of the
@@ -20,7 +20,90 @@ public sealed record InventoryReport(
     InventorySecurityPosture? SecurityPosture = null,
     IReadOnlyList<InventoryService>? Services = null,
     IReadOnlyList<InventoryProcess>? Processes = null,
-    InventoryWindowsUpdate? WindowsUpdate = null);
+    InventoryWindowsUpdate? WindowsUpdate = null,
+    IReadOnlyList<InventoryDriver>? Drivers = null,
+    InventoryBitLocker? BitLocker = null);
+
+/// <summary>
+/// BitLocker volume encryption, as reported by the endpoint.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <paramref name="Status"/> is carried separately from the volume list because an
+/// empty list is ambiguous on its own: it could mean a machine with nothing
+/// encryptable, or an agent that was refused the query. BitLocker's WMI provider
+/// needs elevation, so the second happens, and reading it as the first would show a
+/// fully encrypted estate as plaintext.
+/// </para>
+/// <para>
+/// No recovery key appears anywhere in this contract, by construction. The agent
+/// reports that a recovery-password protector exists and the GUID identifying it; it
+/// never calls the method that returns the password, so there is no field here for
+/// one and nothing to redact downstream.
+/// </para>
+/// </remarks>
+/// <param name="Status">
+/// "Available", "AccessDenied", "NotAvailable" or "Error". Anything unrecognised is
+/// treated by the server as unknown, never as unencrypted.
+/// </param>
+public sealed record InventoryBitLocker(
+    string Status,
+    IReadOnlyList<InventoryBitLockerVolume> Volumes);
+
+/// <summary>
+/// One encryptable volume. Raw Windows values, classified server-side.
+/// </summary>
+/// <param name="DeviceIdentifier">The volume device id, e.g. <c>\\?\Volume{guid}\</c>.</param>
+/// <param name="ConversionStatus">Win32_EncryptableVolume conversion status, null when unread.</param>
+/// <param name="ProtectionStatus">Win32_EncryptableVolume protection status, null when unread.</param>
+/// <param name="RecoveryProtectorIds">
+/// GUIDs identifying the recovery-password protectors. Identifiers only: a protector
+/// id reveals nothing and unlocks nothing.
+/// </param>
+public sealed record InventoryBitLockerVolume(
+    string DeviceIdentifier,
+    string? DriveLetter,
+    string? PersistentVolumeId,
+    int? VolumeType,
+    int? ConversionStatus,
+    int? ProtectionStatus,
+    int? EncryptionPercentage,
+    int? EncryptionMethod,
+    bool? HasRecoveryPasswordProtector,
+    IReadOnlyList<string>? RecoveryProtectorIds);
+
+/// <summary>
+/// One PnP device and its bound driver.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Facts only. The agent reports the raw Windows problem code and lets the server
+/// classify it, so changing how a code is judged is a server change rather than a
+/// fleet-wide agent rollout.
+/// </para>
+/// <para>
+/// Every field but the identity is nullable, and null consistently means "could not
+/// be read" rather than "absent" -- notably <paramref name="ProblemCode"/>, where
+/// null must never be treated as the zero that means healthy.
+/// </para>
+/// </remarks>
+/// <param name="InstanceId">PnP instance id; the devnode's stable identity.</param>
+/// <param name="ProblemCode">CM_PROB_* value, 0 for none, null when unreadable.</param>
+/// <param name="IsSigned">
+/// Whether the bound driver package verified against a trusted catalogue. Null when
+/// it could not be determined, which is reported as unknown rather than guessed.
+/// </param>
+public sealed record InventoryDriver(
+    string InstanceId,
+    string DeviceName,
+    string? DeviceClass,
+    string? Manufacturer,
+    string? DriverProvider,
+    string? DriverVersion,
+    DateTimeOffset? DriverDate,
+    string? InfName,
+    int? ProblemCode,
+    bool? IsSigned);
 
 /// <summary>Windows Update status: recent history plus the reboot-required flag.</summary>
 public sealed record InventoryWindowsUpdate(

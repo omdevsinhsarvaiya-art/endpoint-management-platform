@@ -1,4 +1,4 @@
-using System.Collections.Frozen;
+﻿using System.Collections.Frozen;
 using EndpointPlatform.Domain.Authorization;
 
 namespace EndpointPlatform.Domain.Tasks;
@@ -12,11 +12,16 @@ namespace EndpointPlatform.Domain.Tasks;
 /// actions (a restart requested an hour ago should not fire when the machine
 /// finally checks in), longer for maintenance.
 /// </param>
+/// <param name="MinimumAgentVersion">
+/// The oldest agent build that has an executor for this task, or null when every
+/// supported agent can run it.
+/// </param>
 public sealed record DeviceTaskDefinition(
     DeviceTaskType Type,
     string RequiredPermission,
     bool HighRisk,
-    int DefaultTimeToLiveSeconds);
+    int DefaultTimeToLiveSeconds,
+    string? MinimumAgentVersion = null);
 
 /// <summary>
 /// The authorization and lifetime policy for every task type, in one place.
@@ -65,7 +70,60 @@ public static class DeviceTaskCatalog
             new(DeviceTaskType.ChangeLocalUserType, Permissions.LocalUser.ChangeType, HighRisk: true, 900),
             new(DeviceTaskType.AddLocalUserToGroup, Permissions.Group.Manage, HighRisk: true, 900),
             new(DeviceTaskType.RemoveLocalUserFromGroup, Permissions.Group.Manage, HighRisk: true, 900),
+        new(DeviceTaskType.ApplyLocalAdminElevation, Permissions.LocalUser.Elevate, HighRisk: true, 900),
+
+            // Driver installation needs an agent that has the executor. An older one
+            // would claim the task, fail it as an unknown type, and leave a failed
+            // task indistinguishable from a driver that would not install -- so the
+            // server refuses to queue it at all. Maintenance TTL: unlike an
+            // interactive action, a driver install that fires when a laptop
+            // reappears is still the right thing to do.
+            new(DeviceTaskType.InstallDriverPackage, Permissions.Driver.Manage, HighRisk: true, 3600,
+                MinimumAgentVersion: "1.3.0"),
         }.ToFrozenDictionary(d => d.Type);
+
+    /// <summary>
+    /// Whether an agent reporting <paramref name="agentVersion"/> can run this task.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Fails closed twice over. A definition with no minimum admits everything; a
+    /// definition with one admits nothing whose version cannot be parsed and
+    /// compared, because an agent that will not say what it is has not demonstrated
+    /// that it can do the work.
+    /// </para>
+    /// <para>
+    /// This is a pre-dispatch courtesy, not the safety boundary. The agent still
+    /// fails closed on a task type it has no executor for, and that behaviour is
+    /// unchanged -- this only stops the server creating work it knows will fail.
+    /// </para>
+    /// </remarks>
+    public static bool IsSupportedBy(DeviceTaskDefinition definition, string? agentVersion)
+    {
+        ArgumentNullException.ThrowIfNull(definition);
+
+        if (definition.MinimumAgentVersion is not { } minimum)
+        {
+            return true;
+        }
+
+        return Version.TryParse(Trim(agentVersion), out var reported)
+            && Version.TryParse(minimum, out var required)
+            && reported >= required;
+    }
+
+    /// <summary>Drops any pre-release or build suffix, e.g. "1.3.0-beta.2" or "1.3.0+ci".</summary>
+    private static string? Trim(string? version)
+    {
+        if (string.IsNullOrWhiteSpace(version))
+        {
+            return null;
+        }
+
+        var value = version.Trim();
+        var cut = value.IndexOfAny(['-', '+', ' ']);
+        return cut < 0 ? value : value[..cut];
+    }
 
     public static DeviceTaskDefinition Require(DeviceTaskType type) =>
         All.TryGetValue(type, out var definition)

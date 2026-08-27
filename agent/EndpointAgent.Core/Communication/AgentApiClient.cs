@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Net.Http.Json;
 using EndpointAgent.Core.Abstractions;
 using EndpointPlatform.Contracts;
@@ -274,6 +274,81 @@ public sealed class AgentApiClient(HttpClient httpClient, ILogger<AgentApiClient
             catch (Exception ex) when (ex is HttpRequestException or IOException or TaskCanceledException)
             {
                 _logger.LogWarning("Agent package download stream failed: {Reason}", ex.GetType().Name);
+                return AgentApiResult<Unit>.Transient();
+            }
+
+            return AgentApiResult<Unit>.Success(Unit.Value);
+        }
+    }
+
+    public async Task<AgentApiResult<Unit>> DownloadDriverPackageAsync(
+        Guid packageId, Stream destination, DeviceCredential credential,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(destination);
+        ArgumentNullException.ThrowIfNull(credential);
+
+        using var message = new HttpRequestMessage(
+            HttpMethod.Get,
+            AgentProtocol.RoutePrefix + AgentProtocol.Routes.DriverPackages + "/" + packageId
+                + AgentProtocol.Routes.PackageContentSuffix);
+
+        AddProtocolHeaders(message, Core.AgentVersion.Current);
+        message.Headers.Add(AgentProtocol.Headers.Credential, credential.ToHeaderValue());
+        message.Headers.Add(AgentProtocol.Headers.DeviceId, credential.DeviceId.ToString());
+
+        return await StreamToAsync(message, destination, "driver package", cancellationToken);
+    }
+
+    /// <summary>
+    /// Sends <paramref name="message"/> and copies the response body to
+    /// <paramref name="destination"/>, classifying every failure the same way the
+    /// software-package download does.
+    /// </summary>
+    private async Task<AgentApiResult<Unit>> StreamToAsync(
+        HttpRequestMessage message, Stream destination, string what, CancellationToken cancellationToken)
+    {
+        HttpResponseMessage response;
+        try
+        {
+            response = await _httpClient.SendAsync(
+                message, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            _logger.LogWarning("Agent {What} download failed to reach the server: {Reason}", what, ex.GetType().Name);
+            return AgentApiResult<Unit>.Transient();
+        }
+
+        using (response)
+        {
+            if (response.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                return AgentApiResult<Unit>.Unauthorized();
+            }
+
+            if ((int)response.StatusCode is >= 400 and < 500)
+            {
+                return AgentApiResult<Unit>.Rejected();
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                return AgentApiResult<Unit>.Transient();
+            }
+
+            try
+            {
+                await using var source = await response.Content.ReadAsStreamAsync(cancellationToken);
+                await source.CopyToAsync(destination, cancellationToken);
+            }
+            catch (Exception ex) when (ex is HttpRequestException or IOException or TaskCanceledException)
+            {
+                _logger.LogWarning("Agent {What} download stream failed: {Reason}", what, ex.GetType().Name);
                 return AgentApiResult<Unit>.Transient();
             }
 

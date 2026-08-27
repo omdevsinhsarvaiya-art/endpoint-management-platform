@@ -1,4 +1,4 @@
-namespace EndpointPlatform.Contracts;
+﻿namespace EndpointPlatform.Contracts;
 
 /// <summary>
 /// Constants shared by the Agent API and the Windows agent.
@@ -95,6 +95,15 @@ public static class AgentProtocol
         /// hash and signature itself regardless.
         /// </summary>
         public const string AgentUpdate = "/agent-update";
+
+        /// <summary>
+        /// Agent downloads approved driver-package archives from
+        /// {RoutePrefix}/driver-packages/{id}/content. Separate from software packages
+        /// because they are different artefacts with different gates -- and because a
+        /// shared route would let one id be served by whichever catalogue happened to
+        /// contain it.
+        /// </summary>
+        public const string DriverPackages = "/driver-packages";
 
         /// <summary>Suffix for the package content stream.</summary>
         public const string PackageContentSuffix = "/content";

@@ -1,4 +1,4 @@
-using Microsoft.Extensions.Options;
+﻿using Microsoft.Extensions.Options;
 using EndpointAgent.Core.Configuration;
 using EndpointAgent.Core.Abstractions;
 using EndpointAgent.Core.Enrollment;
@@ -395,6 +395,11 @@ public sealed class AgentEnrollmentManagerTests
 
         public Task<AgentApiResult<Unit>> DownloadPackageAsync(
             Guid packageId, Stream destination, DeviceCredential credential, CancellationToken cancellationToken = default) =>
+            Task.FromResult(AgentApiResult<Unit>.Success(Unit.Value));
+
+        public Task<AgentApiResult<Unit>> DownloadDriverPackageAsync(
+            Guid packageId, Stream destination, DeviceCredential credential,
+            CancellationToken cancellationToken = default) =>
             Task.FromResult(AgentApiResult<Unit>.Success(Unit.Value));
 
         public Task<AgentApiResult<RedeemSecretResponse>> RedeemSecretAsync(

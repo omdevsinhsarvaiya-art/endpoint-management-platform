@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using EndpointPlatform.Contracts.Agent;
 using EndpointPlatform.Domain.Auditing;
 using EndpointPlatform.Domain.Devices;
@@ -44,6 +44,8 @@ public sealed class DeviceInventoryService(
     public const int MaxServices = 2048;
     public const int MaxProcesses = 500;
     public const int MaxUpdateHistory = 200;
+    public const int MaxDrivers = 4096;
+    public const int MaxBitLockerVolumes = 64;
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -142,6 +144,16 @@ public sealed class DeviceInventoryService(
         if (report.WindowsUpdate is { } windowsUpdate)
         {
             await ApplyWindowsUpdateAsync(device, windowsUpdate, now, cancellationToken);
+        }
+
+        if (report.Drivers is { } drivers)
+        {
+            await ApplyDriversAsync(device, drivers, now, cancellationToken);
+        }
+
+        if (report.BitLocker is { } bitLocker)
+        {
+            await ApplyBitLockerAsync(device, bitLocker, now, cancellationToken);
         }
 
         device.RecordInventory(report.LoggedOnUser, now);
@@ -295,6 +307,273 @@ public sealed class DeviceInventoryService(
                 now));
         }
     }
+
+    /// <summary>
+    /// Replaces the device's driver snapshot and audits any change in its driver
+    /// health verdict.
+    /// </summary>
+    /// <remarks>
+    /// Whole-snapshot replace, like software and services: the agent sends what the
+    /// machine has now, and the server does not try to reason about what changed at
+    /// the row level. What it does reason about is the <em>verdict</em>, because a
+    /// machine that has just developed a driver fault is worth telling somebody
+    /// about, and a row-by-row diff would bury that in noise.
+    /// </remarks>
+    /// <summary>
+    /// Replaces the device's BitLocker snapshot: the availability verdict and every
+    /// reported volume.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The availability row is written even when no volumes came with it, and that is
+    /// the point of storing it separately. An agent that was refused the WMI query
+    /// sends <c>AccessDenied</c> and an empty list; without the row, that would be
+    /// indistinguishable from a machine with nothing encryptable and the estate would
+    /// appear to have decrypted itself.
+    /// </para>
+    /// <para>
+    /// Volumes are only cleared when the endpoint could actually answer. A failed
+    /// query must not delete the last known good picture and leave a console showing
+    /// nothing at all.
+    /// </para>
+    /// </remarks>
+    private async Task ApplyBitLockerAsync(
+        Device device,
+        InventoryBitLocker bitLocker,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var availability = ParseAvailability(bitLocker.Status);
+
+        var status = await _dbContext.DeviceBitLockerStatus
+            .SingleOrDefaultAsync(s => s.DeviceId == device.Id, cancellationToken);
+
+        if (status is null)
+        {
+            status = new DeviceBitLockerStatus(device.Id);
+            _dbContext.DeviceBitLockerStatus.Add(status);
+        }
+
+        status.Apply(availability, now);
+
+        // A query that did not succeed carries no information about volumes, so the
+        // stored snapshot is left alone rather than being emptied.
+        if (availability != BitLockerAvailability.Available)
+        {
+            return;
+        }
+
+        var existing = await _dbContext.DeviceBitLockerVolumes
+            .Where(v => v.DeviceId == device.Id)
+            .ToListAsync(cancellationToken);
+
+        _dbContext.DeviceBitLockerVolumes.RemoveRange(existing);
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var volume in (bitLocker.Volumes ?? []).Take(MaxBitLockerVolumes))
+        {
+            if (string.IsNullOrWhiteSpace(volume.DeviceIdentifier) || !seen.Add(volume.DeviceIdentifier))
+            {
+                continue;
+            }
+
+            _dbContext.DeviceBitLockerVolumes.Add(new DeviceBitLockerVolume(
+                device.Id,
+                Truncate(volume.DeviceIdentifier, 256)!,
+                Truncate(volume.DriveLetter, 8),
+                Truncate(volume.PersistentVolumeId, 128),
+                volume.VolumeType,
+                volume.ConversionStatus,
+                volume.ProtectionStatus,
+                volume.EncryptionPercentage,
+                volume.EncryptionMethod,
+                volume.HasRecoveryPasswordProtector,
+                JoinProtectorIds(volume.RecoveryProtectorIds),
+                now));
+        }
+    }
+
+    /// <summary>
+    /// Maps the reported availability string onto the enum, defaulting to
+    /// <see cref="BitLockerAvailability.Unknown"/>.
+    /// </summary>
+    /// <remarks>
+    /// An unrecognised value is Unknown and never Available. Anything else would let
+    /// a malformed or hostile report have its volume list trusted -- or, worse, have
+    /// an absent list read as an unencrypted machine.
+    /// </remarks>
+    private static BitLockerAvailability ParseAvailability(string? status) =>
+        Enum.TryParse<BitLockerAvailability>(status, ignoreCase: false, out var parsed)
+        && parsed != BitLockerAvailability.Unknown
+            ? parsed
+            : BitLockerAvailability.Unknown;
+
+    /// <summary>
+    /// Joins protector identifiers for storage, keeping only well-formed GUIDs.
+    /// </summary>
+    /// <remarks>
+    /// The GUID filter is the point. A protector id is a GUID and nothing else, so
+    /// rejecting anything that is not one means the column cannot be used to smuggle
+    /// arbitrary text -- a recovery key among it -- into the database through a
+    /// field an operator will read.
+    /// </remarks>
+    private static string? JoinProtectorIds(IReadOnlyList<string>? ids)
+    {
+        if (ids is null || ids.Count == 0)
+        {
+            return null;
+        }
+
+        var wellFormed = ids
+            .Where(id => Guid.TryParse(id?.Trim().Trim('{', '}'), out _))
+            .Select(id => id.Trim())
+            .Take(16)
+            .ToArray();
+
+        return wellFormed.Length == 0 ? null : string.Join(',', wellFormed);
+    }
+
+    private async Task ApplyDriversAsync(
+        Device device,
+        IReadOnlyList<InventoryDriver> drivers,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var existing = await _dbContext.DeviceDrivers
+            .Where(d => d.DeviceId == device.Id)
+            .ToListAsync(cancellationToken);
+
+        var healthBefore = DriverHealthSummary.Evaluate(existing.Select(d => d.ToView()).ToList());
+
+        _dbContext.DeviceDrivers.RemoveRange(existing);
+
+        var reported = new List<DeviceDriver>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var driver in drivers.Take(MaxDrivers))
+        {
+            if (string.IsNullOrWhiteSpace(driver.InstanceId))
+            {
+                continue;
+            }
+
+            // The instance id is the devnode's identity, so a repeat is a
+            // malformed payload rather than two devices. Keeping the first and
+            // dropping the rest stops a duplicate-stuffed upload from inflating
+            // the fault counts.
+            if (!seen.Add(driver.InstanceId))
+            {
+                continue;
+            }
+
+            reported.Add(new DeviceDriver(
+                device.Id,
+                Truncate(driver.InstanceId, 512)!,
+                Truncate(string.IsNullOrWhiteSpace(driver.DeviceName)
+                    ? driver.InstanceId
+                    : driver.DeviceName, 384)!,
+                Truncate(driver.DeviceClass, 128),
+                Truncate(driver.Manufacturer, 256),
+                Truncate(driver.DriverProvider, 256),
+                Truncate(driver.DriverVersion, 64),
+                driver.DriverDate,
+                Truncate(driver.InfName, 256),
+                NormalizeProblemCode(driver.ProblemCode),
+                driver.IsSigned,
+                now));
+        }
+
+        _dbContext.DeviceDrivers.AddRange(reported);
+
+        AuditDriverHealthTransition(
+            device, healthBefore, DriverHealthSummary.Evaluate(reported.Select(d => d.ToView()).ToList()));
+    }
+
+    /// <summary>
+    /// Keeps an implausible problem code out of the store as "unknown".
+    /// </summary>
+    /// <remarks>
+    /// CM_PROB_* values are small positive integers. A negative or absurd value did
+    /// not come from Windows, and storing it would let a hostile agent invent
+    /// problem codes -- harmless today, but the classifier would report them as
+    /// unattributed problems and skew every fleet count. Unknown is the honest
+    /// place for a value we do not believe.
+    /// </remarks>
+    private static int? NormalizeProblemCode(int? problemCode) =>
+        problemCode is >= 0 and <= 1000 ? problemCode : null;
+
+    /// <summary>
+    /// Audits a change in an endpoint's driver health verdict.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Transition-only, for the same reason the local-administrator posture audit is
+    /// (see <see cref="AuditPostureTransition"/>): drivers are re-reported on every
+    /// inventory cycle, and writing a row each time would bury the transitions that
+    /// matter under thousands that do not.
+    /// </para>
+    /// <para>
+    /// Unknown to anything is not audited. A machine reporting drivers for the first
+    /// time has not changed -- evidence about it has merely arrived -- and recording
+    /// that as a fault would make every enrollment look like a new problem.
+    /// </para>
+    /// </remarks>
+    private void AuditDriverHealthTransition(
+        Device device, DriverHealthResult before, DriverHealthResult after)
+    {
+        if (before.OverallState == DriverHealthState.Unknown)
+        {
+            return;
+        }
+
+        // The fault set, not just the overall state: a machine that swaps one
+        // faulted device for a different one stays "Problem" overall while
+        // something material has changed.
+        var beforeFaults = before.Faults.Select(f => f.InstanceId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var afterFaults = after.Faults.Select(f => f.InstanceId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        if (beforeFaults.SetEquals(afterFaults))
+        {
+            return;
+        }
+
+        _auditWriter.Stage(
+            device.OrganizationId,
+            AuditActorType.Agent,
+            device.Id,
+            device.Hostname,
+            action: "driver.problem.detected",
+            after.Faults.Count > before.Faults.Count ? AuditResult.Failure : AuditResult.Success,
+            audit => audit
+                .OnDevice(device.Id, device.Hostname)
+                .OnTarget("device", device.Id.ToString(), device.Hostname)
+                .WithStateChange(
+                    JsonSerializer.Serialize(DescribeHealth(before), JsonOptions),
+                    JsonSerializer.Serialize(DescribeHealth(after), JsonOptions)));
+
+        _logger.LogInformation(
+            "Driver health on {Hostname} changed: {BeforeCount} fault(s) -> {AfterCount} fault(s).",
+            device.Hostname, before.Faults.Count, after.Faults.Count);
+    }
+
+    private static object DescribeHealth(DriverHealthResult health) => new
+    {
+        state = health.OverallState.ToString(),
+        driverFaults = health.DriverFaultCount,
+        deviceFaults = health.DeviceFaultCount,
+        indeterminateFaults = health.IndeterminateFaultCount,
+        unknown = health.UnknownCount,
+        faults = health.Faults
+            .Select(f => new
+            {
+                instanceId = f.InstanceId,
+                deviceName = f.DeviceName,
+                problemCode = f.Verdict.ProblemCode,
+                fault = f.Verdict.FaultKind.ToString(),
+            })
+            .ToList(),
+    };
 
     private async Task ApplySoftwareAsync(
         Device device,

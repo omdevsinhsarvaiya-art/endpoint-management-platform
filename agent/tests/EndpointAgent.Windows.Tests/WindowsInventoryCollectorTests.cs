@@ -1,4 +1,4 @@
-using EndpointAgent.Windows;
+﻿using EndpointAgent.Windows;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace EndpointAgent.Windows.Tests;
@@ -10,18 +10,27 @@ namespace EndpointAgent.Windows.Tests;
 /// </summary>
 public sealed class WindowsInventoryCollectorTests
 {
-    private static WindowsInventoryCollector CreateCollector() =>
-        new(
+    private static WindowsInventoryCollector CreateCollector()
+    {
+        // One instance behind both faces, exactly as the service registers it: the
+        // posture collector is also the BitLocker collector, so a single reader of
+        // Win32_EncryptableVolume answers both.
+        var posture = new WindowsSecurityPostureCollector(
+            new WindowsLocalAccountsCollector(NullLogger<WindowsLocalAccountsCollector>.Instance),
+            NullLogger<WindowsSecurityPostureCollector>.Instance);
+
+        return new WindowsInventoryCollector(
             new WindowsSystemInfoProvider(NullLogger<WindowsSystemInfoProvider>.Instance),
             new WindowsLocalAccountsCollector(NullLogger<WindowsLocalAccountsCollector>.Instance),
             new WindowsSoftwareCollector(NullLogger<WindowsSoftwareCollector>.Instance),
-            new WindowsSecurityPostureCollector(
-                new WindowsLocalAccountsCollector(NullLogger<WindowsLocalAccountsCollector>.Instance),
-                NullLogger<WindowsSecurityPostureCollector>.Instance),
+            posture,
             new WindowsServiceProcessProvider(NullLogger<WindowsServiceProcessProvider>.Instance),
             new WindowsUpdateCollector(NullLogger<WindowsUpdateCollector>.Instance),
+            new WindowsDriverCollector(NullLogger<WindowsDriverCollector>.Instance),
+            posture,
             TimeProvider.System,
             NullLogger<WindowsInventoryCollector>.Instance);
+    }
 
     [Fact]
     public async Task Collects_a_complete_report_without_throwing()

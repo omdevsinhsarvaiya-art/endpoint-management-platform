@@ -1,4 +1,4 @@
-using EndpointPlatform.Domain.Authorization;
+﻿using EndpointPlatform.Domain.Authorization;
 
 namespace EndpointPlatform.Domain.Tests.Authorization;
 
@@ -158,6 +158,96 @@ public sealed class SystemRoleTests
         catalogue[Permissions.Usb.Manage].HighRisk.ShouldBeTrue();
 
         SystemRoles.All[SystemRoles.Auditor].PermissionKeys.ShouldContain(Permissions.Usb.View);
+    }
+
+    /// <summary>
+    /// Reading why a device is not working is diagnosis, so every operational role
+    /// holds it.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately wider than the USB split above, because the permission grants
+    /// nothing but reading -- there is no driver mutation behind it. Changing a
+    /// driver will arrive as its own permission, and this test will not grant it.
+    /// </remarks>
+    [Fact]
+    public void Driver_visibility_is_read_only_and_held_by_every_operational_role()
+    {
+        Permissions.All.ToDictionary(p => p.Key, StringComparer.Ordinal)[Permissions.Driver.View]
+            .HighRisk.ShouldBeFalse();
+
+        foreach (var role in new[]
+                 {
+                     SystemRoles.SuperAdministrator, SystemRoles.ItAdministrator,
+                     SystemRoles.Helpdesk, SystemRoles.Auditor,
+                 })
+        {
+            SystemRoles.All[role].PermissionKeys.ShouldContain(
+                Permissions.Driver.View, $"Role '{role}' should be able to see driver health.");
+        }
+    }
+
+    /// <summary>
+    /// Reading encryption state is safe for every operational role; changing it is
+    /// not, and no permission that could change it exists yet.
+    /// </summary>
+    /// <remarks>
+    /// The second assertion is the one that matters over time. Encryption, suspension
+    /// and above all decryption are separate decisions, and this test fails the moment
+    /// somebody adds a bitlocker permission that mutates without also deciding, here,
+    /// which roles may hold it.
+    /// </remarks>
+    [Fact]
+    public void Bitlocker_visibility_is_read_only_and_is_the_only_bitlocker_permission()
+    {
+        var catalogue = Permissions.All.ToDictionary(p => p.Key, StringComparer.Ordinal);
+
+        catalogue[Permissions.BitLocker.View].HighRisk.ShouldBeFalse();
+
+        foreach (var role in new[]
+                 {
+                     SystemRoles.SuperAdministrator, SystemRoles.ItAdministrator,
+                     SystemRoles.Helpdesk, SystemRoles.Auditor,
+                 })
+        {
+            SystemRoles.All[role].PermissionKeys.ShouldContain(
+                Permissions.BitLocker.View, $"Role '{role}' should be able to see encryption state.");
+        }
+
+        Permissions.AllKeys
+            .Where(k => k.StartsWith("bitlocker.", StringComparison.Ordinal))
+            .ShouldBe([Permissions.BitLocker.View],
+                "a mutating BitLocker permission was added without deciding which roles hold it");
+    }
+
+    /// <summary>
+    /// Installing a driver is putting kernel code on a machine, so it stays with the
+    /// roles trusted to change the estate rather than the ones trusted to support it.
+    /// </summary>
+    [Fact]
+    public void Only_administrators_can_install_drivers()
+    {
+        Permissions.All.ToDictionary(p => p.Key, StringComparer.Ordinal)[Permissions.Driver.Manage]
+            .HighRisk.ShouldBeTrue();
+
+        var holders = SystemRoles.All
+            .Where(r => r.Value.PermissionKeys.Contains(Permissions.Driver.Manage, StringComparer.Ordinal))
+            .Select(r => r.Key)
+            .ToArray();
+
+        holders.ShouldBe([SystemRoles.SuperAdministrator, SystemRoles.ItAdministrator], ignoreOrder: true);
+    }
+
+    /// <summary>
+    /// Seeing a driver fault and being able to replace the driver are separate
+    /// grants, and the split must survive future edits to either role.
+    /// </summary>
+    [Fact]
+    public void Helpdesk_can_see_driver_health_but_not_install_drivers()
+    {
+        var helpdesk = SystemRoles.All[SystemRoles.Helpdesk].PermissionKeys;
+
+        helpdesk.ShouldContain(Permissions.Driver.View);
+        helpdesk.ShouldNotContain(Permissions.Driver.Manage);
     }
 
     [Fact]

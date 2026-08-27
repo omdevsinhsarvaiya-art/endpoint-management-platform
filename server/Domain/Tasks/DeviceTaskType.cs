@@ -1,4 +1,4 @@
-namespace EndpointPlatform.Domain.Tasks;
+﻿namespace EndpointPlatform.Domain.Tasks;
 
 /// <summary>
 /// The closed set of task types the platform can queue for an endpoint.
@@ -97,4 +97,30 @@ public enum DeviceTaskType
 
     /// <summary>Remove a local user (by SID) from a local group (by SID).</summary>
     RemoveLocalUserFromGroup = 48,
+
+    /// <summary>
+    /// The endpoint's complete set of live administrator elevations.
+    /// </summary>
+    /// <remarks>
+    /// Whole state, like <see cref="ApplyUsbPolicy"/>: the payload carries every
+    /// elevation that is currently authorized, and an account absent from it must
+    /// not remain elevated. There is deliberately no "remove elevation" task --
+    /// revocation is the absence of an entry rather than a second message that
+    /// could be lost while an endpoint is offline.
+    /// </remarks>
+    ApplyLocalAdminElevation = 49,
+
+    /// <summary>
+    /// Install an approved, hash- and signature-verified driver package
+    /// (Milestone 13).
+    /// </summary>
+    /// <remarks>
+    /// Deliberately NOT an <see cref="InstallPackage"/>. That path installs a single
+    /// MSI through the Windows Installer service; a driver is an archive of files
+    /// installed into the driver store through a different API, and it lands in the
+    /// kernel rather than in Program Files. Sharing the executor would mean one code
+    /// path deciding at runtime which set of gates applies, and the more dangerous of
+    /// the two would be the one chosen by a mistake.
+    /// </remarks>
+    InstallDriverPackage = 50,
 }

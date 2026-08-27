@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using EndpointPlatform.Domain.Auditing;
 using EndpointPlatform.Domain.Devices;
 using EndpointPlatform.Domain.Tasks;
@@ -62,6 +62,20 @@ public sealed class DeviceTaskService(
         }
 
         var definition = DeviceTaskCatalog.Require(type);
+
+        // Refused before the row exists rather than after the endpoint fails it.
+        // An agent without the executor would claim the task and report an unknown
+        // type, which reads in the console exactly like the operation genuinely
+        // failing -- so the operator would retry a thing that cannot work.
+        if (!DeviceTaskCatalog.IsSupportedBy(definition, device.AgentVersion))
+        {
+            _logger.LogInformation(
+                "Refusing to queue {Type} for device {DeviceId}: agent {Reported} is below the required {Required}.",
+                type, device.Id, device.AgentVersion, definition.MinimumAgentVersion);
+
+            return null;
+        }
+
         var payloadJson = payload is null ? null : JsonSerializer.Serialize(payload, JsonOptions);
         var now = _timeProvider.GetUtcNow();
 

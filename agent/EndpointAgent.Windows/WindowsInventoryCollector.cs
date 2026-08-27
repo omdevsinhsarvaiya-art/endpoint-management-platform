@@ -1,4 +1,4 @@
-using System.Management;
+﻿using System.Management;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Runtime.Versioning;
@@ -33,6 +33,8 @@ public sealed class WindowsInventoryCollector(
     ISecurityPostureCollector securityPostureCollector,
     IServiceProcessCollector serviceProcessCollector,
     IWindowsUpdateCollector windowsUpdateCollector,
+    IDriverCollector driverCollector,
+    IBitLockerCollector bitLockerCollector,
     TimeProvider timeProvider,
     ILogger<WindowsInventoryCollector> logger) : IInventoryCollector
 {
@@ -53,6 +55,12 @@ public sealed class WindowsInventoryCollector(
 
     private readonly IWindowsUpdateCollector _windowsUpdateCollector = windowsUpdateCollector
         ?? throw new ArgumentNullException(nameof(windowsUpdateCollector));
+
+    private readonly IDriverCollector _driverCollector = driverCollector
+        ?? throw new ArgumentNullException(nameof(driverCollector));
+
+    private readonly IBitLockerCollector _bitLockerCollector = bitLockerCollector
+        ?? throw new ArgumentNullException(nameof(bitLockerCollector));
 
     /// <summary>Cap on the process snapshot carried with inventory.</summary>
     private const int MaxProcessesInInventory = 60;
@@ -125,6 +133,26 @@ public sealed class WindowsInventoryCollector(
             _logger.LogWarning(ex, "Windows Update collection failed; omitting the section this snapshot.");
         }
 
+        IReadOnlyList<InventoryDriver>? drivers = null;
+        try
+        {
+            drivers = await _driverCollector.CollectAsync(cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Driver collection failed; omitting the section this snapshot.");
+        }
+
+        InventoryBitLocker? bitLocker = null;
+        try
+        {
+            bitLocker = await _bitLockerCollector.CollectAsync(cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "BitLocker collection failed; omitting the section this snapshot.");
+        }
+
         return new InventoryReport(
             hardware,
             interfaces,
@@ -135,7 +163,9 @@ public sealed class WindowsInventoryCollector(
             posture,
             services,
             processes,
-            windowsUpdate);
+            windowsUpdate,
+            drivers,
+            bitLocker);
     }
 
     private InventoryHardware CollectHardware()

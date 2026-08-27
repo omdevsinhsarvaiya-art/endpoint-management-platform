@@ -342,6 +342,213 @@ namespace EndpointPlatform.Migrations.Schema
                     b.ToTable("devices", "endpoint_platform");
                 });
 
+            modelBuilder.Entity("EndpointPlatform.Domain.Devices.DeviceBitLockerStatus", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Availability")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("availability");
+
+                    b.Property<DateTimeOffset>("CollectedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("collected_at");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid>("DeviceId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("device_id");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id")
+                        .HasName("pk_device_bitlocker_status");
+
+                    b.HasIndex("DeviceId")
+                        .IsUnique()
+                        .HasDatabaseName("ux_device_bitlocker_status_device_id");
+
+                    b.ToTable("device_bitlocker_status", "endpoint_platform");
+                });
+
+            modelBuilder.Entity("EndpointPlatform.Domain.Devices.DeviceBitLockerVolume", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CollectedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("collected_at");
+
+                    b.Property<int?>("ConversionStatus")
+                        .HasColumnType("integer")
+                        .HasColumnName("conversion_status");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid>("DeviceId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("device_id");
+
+                    b.Property<string>("DeviceIdentifier")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("device_identifier");
+
+                    b.Property<string>("DriveLetter")
+                        .HasMaxLength(8)
+                        .HasColumnType("character varying(8)")
+                        .HasColumnName("drive_letter");
+
+                    b.Property<int?>("EncryptionMethod")
+                        .HasColumnType("integer")
+                        .HasColumnName("encryption_method");
+
+                    b.Property<int?>("EncryptionPercentage")
+                        .HasColumnType("integer")
+                        .HasColumnName("encryption_percentage");
+
+                    b.Property<bool?>("HasRecoveryPasswordProtector")
+                        .HasColumnType("boolean")
+                        .HasColumnName("has_recovery_password_protector");
+
+                    b.Property<string>("PersistentVolumeId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("persistent_volume_id");
+
+                    b.Property<int?>("ProtectionStatus")
+                        .HasColumnType("integer")
+                        .HasColumnName("protection_status");
+
+                    b.Property<string>("RecoveryProtectorIds")
+                        .HasMaxLength(1024)
+                        .HasColumnType("character varying(1024)")
+                        .HasColumnName("recovery_protector_ids");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<int?>("VolumeType")
+                        .HasColumnType("integer")
+                        .HasColumnName("volume_type");
+
+                    b.HasKey("Id")
+                        .HasName("pk_device_bitlocker_volumes");
+
+                    b.HasIndex("DeviceId")
+                        .HasDatabaseName("ix_device_bitlocker_volumes_device_id");
+
+                    b.HasIndex("ConversionStatus", "ProtectionStatus")
+                        .HasDatabaseName("ix_device_bitlocker_volumes_status");
+
+                    b.ToTable("device_bitlocker_volumes", "endpoint_platform");
+                });
+
+            modelBuilder.Entity("EndpointPlatform.Domain.Devices.DeviceDriver", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CollectedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("collected_at");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("DeviceClass")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("device_class");
+
+                    b.Property<Guid>("DeviceId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("device_id");
+
+                    b.Property<string>("DeviceName")
+                        .IsRequired()
+                        .HasMaxLength(384)
+                        .HasColumnType("character varying(384)")
+                        .HasColumnName("device_name");
+
+                    b.Property<DateTimeOffset?>("DriverDate")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("driver_date");
+
+                    b.Property<string>("DriverProvider")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("driver_provider");
+
+                    b.Property<string>("DriverVersion")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("driver_version");
+
+                    b.Property<string>("InfName")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("inf_name");
+
+                    b.Property<string>("InstanceId")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("instance_id");
+
+                    b.Property<bool?>("IsSigned")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_signed");
+
+                    b.Property<string>("Manufacturer")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("manufacturer");
+
+                    b.Property<int?>("ProblemCode")
+                        .HasColumnType("integer")
+                        .HasColumnName("problem_code");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id")
+                        .HasName("pk_device_drivers");
+
+                    b.HasIndex("DeviceId")
+                        .HasDatabaseName("ix_device_drivers_device_id");
+
+                    b.HasIndex("ProblemCode")
+                        .HasDatabaseName("ix_device_drivers_problem_code")
+                        .HasFilter("problem_code IS NOT NULL AND problem_code <> 0");
+
+                    b.HasIndex("DriverProvider", "DriverVersion")
+                        .HasDatabaseName("ix_device_drivers_provider_version");
+
+                    b.ToTable("device_drivers", "endpoint_platform");
+                });
+
             modelBuilder.Entity("EndpointPlatform.Domain.Devices.DeviceHardware", b =>
                 {
                     b.Property<Guid>("Id")
@@ -961,6 +1168,112 @@ namespace EndpointPlatform.Migrations.Schema
                     b.ToTable("device_update_status", "endpoint_platform");
                 });
 
+            modelBuilder.Entity("EndpointPlatform.Domain.Drivers.DriverPackage", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("CreatedByDisplay")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("created_by_display");
+
+                    b.Property<Guid>("CreatedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by_user_id");
+
+                    b.Property<string>("DriverVersion")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("driver_version");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("file_name");
+
+                    b.Property<string>("HardwareId")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("hardware_id");
+
+                    b.Property<string>("InfFileName")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("inf_file_name");
+
+                    b.Property<bool>("IsWithdrawn")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_withdrawn");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("name");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("organization_id");
+
+                    b.Property<string>("Provider")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("provider");
+
+                    b.Property<string>("RequiredSignerSubject")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("required_signer_subject");
+
+                    b.Property<string>("Sha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("sha256");
+
+                    b.Property<long>("SizeBytes")
+                        .HasColumnType("bigint")
+                        .HasColumnName("size_bytes");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<string>("Version")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("version");
+
+                    b.Property<DateTimeOffset?>("WithdrawnAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("withdrawn_at");
+
+                    b.HasKey("Id")
+                        .HasName("pk_driver_packages");
+
+                    b.HasIndex("HardwareId")
+                        .HasDatabaseName("ix_driver_packages_hardware_id");
+
+                    b.HasIndex("OrganizationId", "Sha256")
+                        .IsUnique()
+                        .HasDatabaseName("ux_driver_packages_organization_sha256");
+
+                    b.ToTable("driver_packages", "endpoint_platform");
+                });
+
             modelBuilder.Entity("EndpointPlatform.Domain.Enrollment.AgentCredential", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1281,6 +1594,123 @@ namespace EndpointPlatform.Migrations.Schema
                         .HasDatabaseName("ix_admin_sessions_token_hash");
 
                     b.ToTable("admin_sessions", "endpoint_platform");
+                });
+
+            modelBuilder.Entity("EndpointPlatform.Domain.Identity.LocalAdminElevation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset?>("ActivatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("activated_at");
+
+                    b.Property<DateTimeOffset?>("ApprovedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("approved_at");
+
+                    b.Property<string>("ApprovedByDisplay")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("approved_by_display");
+
+                    b.Property<Guid?>("ApprovedById")
+                        .HasColumnType("uuid")
+                        .HasColumnName("approved_by_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("DecisionNote")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)")
+                        .HasColumnName("decision_note");
+
+                    b.Property<Guid>("DeviceId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("device_id");
+
+                    b.Property<DateTimeOffset?>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("expires_at");
+
+                    b.Property<string>("FailureReason")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)")
+                        .HasColumnName("failure_reason");
+
+                    b.Property<string>("Justification")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)")
+                        .HasColumnName("justification");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("organization_id");
+
+                    b.Property<DateTimeOffset>("RequestedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("requested_at");
+
+                    b.Property<string>("RequestedByDisplay")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("requested_by_display");
+
+                    b.Property<Guid>("RequestedById")
+                        .HasColumnType("uuid")
+                        .HasColumnName("requested_by_id");
+
+                    b.Property<DateTimeOffset?>("RevokedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("revoked_at");
+
+                    b.Property<Guid?>("RevokedById")
+                        .HasColumnType("uuid")
+                        .HasColumnName("revoked_by_id");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("state");
+
+                    b.Property<string>("TargetSid")
+                        .IsRequired()
+                        .HasMaxLength(184)
+                        .HasColumnType("character varying(184)")
+                        .HasColumnName("target_sid");
+
+                    b.Property<string>("TargetUsername")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("target_username");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id")
+                        .HasName("pk_local_admin_elevations");
+
+                    b.HasIndex("DeviceId", "State")
+                        .HasDatabaseName("ix_local_admin_elevations_device_state");
+
+                    b.HasIndex("DeviceId", "TargetSid")
+                        .IsUnique()
+                        .HasDatabaseName("ux_local_admin_elevations_live_per_account")
+                        .HasFilter("state IN ('Requested', 'Approved', 'Active')");
+
+                    b.HasIndex("State", "ExpiresAt")
+                        .HasDatabaseName("ix_local_admin_elevations_state_expires");
+
+                    b.ToTable("local_admin_elevations", "endpoint_platform");
                 });
 
             modelBuilder.Entity("EndpointPlatform.Domain.Identity.Organization", b =>
@@ -2189,6 +2619,36 @@ namespace EndpointPlatform.Migrations.Schema
                         .HasConstraintName("fk_devices_organizations_organization_id");
                 });
 
+            modelBuilder.Entity("EndpointPlatform.Domain.Devices.DeviceBitLockerStatus", b =>
+                {
+                    b.HasOne("EndpointPlatform.Domain.Devices.Device", null)
+                        .WithMany()
+                        .HasForeignKey("DeviceId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_device_bitlocker_status_devices_device_id");
+                });
+
+            modelBuilder.Entity("EndpointPlatform.Domain.Devices.DeviceBitLockerVolume", b =>
+                {
+                    b.HasOne("EndpointPlatform.Domain.Devices.Device", null)
+                        .WithMany()
+                        .HasForeignKey("DeviceId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_device_bitlocker_volumes_devices_device_id");
+                });
+
+            modelBuilder.Entity("EndpointPlatform.Domain.Devices.DeviceDriver", b =>
+                {
+                    b.HasOne("EndpointPlatform.Domain.Devices.Device", null)
+                        .WithMany()
+                        .HasForeignKey("DeviceId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_device_drivers_devices_device_id");
+                });
+
             modelBuilder.Entity("EndpointPlatform.Domain.Devices.DeviceHardware", b =>
                 {
                     b.HasOne("EndpointPlatform.Domain.Devices.Device", null)
@@ -2363,6 +2823,16 @@ namespace EndpointPlatform.Migrations.Schema
                         .HasConstraintName("fk_admin_sessions_platform_users_platform_user_id");
 
                     b.Navigation("PlatformUser");
+                });
+
+            modelBuilder.Entity("EndpointPlatform.Domain.Identity.LocalAdminElevation", b =>
+                {
+                    b.HasOne("EndpointPlatform.Domain.Devices.Device", null)
+                        .WithMany()
+                        .HasForeignKey("DeviceId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_local_admin_elevations_devices_device_id");
                 });
 
             modelBuilder.Entity("EndpointPlatform.Domain.Identity.PlatformUser", b =>

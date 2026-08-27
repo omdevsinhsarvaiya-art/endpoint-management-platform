@@ -1,4 +1,4 @@
-using EndpointPlatform.Domain.Auditing;
+﻿using EndpointPlatform.Domain.Auditing;
 using EndpointPlatform.Domain.Devices;
 using EndpointPlatform.Domain.Software;
 using EndpointPlatform.Domain.Enrollment;
@@ -49,6 +49,8 @@ public sealed class EndpointPlatformDbContext(DbContextOptions<EndpointPlatformD
 
     public DbSet<AdminSession> AdminSessions => Set<AdminSession>();
 
+    public DbSet<LocalAdminElevation> LocalAdminElevations => Set<LocalAdminElevation>();
+
     public DbSet<Device> Devices => Set<Device>();
 
     public DbSet<DeviceHardware> DeviceHardware => Set<DeviceHardware>();
@@ -60,6 +62,12 @@ public sealed class EndpointPlatformDbContext(DbContextOptions<EndpointPlatformD
     public DbSet<DeviceLocalGroup> DeviceLocalGroups => Set<DeviceLocalGroup>();
 
     public DbSet<DeviceSoftware> DeviceSoftware => Set<DeviceSoftware>();
+
+    public DbSet<DeviceDriver> DeviceDrivers => Set<DeviceDriver>();
+
+    public DbSet<DeviceBitLockerStatus> DeviceBitLockerStatus => Set<DeviceBitLockerStatus>();
+
+    public DbSet<DeviceBitLockerVolume> DeviceBitLockerVolumes => Set<DeviceBitLockerVolume>();
 
     public DbSet<DeviceSecurityPosture> DeviceSecurityPosture => Set<DeviceSecurityPosture>();
 
@@ -77,6 +85,8 @@ public sealed class EndpointPlatformDbContext(DbContextOptions<EndpointPlatformD
         Set<Domain.Peripherals.UsbAccessRequest>();
 
     public DbSet<SoftwarePackage> SoftwarePackages => Set<SoftwarePackage>();
+
+    public DbSet<Domain.Drivers.DriverPackage> DriverPackages => Set<Domain.Drivers.DriverPackage>();
 
     public DbSet<Domain.Agents.AgentRelease> AgentReleases => Set<Domain.Agents.AgentRelease>();
 

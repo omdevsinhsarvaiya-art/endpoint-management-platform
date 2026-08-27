@@ -1,4 +1,4 @@
-using EndpointPlatform.Contracts.Agent;
+﻿using EndpointPlatform.Contracts.Agent;
 
 namespace EndpointAgent.Core.Abstractions;
 
@@ -108,6 +108,22 @@ public interface IAgentApiClient
     /// this transfer is not a trust boundary.
     /// </summary>
     Task<AgentApiResult<Unit>> DownloadPackageAsync(
+        Guid packageId,
+        Stream destination,
+        DeviceCredential credential,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Streams an approved driver package's archive to <paramref name="destination"/>.
+    /// </summary>
+    /// <remarks>
+    /// Addressed by package id, never by URL: there is deliberately no method on this
+    /// client that fetches a caller-supplied address, so no task payload can direct
+    /// the agent at arbitrary content. As with software packages, the caller verifies
+    /// the hash, catalogue signature and signer pin afterwards -- this transfer is not
+    /// a trust boundary.
+    /// </remarks>
+    Task<AgentApiResult<Unit>> DownloadDriverPackageAsync(
         Guid packageId,
         Stream destination,
         DeviceCredential credential,
