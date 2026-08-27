@@ -195,3 +195,48 @@ through a nested group are not detected; membership is read from direct
 membership of the local Administrators group. The limitation travels with the
 verdict so a caller acting on it can see its scope without reading this
 document.
+
+### Acceptance - Milestone 11b, closed 2026-08-27
+
+Signed off on `LAPTOP-LVCHEQ2H` (Agent 1.1.4) with a real Windows account, using
+`scripts/Invoke-M11bAcceptance.ps1`. The endpoint carried an enabled interactive
+administrator (`Techsara`) and a disabled built-in Administrator throughout.
+
+| | Verified |
+|---|---|
+| C1 | A standard user is reported, is not an offender, and does not change the device verdict |
+| C2 | Promoting it makes it a counted offender, named in `interactiveAdministrators` |
+| C3 | RID 500 discounted correctly, by RID rather than by name |
+| C4 | Disabling it discounts it *and keeps it reported*, with its reason |
+| C6-C12 | Account removed; no pre-existing account altered; no unexpected account; **no task created** |
+| C13 | USB state unchanged - all 12 records identical in instance, policy, enforcement and connection state |
+| C14-C15 | DeviceId, MachineIdentifier and agent version unchanged; service never stopped |
+
+**The load-bearing result is C7 with C12.** 11b observes and reports: no
+pre-existing account changed, and evaluating posture queued no task. A reporting
+feature that quietly remediated would be a worse defect than one that reported
+wrongly, and would stay invisible until somebody's machine changed under them.
+
+**Limitations, recorded rather than waived:**
+
+- **C5 (Unknown)** needs an endpoint that has never reported. Not reproducible on
+  a machine already in inventory; covered by domain and API tests.
+- **A1 / A3** - the positive audit paths. Zero `localuser.posture.changed` events
+  were written during the run, which is *correct*: the device-level verdict never
+  transitioned, because `Techsara` held it Non-Compliant from before the run to
+  after it, and the event fires only on a transition. The acceptance therefore
+  proved the absence of spurious events but could not exercise the positive case.
+  Demonstrating it physically needs an endpoint whose only interactive
+  administrator is the test account.
+- **A2 (no duplicates)** - PASS, server-side: 11 inventory reports across the
+  run produced **zero** posture-change events.
+
+**Two acceptance-script defects were found and fixed; no product code changed.**
+The first conflated account-level and device-level compliance, asserting a device
+could become Compliant while an unrelated enabled administrator existed - the
+implementation was right and the criterion was wrong. The second recorded a
+*count* of USB records instead of the records themselves, which made a later
+discrepancy impossible to diagnose after the fact. The comparison now keys on
+`instanceId|policy|enforcementState|isConnected`, sorted, excluding inventory
+timestamps that change by design, and refuses to compare a response whose shape
+is not what it expects rather than guessing.
