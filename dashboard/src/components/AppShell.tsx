@@ -3,6 +3,7 @@ import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
 import { getPendingEnrollments } from '../api/client'
 import { Icon, type IconName } from './Icon'
+import { ChangePasswordDialog } from '../pages/ChangePasswordDialog'
 import {
   browserPreferenceStorage,
   readSidebarCollapsed,
@@ -98,6 +99,7 @@ export function AppShell() {
   const [collapsed, setCollapsed] = useState(() =>
     readSidebarCollapsed(browserPreferenceStorage()),
   )
+  const [changingPassword, setChangingPassword] = useState(false)
 
   // Written on the interaction rather than in an effect on `collapsed`, so
   // that simply loading the page never writes a value back. Nothing should
@@ -181,6 +183,14 @@ export function AppShell() {
               {initialsOf(user?.email)}
             </span>
             <span className="who">{user?.email}</span>
+            <button
+              type="button"
+              className="btn-ghost btn-sm"
+              onClick={() => setChangingPassword(true)}
+            >
+              <Icon name="shield-check" size={14} />
+              Change password
+            </button>
             <button type="button" className="btn-ghost btn-sm" onClick={() => void logout()}>
               <Icon name="logout" size={14} />
               Sign out
@@ -191,6 +201,21 @@ export function AppShell() {
           <Outlet />
         </main>
       </div>
+
+      {changingPassword && (
+        <ChangePasswordDialog
+          onClose={() => setChangingPassword(false)}
+          onChanged={() => {
+            // The server has already rotated the security stamp, so this session
+            // is dead and the cookie is cleared. Going through the normal logout
+            // path drops the local user state and returns to the sign-in screen,
+            // rather than leaving the shell rendered around a session that will
+            // 401 on its next request.
+            setChangingPassword(false)
+            void logout()
+          }}
+        />
+      )}
     </div>
   )
 }

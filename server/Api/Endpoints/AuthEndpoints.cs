@@ -31,6 +31,14 @@ public static class AuthEndpoints
             .WithName("AdminMe")
             .RequireAuthorization();
 
+        // Authenticated, but behind no permission: changing your own password is
+        // not an administrative act over someone else, and gating it would mean a
+        // user could be locked out of securing their own account by a role change.
+        // The current password is re-verified in the service regardless of session.
+        group.MapPost("/change-password", ChangePasswordAsync)
+            .WithName("AdminChangePassword")
+            .RequireAuthorization();
+
         return endpoints;
     }
 
@@ -50,6 +58,74 @@ public static class AuthEndpoints
         DateTimeOffset SessionExpiresAt,
         IReadOnlyList<string> Permissions,
         string SessionToken);
+
+    /// <summary>
+    /// Changes the signed-in administrator's own password.
+    /// </summary>
+    /// <remarks>
+    /// Every failure returns the same shape and reveals nothing about the
+    /// account: a wrong current password and a locked account are indistinguishable
+    /// to the caller, matching the sign-in path.
+    /// </remarks>
+    private static async Task<IResult> ChangePasswordAsync(
+        ChangePasswordRequest request,
+        HttpContext httpContext,
+        AdminAuthService authService,
+        IHostEnvironment environment,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var actor = AdminActor.Required(httpContext.User);
+
+        // Checked before anything reaches the service: a mistyped confirmation is
+        // a form error, not an authentication event, and must not count towards
+        // the lockout that guards the current-password check.
+        if (!string.Equals(request.NewPassword, request.ConfirmPassword, StringComparison.Ordinal))
+        {
+            return Results.Problem(
+                "The new password and its confirmation do not match.",
+                statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        var outcome = await authService.ChangePasswordAsync(
+            actor.UserId, request.CurrentPassword ?? string.Empty, request.NewPassword ?? string.Empty,
+            cancellationToken);
+
+        if (outcome.Success)
+        {
+            // The caller's own session is now dead. Clear the cookie so the
+            // browser is not left presenting a token that will only ever 401.
+            DeleteSessionCookie(httpContext, environment);
+
+            return Results.Ok(new
+            {
+                changed = true,
+                sessionsRevoked = outcome.SessionsRevoked,
+                message = "Password changed. All sessions have been signed out, including this one.",
+            });
+        }
+
+        return outcome.Error switch
+        {
+            ChangePasswordError.WeakPassword => Results.Problem(
+                outcome.Message ?? "The new password does not meet the password policy.",
+                statusCode: StatusCodes.Status400BadRequest),
+
+            ChangePasswordError.SameAsCurrent => Results.Problem(
+                "The new password must be different from the current one.",
+                statusCode: StatusCodes.Status400BadRequest),
+
+            // Deliberately identical for a wrong password and a locked account.
+            ChangePasswordError.CurrentPasswordIncorrect => Results.Problem(
+                "The current password is incorrect.",
+                statusCode: StatusCodes.Status400BadRequest),
+
+            _ => Results.Problem(
+                "This account's password cannot be changed here.",
+                statusCode: StatusCodes.Status403Forbidden),
+        };
+    }
 
     private static async Task<IResult> LoginAsync(
         [FromBody] LoginRequest request,
@@ -178,3 +254,17 @@ public static class AuthEndpoints
             });
     }
 }
+
+/// <param name="CurrentPassword">
+/// Re-verified server-side. A live session proves who signed in; it does not
+/// prove who is at the keyboard now.
+/// </param>
+/// <param name="ConfirmPassword">
+/// Compared in the endpoint. Sent rather than checked only in the browser,
+/// because the front end is never the boundary -- a mistyped password that
+/// reached the hasher would lock the account's owner out of their own account.
+/// </param>
+public sealed record ChangePasswordRequest(
+    string? CurrentPassword,
+    string? NewPassword,
+    string? ConfirmPassword);

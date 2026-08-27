@@ -841,6 +841,59 @@ export function getLocalAdminPosture(deviceId: string): Promise<LocalAdminPostur
   )
 }
 
+/**
+ * Changes the signed-in administrator's own password.
+ *
+ * Does not use the shared `request` helper, for one reason: that helper
+ * deliberately discards the response body on failure, and here the server's
+ * message IS the useful part -- "must be at least 12 characters" is what the
+ * person needs to read, and a generic "HTTP 400" is not.
+ *
+ * The password is sent in the request body over HTTPS and held nowhere else. It
+ * is never placed in a URL, in storage, or in a log line: a body is not recorded
+ * by proxies or browser history, whereas a query string is.
+ *
+ * On success the caller's session is already dead -- the server rotates the
+ * security stamp, which invalidates every session including this one -- so the
+ * caller must return the user to the sign-in screen.
+ */
+export async function changeAdminPassword(input: {
+  currentPassword: string
+  newPassword: string
+  confirmPassword: string
+}): Promise<{ changed: boolean; sessionsRevoked: number; message: string }> {
+  const response = await fetch('/api/admin/v1/auth/change-password', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      // Anti-CSRF, same gate as every other cookie-authenticated mutation.
+      'X-Requested-With': 'XMLHttpRequest',
+    },
+    body: JSON.stringify(input),
+  })
+
+  if (response.ok) {
+    return (await response.json()) as { changed: boolean; sessionsRevoked: number; message: string }
+  }
+
+  // A ProblemDetails body carries the reason. Fall back to a generic message if
+  // the response is not the shape we expect, rather than showing "undefined".
+  let detail: string | null = null
+  try {
+    const body = (await response.json()) as { detail?: string; title?: string }
+    detail = body.detail ?? body.title ?? null
+  } catch {
+    detail = null
+  }
+
+  throw new ApiError(
+    response.status,
+    detail ?? 'The password could not be changed.',
+    response.headers.get('X-Correlation-Id'),
+  )
+}
+
 export function getLocalUsers(deviceId: string): Promise<LocalUserRow[]> {
   return request<LocalUserRow[]>(`/admin/v1/devices/${encodeURIComponent(deviceId)}/local-users`)
 }

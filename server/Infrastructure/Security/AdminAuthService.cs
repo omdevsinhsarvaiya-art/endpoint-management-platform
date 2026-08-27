@@ -25,6 +25,38 @@ namespace EndpointPlatform.Infrastructure.Security;
 /// session row.
 /// </para>
 /// </remarks>
+
+/// <summary>Why a password change was refused.</summary>
+public enum ChangePasswordError
+{
+    /// <summary>The supplied current password did not verify, or the account is locked.</summary>
+    CurrentPasswordIncorrect = 0,
+
+    /// <summary>The new password does not meet <see cref="PasswordPolicy"/>.</summary>
+    WeakPassword = 1,
+
+    /// <summary>The new password is the one already in use.</summary>
+    SameAsCurrent = 2,
+
+    /// <summary>No such user, or the account has no password to change.</summary>
+    NotPermitted = 3,
+}
+
+/// <param name="SessionsRevoked">
+/// How many sessions the change invalidated, including the caller's own. Reported
+/// so the console can say plainly that the caller must sign in again, rather than
+/// leaving them to discover it on their next request.
+/// </param>
+public sealed record ChangePasswordOutcome(
+    bool Success, ChangePasswordError? Error, string? Message, int SessionsRevoked)
+{
+    public static ChangePasswordOutcome Succeeded(int sessionsRevoked) =>
+        new(true, null, null, sessionsRevoked);
+
+    public static ChangePasswordOutcome Failed(ChangePasswordError error, string? message = null) =>
+        new(false, error, message, 0);
+}
+
 public sealed class AdminAuthService(
     EndpointPlatformDbContext dbContext,
     AuditWriter auditWriter,
@@ -164,6 +196,146 @@ public sealed class AdminAuthService(
         var permissions = await ResolvePermissionsAsync(user.Id, cancellationToken);
 
         return new AuthenticatedAdmin(user.Id, user.OrganizationId, user.Email, user.DisplayName, permissions);
+    }
+
+    /// <summary>
+    /// Changes the signed-in administrator's own password.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The current password is verified here rather than trusted from the
+    /// session. A live session proves who the caller was at sign-in; it does not
+    /// prove the person at the keyboard now is the same one. Requiring the
+    /// current password is what stops a borrowed or stolen session from locking
+    /// the real owner out of their own account.
+    /// </para>
+    /// <para>
+    /// <b>Every existing session dies as a side effect, including the caller's.</b>
+    /// <see cref="PlatformUser.SetPasswordHash"/> rotates the security stamp, and
+    /// <see cref="AdminSession.IsUsable"/> compares each session's snapshot of
+    /// that stamp against the user's current one. This is deliberate and is the
+    /// property that makes a password change meaningful: if the reason for
+    /// changing it is that the old one leaked, sessions minted with it must not
+    /// survive. The caller signs in again like everyone else.
+    /// </para>
+    /// <para>
+    /// A wrong current password counts towards the same lockout the sign-in path
+    /// uses, so an authenticated attacker cannot brute-force it any more cheaply
+    /// than an unauthenticated one. It is deliberately NOT behind the per-address
+    /// login rate limiter: that limiter exists to blunt credential stuffing
+    /// against an anonymous endpoint, and applying it here would let one noisy
+    /// client block a legitimate administrator from securing their account.
+    /// </para>
+    /// </remarks>
+    public async Task<ChangePasswordOutcome> ChangePasswordAsync(
+        Guid userId,
+        string currentPassword,
+        string newPassword,
+        CancellationToken cancellationToken = default)
+    {
+        var now = _timeProvider.GetUtcNow();
+
+        var user = await _dbContext.PlatformUsers
+            .SingleOrDefaultAsync(u => u.Id == userId, cancellationToken);
+
+        if (user is null || user.PasswordHash is null)
+        {
+            return ChangePasswordOutcome.Failed(ChangePasswordError.NotPermitted);
+        }
+
+        if (user.IsLockedOut(now))
+        {
+            // Same answer as a wrong password, and for the same reason the
+            // sign-in path gives it: distinguishing "locked" from "wrong" tells
+            // an attacker whether their guessing is having an effect.
+            await AuditPasswordChangeFailureAsync(user, "Account is locked out.", cancellationToken);
+            return ChangePasswordOutcome.Failed(ChangePasswordError.CurrentPasswordIncorrect);
+        }
+
+        if (!PasswordHasher.Verify(currentPassword, user.PasswordHash))
+        {
+            user.RecordFailedSignIn(now, _options.LockoutThreshold, TimeSpan.FromMinutes(_options.LockoutMinutes));
+            await AuditPasswordChangeFailureAsync(user, "Current password incorrect.", cancellationToken);
+            await _dbContext.SaveChangesAsync(cancellationToken);
+
+            _logger.LogWarning(
+                "Password change refused for {UserId}: the current password did not verify.", user.Id);
+
+            return ChangePasswordOutcome.Failed(ChangePasswordError.CurrentPasswordIncorrect);
+        }
+
+        if (PasswordPolicy.Validate(newPassword) is { } policyFailure)
+        {
+            // Not audited as a security failure and not counted towards lockout:
+            // the caller has already proved who they are, and a weak-password
+            // attempt is a usability event, not an attack.
+            return ChangePasswordOutcome.Failed(ChangePasswordError.WeakPassword, policyFailure);
+        }
+
+        // Refused rather than silently accepted. Re-setting the same password
+        // would rotate the stamp and destroy every session for no security gain,
+        // which looks exactly like the platform malfunctioning.
+        if (PasswordHasher.Verify(newPassword, user.PasswordHash))
+        {
+            return ChangePasswordOutcome.Failed(ChangePasswordError.SameAsCurrent);
+        }
+
+        // Rotates the security stamp, which is what invalidates every session.
+        user.SetPasswordHash(PasswordHasher.Hash(newPassword), now);
+
+        // Revoked explicitly as well as invalidated by the stamp. The stamp check
+        // already makes them unusable; marking them revoked makes the reason
+        // visible to anyone auditing the session table later, rather than leaving
+        // rows that merely stopped working.
+        var sessions = await _dbContext.AdminSessions
+            .Where(x => x.PlatformUserId == user.Id && x.RevokedAt == null)
+            .ToListAsync(cancellationToken);
+
+        foreach (var session in sessions)
+        {
+            session.Revoke(now);
+        }
+
+        _auditWriter.Stage(
+            user.OrganizationId,
+            AuditActorType.PlatformUser,
+            user.Id,
+            user.Email,
+            action: "platform.user.password_changed",
+            AuditResult.Success,
+            audit => audit
+                .OnTarget("platform_user", user.Id.ToString(), user.Email)
+                // No password material of any kind: not the old value, not the
+                // new one, not a hash, not a length, not a prefix. The audit
+                // records that a change happened, by whom, and what it cost the
+                // caller in sessions -- nothing that helps anyone guess it.
+                .WithStateChange(
+                    System.Text.Json.JsonSerializer.Serialize(new { sessionsRevoked = 0 }),
+                    System.Text.Json.JsonSerializer.Serialize(new { sessionsRevoked = sessions.Count })));
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        _logger.LogInformation(
+            "Password changed for {UserId}; {SessionCount} session(s) revoked.", user.Id, sessions.Count);
+
+        return ChangePasswordOutcome.Succeeded(sessions.Count);
+    }
+
+    private async Task AuditPasswordChangeFailureAsync(
+        PlatformUser user, string reason, CancellationToken cancellationToken)
+    {
+        _auditWriter.Stage(
+            user.OrganizationId,
+            AuditActorType.PlatformUser,
+            user.Id,
+            user.Email,
+            action: "platform.user.password_change_failed",
+            AuditResult.Failure,
+            audit => audit
+                .OnTarget("platform_user", user.Id.ToString(), user.Email)
+                .WithFailureReason(reason));
+
+        await Task.CompletedTask;
     }
 
     public async Task SignOutAsync(string token, CancellationToken cancellationToken = default)
