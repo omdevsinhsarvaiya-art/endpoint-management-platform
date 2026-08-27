@@ -240,3 +240,71 @@ discrepancy impossible to diagnose after the fact. The comparison now keys on
 `instanceId|policy|enforcementState|isConnected`, sorted, excluding inventory
 timestamps that change by design, and refuses to compare a response whose shape
 is not what it expects rather than guessing.
+
+## Administrator password change (Milestone 12-S)
+
+**STATUS: COMPLETE** - deployed as `daa51d5`, verified in production 2026-08-27.
+
+Until this slice the platform could create its first administrator and then never
+change that credential: no change-password endpoint, no platform-user
+management, and a bootstrapper that refuses to run once a Super Administrator
+exists. The only recovery paths were outside the product.
+
+**Session invalidation needed no new machinery.** `SetPasswordHash` already
+rotates the account's security stamp, and `AdminSession` pins a snapshot of that
+stamp which `IsUsable` compares against the user's current value. Every session
+therefore dies the moment the password changes - the caller's included. Sessions
+are additionally revoked explicitly, but only so the reason is visible to
+someone auditing the table later; **the stamp remains the single source of
+truth**, not a competing one.
+
+**The current password is re-verified server-side** even though the caller holds
+a live session. A session proves who signed in; it does not prove who is at the
+keyboard now, and that is what stops a borrowed session from locking an account's
+owner out of their own account. A wrong current password counts towards the same
+lockout the sign-in path uses, so an authenticated attacker guesses no more
+cheaply than an anonymous one - but deliberately **not** behind the per-address
+login rate limiter, which exists to blunt credential stuffing and would otherwise
+let one noisy client stop an administrator from securing their account.
+
+**Policy weights length over composition**: a 12-character floor, no digit,
+symbol or case requirement, and a 256-character ceiling that bounds hasher work.
+Composition rules reliably produce `Password1!` and a sticky note. The floor is
+pinned by test against the bootstrapper's, so the two cannot drift and quietly
+make the weaker one the real policy.
+
+### Acceptance evidence
+
+Verified in production after deployment:
+
+| | |
+|---|---|
+| Health | live/ready/dashboard all 200 |
+| UI in served bundle | `index-D6luwssF.js`, all nine markers present |
+| Endpoint live | `POST /admin/v1/auth/change-password` - 400 on mismatch, 401 unauthenticated (not 404) |
+| Migration head | `20260826140247_UsbEnabledPolicy` - **no migration introduced** |
+| Production data | devices/local_users/usb_dev/usb_req/tasks/releases all unchanged |
+
+The production administrator password was then **rotated manually through the
+dashboard**, and the rotation verified from the database:
+
+- `password_updated_at` moved from `2026-08-19 20:42:05` to `2026-08-27 17:58:30`
+- exactly one audit row: `platform.user.password_changed`, Success
+- **80 of 81 sessions revoked, 1 live** - every pre-existing session died,
+  including the one that made the change; the single live session is the
+  operator's subsequent sign-in with the new password
+
+**No credential material exists anywhere in the repository, the audit trail or
+the logs.** The audit row's state documents contain only `sessionsRevoked`
+counts - no password, no hash, no length, no prefix. A test scans the whole row
+for both passwords and for `argon`/`pbkdf2` markers, because an append-only trail
+cannot take a leak back.
+
+### Known limitation
+
+Repeated wrong *current* passwords count towards the account lockout, which is
+reachable from an authenticated endpoint. With a single administrator account,
+someone holding a stolen session could lock the only administrator out for the
+lockout window. That is the correct trade against brute-forcing and matches the
+sign-in path, but it is worth knowing while the deployment has one administrator.
+A second account removes the concern; platform-user management does not exist yet.
