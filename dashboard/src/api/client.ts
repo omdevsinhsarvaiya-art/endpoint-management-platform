@@ -603,6 +603,144 @@ export function getDevice(deviceId: string): Promise<DeviceDetail> {
   return request<DeviceDetail>(`/admin/v1/devices/${encodeURIComponent(deviceId)}`)
 }
 
+// ---------------------------------------------------------------------------
+// Drivers and BitLocker (Milestone 13).
+//
+// Both are read-only. There is deliberately no client function here that
+// installs a driver, encrypts, decrypts, suspends or resumes anything -- those
+// capabilities either do not exist yet or are not exposed to this console.
+//
+// No recovery key appears in any of these types. The agent never reads one, the
+// API never returns one, and there is therefore no field to redact.
+// ---------------------------------------------------------------------------
+
+/** Healthy | Problem | Disabled | Unknown. Unknown is never Healthy. */
+export type DriverHealthState = 'Healthy' | 'Problem' | 'Disabled' | 'Unknown'
+
+/** What a problem is attributable to. */
+export type DriverFaultKind = 'None' | 'Driver' | 'Device' | 'Indeterminate'
+
+export interface DriverRow {
+  instanceId: string
+  deviceName: string
+  deviceClass: string | null
+  manufacturer: string | null
+  driverProvider: string | null
+  driverVersion: string | null
+  driverDate: string | null
+  infName: string | null
+  /** Raw Windows problem code; null when the endpoint could not read it. */
+  problemCode: number | null
+  health: DriverHealthState
+  faultKind: DriverFaultKind
+  problemDescription: string
+  /** Three-valued: null means the signature could not be verified either way. */
+  isSigned: boolean | null
+  collectedAt: string
+}
+
+export interface DriverFault {
+  instanceId: string
+  deviceName: string
+  deviceClass: string | null
+  problemCode: number | null
+  faultKind: DriverFaultKind
+  problemDescription: string
+}
+
+export interface DriverHealthSummary {
+  deviceId: string
+  hostname: string
+  displayName: string | null
+  state: DriverHealthState
+  /** Null when nothing has been reported -- the evidence that the verdict is absent too. */
+  lastReportedAt: string | null
+  driverFaultCount: number
+  deviceFaultCount: number
+  indeterminateFaultCount: number
+  /** Counted, never a fault: this platform disables devices itself. */
+  disabledCount: number
+  unknownCount: number
+  totalCount: number
+  faults: DriverFault[]
+  limitation: string
+}
+
+export async function getDeviceDrivers(deviceId: string, problemsOnly = false): Promise<DriverRow[]> {
+  const query = problemsOnly ? '?problemsOnly=true' : ''
+  return request<DriverRow[]>(`/admin/v1/devices/${encodeURIComponent(deviceId)}/drivers${query}`)
+}
+
+export async function getDeviceDriverHealth(deviceId: string): Promise<DriverHealthSummary> {
+  return request<DriverHealthSummary>(`/admin/v1/devices/${encodeURIComponent(deviceId)}/driver-health`)
+}
+
+/** Whether the endpoint could answer BitLocker questions at all. */
+export type BitLockerAvailability = 'Unknown' | 'Available' | 'AccessDenied' | 'NotAvailable' | 'Error'
+
+export type BitLockerVolumeState =
+  | 'Unknown' | 'NotEncrypted' | 'EncryptionInProgress'
+  | 'DecryptionInProgress' | 'Protected' | 'Suspended'
+
+export type BitLockerReadiness =
+  | 'Unknown' | 'Protected' | 'EncryptionInProgress' | 'Suspended'
+  | 'ReadyToEncrypt' | 'TpmNotReady' | 'NotEncrypted' | 'NotSupported'
+
+export interface BitLockerVolumeRow {
+  deviceIdentifier: string
+  driveLetter: string | null
+  persistentVolumeId: string | null
+  volumeType: number | null
+  conversionStatus: number | null
+  protectionStatus: number | null
+  state: BitLockerVolumeState
+  encryptionPercentage: number | null
+  encryptionMethod: number | null
+  /** Presence only. The password behind the protector is never read or returned. */
+  hasRecoveryPasswordProtector: boolean | null
+  /** Protector GUIDs. Identifiers, not secrets: one unlocks nothing. */
+  recoveryProtectorIds: string[]
+  collectedAt: string
+}
+
+export interface BitLockerReadinessVolume {
+  deviceIdentifier: string
+  driveLetter: string | null
+  isOperatingSystemVolume: boolean
+  state: BitLockerVolumeState
+  hasRecoveryPasswordProtector: boolean | null
+}
+
+export interface BitLockerReadinessSummary {
+  deviceId: string
+  hostname: string
+  displayName: string | null
+  readiness: BitLockerReadiness
+  availability: BitLockerAvailability
+  lastReportedAt: string | null
+  tpmPresent: boolean | null
+  tpmEnabled: boolean | null
+  tpmSpecVersion: string | null
+  /** The long-standing single-field posture summary, unchanged in meaning. */
+  systemDriveStatus: string | null
+  protectedVolumeCount: number
+  unprotectedVolumeCount: number
+  unknownVolumeCount: number
+  totalVolumeCount: number
+  volumes: BitLockerReadinessVolume[]
+  limitation: string
+}
+
+export async function getDeviceBitLockerVolumes(deviceId: string): Promise<BitLockerVolumeRow[]> {
+  return request<BitLockerVolumeRow[]>(
+    `/admin/v1/devices/${encodeURIComponent(deviceId)}/bitlocker-volumes`)
+}
+
+export async function getDeviceBitLockerReadiness(deviceId: string): Promise<BitLockerReadinessSummary> {
+  return request<BitLockerReadinessSummary>(
+    `/admin/v1/devices/${encodeURIComponent(deviceId)}/bitlocker-readiness`)
+}
+
 export async function requestInventoryRefresh(deviceId: string): Promise<void> {
   const response = await fetch(`/api/admin/v1/devices/${encodeURIComponent(deviceId)}/refresh-inventory`, {
     method: 'POST',

@@ -6,6 +6,8 @@ import { DeviceGroupsPanel } from './DeviceGroupsPanel'
 import { DeviceServicesPanel } from './DeviceServicesPanel'
 import { DeviceProcessesPanel } from './DeviceProcessesPanel'
 import { DeviceUsbPanel } from './DeviceUsbPanel'
+import { DeviceDriversPanel } from './DeviceDriversPanel'
+import { DeviceBitLockerPanel } from './DeviceBitLockerPanel'
 import { TaskProgress } from '../components/TaskProgress'
 import { useTaskTracker } from '../components/useTaskTracker'
 import {
@@ -39,7 +41,7 @@ interface FeatureSpec {
   count?: number
 }
 
-type Tab = 'overview' | 'hardware' | 'network' | 'users' | 'groups' | 'software' | 'security' | 'usb' | 'updates' | 'services' | 'processes' | 'actions' | 'tasks'
+type Tab = 'overview' | 'hardware' | 'network' | 'users' | 'groups' | 'software' | 'security' | 'usb' | 'drivers' | 'bitlocker' | 'updates' | 'services' | 'processes' | 'actions' | 'tasks'
 
 const MODULES: Tab[] = ['overview', 'hardware', 'network', 'users', 'groups', 'software',
   'security', 'usb', 'updates', 'services', 'processes', 'actions', 'tasks']
@@ -272,6 +274,10 @@ export function DeviceDetailPage() {
     // No count: the number of attached USB devices is loaded by the module
     // itself, and a stale count on the card would be worse than none.
     { key: 'usb', label: 'USB', icon: 'usb', desc: 'peripherals & storage' },
+    // No counts: both are loaded by their own module, and a count here would
+    // either force an extra request on every device page or show a stale number.
+    { key: 'drivers', label: 'Drivers', icon: 'settings', desc: 'driver health' },
+    { key: 'bitlocker', label: 'BitLocker', icon: 'shield-check', desc: 'disk encryption' },
     { key: 'updates', label: 'Updates', icon: 'updates', desc: 'Windows Update',
       count: device.windowsUpdate?.history.length },
     { key: 'services', label: 'Services', icon: 'settings', desc: 'services',
@@ -654,6 +660,10 @@ export function DeviceDetailPage() {
       )}
 
       {tab === 'usb' && <DeviceUsbPanel deviceId={device.id} offline={!device.isOnline} />}
+
+      {tab === 'drivers' && <DeviceDriversPanel deviceId={device.id} />}
+
+      {tab === 'bitlocker' && <DeviceBitLockerPanel deviceId={device.id} />}
 
       {tab === 'security' && (
         <>
