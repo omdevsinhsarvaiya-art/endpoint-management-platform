@@ -1,4 +1,4 @@
-using Microsoft.AspNetCore.Hosting;
+﻿using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
@@ -24,6 +24,9 @@ namespace EndpointPlatform.Api.Tests;
 public sealed class AdminApiFactory : WebApplicationFactory<Program>
 {
     /// <summary>Port 1 is reserved and never listening, so a stray connection attempt fails fast.</summary>
+    /// <summary>A throwaway 32-byte key. Seals nothing real.</summary>
+    private const string TestEscrowKey = "dGVzdC1lc2Nyb3cta2V5LTMyLWJ5dGVzLWxvbmchISE=";
+
     private const string UnreachablePostgres =
         "Host=127.0.0.1;Port=1;Database=unreachable_by_design;Username=none;Password=none";
 
@@ -46,6 +49,13 @@ public sealed class AdminApiFactory : WebApplicationFactory<Program>
         builder.UseSetting("Redis:InstanceName", "endpointplatform:test:");
         builder.UseSetting("Redis:AbortOnConnectFail", "false");
         builder.UseSetting("Cors:AllowedOrigins:0", "http://localhost:5173");
+
+        // Mandatory for the Admin API since recovery-key escrow shipped: the
+        // options are validated on start, so without a key the host refuses to
+        // build and every test in the suite fails at construction. A fixed test
+        // key is fine here and is not a secret - it seals nothing real.
+        builder.UseSetting("RecoveryEscrow:Key", TestEscrowKey);
+        builder.UseSetting("RecoveryEscrow:KeyVersion", "1");
     }
 }
 

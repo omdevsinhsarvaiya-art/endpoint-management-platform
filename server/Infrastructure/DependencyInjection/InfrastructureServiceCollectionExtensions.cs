@@ -92,6 +92,7 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddOptions<Security.SecretProtectionOptions>()
             .Bind(configuration.GetSection(Security.SecretProtectionOptions.SectionName));
 
+
         return services;
     }
 

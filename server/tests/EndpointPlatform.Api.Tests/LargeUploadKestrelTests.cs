@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
@@ -122,8 +122,36 @@ public sealed class LargeUploadKestrelTests(AdminApiPostgresFixture fixture)
         using var oversized = new ByteArrayContent(new byte[OversizedBytes]);
         oversized.Headers.ContentType = new MediaTypeHeaderValue("application/json");
 
-        var response = await client.PostAsync(new Uri("/admin/v1/auth/login", UriKind.Relative), oversized);
+        // Kestrel refuses an oversized body in one of two ways, and which one the
+        // client observes is a race it does not control: if the response is written
+        // before the client finishes sending, the status is readable as 413; if the
+        // connection is torn down first, the write fails with a reset instead. Both
+        // are the refusal this test exists to prove, so both are accepted -- but a
+        // reset is only accepted together with the liveness check below, so a server
+        // that crashed or stopped listening cannot pass as an enforcement.
+        HttpStatusCode? status = null;
+        try
+        {
+            status = (await client.PostAsync(
+                new Uri("/admin/v1/auth/login", UriKind.Relative), oversized)).StatusCode;
+        }
+        catch (HttpRequestException)
+        {
+            // Connection reset mid-body.
+        }
 
-        response.StatusCode.ShouldBe(HttpStatusCode.RequestEntityTooLarge);
+        if (status is not null)
+        {
+            status.ShouldBe(HttpStatusCode.RequestEntityTooLarge);
+            return;
+        }
+
+        // The refusal was a reset. Prove the endpoint is still alive and that it was
+        // the size that was rejected: an ordinary small body still reaches handling.
+        using var small = JsonContent.Create(new { email = "nobody@test.local", password = "wrong" });
+
+        var after = await client.PostAsync(new Uri("/admin/v1/auth/login", UriKind.Relative), small);
+
+        after.StatusCode.ShouldNotBe(HttpStatusCode.RequestEntityTooLarge);
     }
 }

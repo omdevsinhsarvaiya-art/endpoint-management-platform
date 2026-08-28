@@ -124,6 +124,9 @@ services:
       ENDPOINTPLATFORM_Cors__AllowedOrigins__0: ${PUBLIC_ORIGIN:?set PUBLIC_ORIGIN in infra/.env, e.g. https://demo.example.com}
 
       ENDPOINTPLATFORM_PackageStorage__Directory: /var/lib/endpoint-platform/packages
+      # Admin API only. The Agent API is deliberately not given this key.
+      ENDPOINTPLATFORM_RecoveryEscrow__Key: ${RECOVERY_ESCROW_KEY:?set RECOVERY_ESCROW_KEY in infra/.env}
+      ENDPOINTPLATFORM_RecoveryEscrow__KeyVersion: ${RECOVERY_ESCROW_KEY_VERSION:-1}
       ASPNETCORE_ENVIRONMENT: Production
 
       # Outside Development the host calls UseHttpsRedirection(). TLS terminates

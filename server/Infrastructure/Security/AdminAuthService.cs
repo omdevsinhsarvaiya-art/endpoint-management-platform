@@ -1,4 +1,4 @@
-using EndpointPlatform.Domain.Auditing;
+﻿using EndpointPlatform.Domain.Auditing;
 using EndpointPlatform.Domain.Identity;
 using EndpointPlatform.Infrastructure.Auditing;
 using EndpointPlatform.Infrastructure.Persistence;
@@ -336,6 +336,55 @@ public sealed class AdminAuthService(
                 .WithFailureReason(reason));
 
         await Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Verifies an already-signed-in administrator's current password, without
+    /// changing anything.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Step-up authentication for operations where holding the permission is not
+    /// enough -- revealing an escrowed BitLocker recovery key is the first. It
+    /// answers the question "is this still the person who signed in", which a
+    /// session cookie alone cannot.
+    /// </para>
+    /// <para>
+    /// A wrong password counts towards the same lockout as a failed sign-in, and a
+    /// locked-out account gets the same answer as a wrong password. Both match the
+    /// sign-in and change-password paths, and for the same reason: telling a caller
+    /// which of the two happened tells an attacker whether their guessing is
+    /// working.
+    /// </para>
+    /// </remarks>
+    public async Task<bool> VerifyCurrentPasswordAsync(
+        Guid userId, string currentPassword, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrEmpty(currentPassword))
+        {
+            return false;
+        }
+
+        var now = _timeProvider.GetUtcNow();
+
+        var user = await _dbContext.PlatformUsers
+            .SingleOrDefaultAsync(u => u.Id == userId, cancellationToken);
+
+        if (user is null || user.PasswordHash is null || user.IsLockedOut(now))
+        {
+            return false;
+        }
+
+        if (PasswordHasher.Verify(currentPassword, user.PasswordHash))
+        {
+            return true;
+        }
+
+        user.RecordFailedSignIn(now, _options.LockoutThreshold, TimeSpan.FromMinutes(_options.LockoutMinutes));
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        _logger.LogWarning("Step-up password verification failed for {UserId}.", userId);
+        return false;
     }
 
     public async Task SignOutAsync(string token, CancellationToken cancellationToken = default)

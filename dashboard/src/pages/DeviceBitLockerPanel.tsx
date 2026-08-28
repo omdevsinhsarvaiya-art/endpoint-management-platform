@@ -1,12 +1,23 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
+  deleteRecoveryKeyEscrow,
+  getBitLockerEscrows,
   getDeviceBitLockerReadiness,
   getDeviceBitLockerVolumes,
   type BitLockerReadinessSummary,
   type BitLockerVolumeRow,
+  type EscrowRow,
 } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import { Icon } from '../components/Icon'
+import { EscrowKeyDialog, RevealKeyDialog } from './RecoveryKeyDialog'
+import {
+  activeEscrowFor,
+  describeEscrow,
+  escrowStatus,
+  escrowStatusLabel,
+  escrowStatusTone,
+} from './escrowView'
 import {
   availabilityNotice,
   compareVolumes,
@@ -40,9 +51,14 @@ import {
 export function DeviceBitLockerPanel({ deviceId }: { deviceId: string }) {
   const { hasPermission } = useAuth()
   const canView = hasPermission('bitlocker.view')
+  const canManageKeys = hasPermission('bitlocker.recovery_key.manage')
+  const canReadKeys = hasPermission('bitlocker.recovery_key.read')
 
   const [summary, setSummary] = useState<BitLockerReadinessSummary | null>(null)
   const [volumes, setVolumes] = useState<BitLockerVolumeRow[]>([])
+  const [escrows, setEscrows] = useState<EscrowRow[]>([])
+  const [escrowing, setEscrowing] = useState<BitLockerVolumeRow | null>(null)
+  const [revealing, setRevealing] = useState<EscrowRow | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -50,12 +66,17 @@ export function DeviceBitLockerPanel({ deviceId }: { deviceId: string }) {
     setLoading(true)
     setError(null)
     try {
-      const [readiness, rows] = await Promise.all([
+      // Escrow METADATA only. Nothing here fetches a key: retrieval is a
+      // separate route behind its own permission and a step-up password, and it
+      // never happens on page load.
+      const [readiness, rows, escrowRows] = await Promise.all([
         getDeviceBitLockerReadiness(deviceId),
         getDeviceBitLockerVolumes(deviceId),
+        getBitLockerEscrows(deviceId),
       ])
       setSummary(readiness)
       setVolumes(rows)
+      setEscrows(escrowRows)
     } catch {
       setError('BitLocker information could not be loaded.')
     } finally {
@@ -172,6 +193,7 @@ export function DeviceBitLockerPanel({ deviceId }: { deviceId: string }) {
                   <th>Encrypted</th>
                   <th>Method</th>
                   <th>Recovery protector</th>
+                  <th>Escrowed key</th>
                 </tr>
               </thead>
               <tbody>
@@ -207,6 +229,54 @@ export function DeviceBitLockerPanel({ deviceId }: { deviceId: string }) {
                         </div>
                       )}
                     </td>
+                    <td>
+                      {/* Status only. The key itself is never rendered here and
+                          is never fetched until somebody asks for it. */}
+                      <span className={`badge ${escrowStatusTone(escrowStatus(escrows, v.deviceIdentifier))}`}>
+                        {escrowStatusLabel(escrowStatus(escrows, v.deviceIdentifier))}
+                      </span>
+
+                      {activeEscrowFor(escrows, v.deviceIdentifier) && (
+                        <div className="muted" style={{ fontSize: '0.8em', marginTop: 4 }}>
+                          {describeEscrow(activeEscrowFor(escrows, v.deviceIdentifier)!)}
+                        </div>
+                      )}
+
+                      <div className="row-sub" style={{ marginTop: 6, gap: 6 }}>
+                        {canReadKeys && activeEscrowFor(escrows, v.deviceIdentifier) && (
+                          <button
+                            type="button"
+                            className="btn-ghost btn-sm"
+                            onClick={() => setRevealing(activeEscrowFor(escrows, v.deviceIdentifier)!)}
+                          >
+                            Reveal
+                          </button>
+                        )}
+
+                        {canManageKeys && (
+                          <button
+                            type="button"
+                            className="btn-ghost btn-sm"
+                            onClick={() => setEscrowing(v)}
+                          >
+                            {activeEscrowFor(escrows, v.deviceIdentifier) ? 'Replace' : 'Escrow key'}
+                          </button>
+                        )}
+
+                        {canManageKeys && activeEscrowFor(escrows, v.deviceIdentifier) && (
+                          <button
+                            type="button"
+                            className="btn-ghost btn-sm"
+                            onClick={async () => {
+                              await deleteRecoveryKeyEscrow(activeEscrowFor(escrows, v.deviceIdentifier)!.id)
+                              await load()
+                            }}
+                          >
+                            Delete
+                          </button>
+                        )}
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -215,10 +285,24 @@ export function DeviceBitLockerPanel({ deviceId }: { deviceId: string }) {
         )}
 
         <p className="muted" style={{ marginTop: 12 }}>
-          Recovery keys are never collected by the agent, never stored by the platform, and cannot
-          be shown here. Only the presence and identifier of a recovery protector are recorded.
+          The agent never reads a recovery key from Windows. A key can only be here because an
+          administrator escrowed it deliberately; it is encrypted at rest, never shown on this page,
+          and revealing one requires your own password and is recorded against your account.
         </p>
       </div>
+
+      {escrowing && (
+        <EscrowKeyDialog
+          deviceId={deviceId}
+          volume={escrowing}
+          onClose={() => setEscrowing(null)}
+          onSaved={() => void load()}
+        />
+      )}
+
+      {revealing && (
+        <RevealKeyDialog escrow={revealing} onClose={() => setRevealing(null)} />
+      )}
     </>
   )
 }

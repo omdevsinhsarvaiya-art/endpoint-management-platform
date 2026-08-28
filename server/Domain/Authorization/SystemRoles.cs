@@ -58,6 +58,11 @@ public static class SystemRoles
         // action -- and Helpdesk can already see the fault and escalate it.
         Permissions.Driver.Manage,
         Permissions.BitLocker.View,
+        // Deliberately not granted to Helpdesk. A recovery password unlocks a
+        // machine's disk outright; filing one and reading one back are both
+        // change-control decisions rather than support actions.
+        Permissions.BitLocker.RecoveryKeyManage,
+        Permissions.BitLocker.RecoveryKeyRead,
         Permissions.LocalUser.View,
         Permissions.LocalUser.Create,
         Permissions.LocalUser.Delete,

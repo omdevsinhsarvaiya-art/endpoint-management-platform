@@ -78,6 +78,27 @@ public static class Permissions
     {
         /// <summary>See volume encryption state and readiness. Never a recovery key.</summary>
         public const string View = "bitlocker.view";
+
+        /// <summary>
+        /// Escrow, replace and delete a stored BitLocker recovery password.
+        /// </summary>
+        /// <remarks>
+        /// Separate from <see cref="View"/> because seeing that a key is escrowed
+        /// and being able to change what is escrowed are different decisions.
+        /// </remarks>
+        public const string RecoveryKeyManage = "bitlocker.recovery_key.manage";
+
+        /// <summary>
+        /// Retrieve the plaintext of an escrowed recovery password.
+        /// </summary>
+        /// <remarks>
+        /// The most dangerous read in the platform: it hands over the key to a
+        /// machine's disk. Deliberately its own permission rather than part of
+        /// <see cref="View"/> or <see cref="RecoveryKeyManage"/> -- somebody who
+        /// files keys for safekeeping is not necessarily somebody who may read
+        /// them back, and every reveal is separately audited and rate limited.
+        /// </remarks>
+        public const string RecoveryKeyRead = "bitlocker.recovery_key.read";
     }
 
     public static class LocalUser
@@ -168,6 +189,10 @@ public static class Permissions
         new(Driver.Manage, "Drivers", "Approve driver packages and install them on devices", HighRisk: true),
 
         new(BitLocker.View, "BitLocker", "View volume encryption state and readiness", HighRisk: false),
+        new(BitLocker.RecoveryKeyManage, "BitLocker",
+            "Escrow, replace and delete stored BitLocker recovery passwords", HighRisk: true),
+        new(BitLocker.RecoveryKeyRead, "BitLocker",
+            "Reveal a stored BitLocker recovery password", HighRisk: true),
 
         new(LocalUser.View, "Local accounts", "View Windows local users on a device", HighRisk: false),
         new(LocalUser.Create, "Local accounts", "Create a Windows local user", HighRisk: true),

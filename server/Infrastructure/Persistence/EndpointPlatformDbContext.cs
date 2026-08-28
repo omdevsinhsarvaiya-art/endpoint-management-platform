@@ -69,6 +69,9 @@ public sealed class EndpointPlatformDbContext(DbContextOptions<EndpointPlatformD
 
     public DbSet<DeviceBitLockerVolume> DeviceBitLockerVolumes => Set<DeviceBitLockerVolume>();
 
+    public DbSet<Domain.BitLocker.BitLockerRecoveryEscrow> BitLockerRecoveryEscrows =>
+        Set<Domain.BitLocker.BitLockerRecoveryEscrow>();
+
     public DbSet<DeviceSecurityPosture> DeviceSecurityPosture => Set<DeviceSecurityPosture>();
 
     public DbSet<DeviceUpdateStatus> DeviceUpdateStatus => Set<DeviceUpdateStatus>();

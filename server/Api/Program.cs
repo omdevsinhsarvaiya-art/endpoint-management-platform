@@ -4,6 +4,7 @@ using EndpointPlatform.Api.Endpoints;
 using EndpointPlatform.Api.Security;
 using EndpointPlatform.Contracts.Common;
 using EndpointPlatform.Infrastructure.DependencyInjection;
+using EndpointPlatform.Infrastructure.BitLocker;
 using EndpointPlatform.Infrastructure.Hosting;
 using EndpointPlatform.Infrastructure.Security;
 using Microsoft.AspNetCore.Authentication;
@@ -73,6 +74,21 @@ public sealed class Program
                 .ValidateOnStart();
 
             builder.Services.AddScoped<AdminAuthService>();
+
+            // Registered here rather than in the shared infrastructure, so the
+            // Agent API never holds the key that decrypts recovery passwords.
+            // That service is reachable by every managed endpoint; the escrow key
+            // has no business being in its process. Validated on start: escrow
+            // seals data at rest, so a missing or malformed key must stop this
+            // API rather than surface later as passwords that cannot be read back.
+            builder.Services.AddOptions<RecoveryEscrowOptions>()
+                .Bind(builder.Configuration.GetSection(RecoveryEscrowOptions.SectionName))
+                .ValidateDataAnnotations()
+                .ValidateOnStart();
+
+            builder.Services.AddSingleton<IRecoveryKeyProtector, AesGcmRecoveryKeyProtector>();
+            builder.Services.AddSingleton<RevealRateLimiter>();
+            builder.Services.AddScoped<RecoveryEscrowService>();
 
             builder.Services
                 .AddAuthentication(AdminAuthenticationHandler.SchemeName)
@@ -174,6 +190,7 @@ public sealed class Program
             app.MapDriverEndpoints();
             app.MapBitLockerEndpoints();
             app.MapDriverPackageEndpoints();
+            app.MapBitLockerEscrowEndpoints();
             app.MapSoftwareEndpoints();
             app.MapPackageEndpoints();
             app.MapSecurityEndpoints();

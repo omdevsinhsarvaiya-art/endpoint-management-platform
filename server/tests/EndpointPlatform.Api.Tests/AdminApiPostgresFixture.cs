@@ -1,4 +1,4 @@
-using System.Net.Http.Json;
+﻿using System.Net.Http.Json;
 using EndpointPlatform.Domain.Authorization;
 using EndpointPlatform.Domain.Identity;
 using EndpointPlatform.Infrastructure.Persistence;
@@ -23,6 +23,9 @@ namespace EndpointPlatform.Api.Tests;
 public sealed class AdminApiPostgresFixture : IAsyncLifetime
 {
     public const string Password = "correct horse battery staple 9!";
+
+    /// <summary>A throwaway 32-byte key for the test host. Seals nothing real.</summary>
+    private const string TestEscrowKey = "dGVzdC1lc2Nyb3cta2V5LTMyLWJ5dGVzLWxvbmchISE=";
 
     public const string SuperAdminEmail = "superadmin@test.local";
     public const string ItAdminEmail = "itadmin@test.local";
@@ -191,6 +194,13 @@ public sealed class AdminApiPostgresFixture : IAsyncLifetime
             builder.UseSetting("Redis:ConnectionString", redisConnectionString);
             builder.UseSetting("Redis:InstanceName", "endpointplatform:adminapitest:");
             builder.UseSetting("Cors:AllowedOrigins:0", "http://localhost:5173");
+
+        // Mandatory for the Admin API since recovery-key escrow shipped: the
+        // options are validated on start, so without a key the host refuses to
+        // build and every test in the suite fails at construction. A fixed test
+        // key is fine here and is not a secret - it seals nothing real.
+        builder.UseSetting("RecoveryEscrow:Key", TestEscrowKey);
+        builder.UseSetting("RecoveryEscrow:KeyVersion", "1");
             // Every test request arrives from the same loopback address, so the
             // per-address login limiter must be generous here. The limiter itself
             // has a dedicated test that lowers this again.

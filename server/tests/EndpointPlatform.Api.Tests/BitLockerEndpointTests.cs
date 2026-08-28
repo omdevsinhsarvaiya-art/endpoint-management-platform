@@ -25,7 +25,7 @@ namespace EndpointPlatform.Api.Tests;
 /// </para>
 /// </remarks>
 [Collection(AdminApiPostgresCollection.Name)]
-public sealed class BitLockerEndpointTests(AdminApiPostgresFixture fixture)
+public sealed partial class BitLockerEndpointTests(AdminApiPostgresFixture fixture)
 {
     private readonly AdminApiPostgresFixture _fixture = fixture;
 
@@ -394,6 +394,11 @@ public sealed class BitLockerEndpointTests(AdminApiPostgresFixture fixture)
         }
     }
 
+    /// <summary>A canonical GUID, in any of the casings these responses use.</summary>
+    [System.Text.RegularExpressions.GeneratedRegex(
+        "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")]
+    private static partial System.Text.RegularExpressions.Regex GuidShape();
+
     private static void Walk(JsonElement element, string where, string[] forbiddenNames)
     {
         switch (element.ValueKind)
@@ -422,12 +427,25 @@ public sealed class BitLockerEndpointTests(AdminApiPostgresFixture fixture)
             case JsonValueKind.String:
                 var value = element.GetString() ?? "";
 
+                // Applied to the value exactly as returned. A canonical GUID cannot
+                // match this -- its four-character groups break any six-digit run --
+                // so nothing legitimate is excused from it.
                 System.Text.RegularExpressions.Regex.IsMatch(value, @"\d{6}-\d{6}")
                     .ShouldBeFalse($"{where} returned a value shaped like a recovery password");
 
                 // A recovery password is 48 digits in six-digit groups. Nothing this
                 // API returns has any business carrying a long digit run.
-                System.Text.RegularExpressions.Regex.IsMatch(value, @"\d{9,}")
+                //
+                // Identifiers are the one honest source of long digit runs here: a
+                // device, volume or protector GUID is hex, and about 3% of GUIDs
+                // contain nine consecutive digits purely by chance. This test walks
+                // several of them per run, which made it fail at random roughly one
+                // run in three. A GUID names a thing and unlocks nothing, and a real
+                // recovery password is never one, so they are removed before the
+                // heuristic rather than the heuristic being loosened.
+                var scanned = GuidShape().Replace(value, "");
+
+                System.Text.RegularExpressions.Regex.IsMatch(scanned, @"\d{9,}")
                     .ShouldBeFalse($"{where} returned a suspiciously long digit run");
 
                 break;

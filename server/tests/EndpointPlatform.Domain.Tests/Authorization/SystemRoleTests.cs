@@ -213,10 +213,68 @@ public sealed class SystemRoleTests
                 Permissions.BitLocker.View, $"Role '{role}' should be able to see encryption state.");
         }
 
+        // Every BitLocker permission must be listed here with a deliberate role
+        // decision. This assertion has already done its job once: it failed when
+        // recovery-key escrow added two permissions, which is exactly the moment
+        // somebody has to decide who may hold them rather than inheriting a
+        // default.
         Permissions.AllKeys
             .Where(k => k.StartsWith("bitlocker.", StringComparison.Ordinal))
-            .ShouldBe([Permissions.BitLocker.View],
-                "a mutating BitLocker permission was added without deciding which roles hold it");
+            .ShouldBe(
+                [
+                    Permissions.BitLocker.RecoveryKeyManage,
+                    Permissions.BitLocker.RecoveryKeyRead,
+                    Permissions.BitLocker.View,
+                ],
+                ignoreOrder: true,
+                customMessage: "a BitLocker permission was added without deciding which roles hold it");
+    }
+
+    /// <summary>
+    /// Reading an escrowed recovery password unlocks a machine's disk outright,
+    /// so it stays with the roles trusted to change the estate.
+    /// </summary>
+    [Fact]
+    public void Only_administrators_can_escrow_or_reveal_recovery_keys()
+    {
+        var catalogue = Permissions.All.ToDictionary(p => p.Key, StringComparer.Ordinal);
+
+        catalogue[Permissions.BitLocker.RecoveryKeyRead].HighRisk.ShouldBeTrue();
+        catalogue[Permissions.BitLocker.RecoveryKeyManage].HighRisk.ShouldBeTrue();
+
+        foreach (var permission in new[]
+                 {
+                     Permissions.BitLocker.RecoveryKeyRead,
+                     Permissions.BitLocker.RecoveryKeyManage,
+                 })
+        {
+            var holders = SystemRoles.All
+                .Where(r => r.Value.PermissionKeys.Contains(permission, StringComparer.Ordinal))
+                .Select(r => r.Key)
+                .ToArray();
+
+            holders.ShouldBe(
+                [SystemRoles.SuperAdministrator, SystemRoles.ItAdministrator],
+                ignoreOrder: true,
+                customMessage: $"'{permission}' must not reach Helpdesk or Auditor");
+        }
+    }
+
+    /// <summary>
+    /// Seeing that a machine is encrypted must never imply being able to read the
+    /// key that decrypts it.
+    /// </summary>
+    [Fact]
+    public void Bitlocker_view_does_not_imply_recovery_key_access()
+    {
+        foreach (var role in new[] { SystemRoles.Helpdesk, SystemRoles.Auditor })
+        {
+            var permissions = SystemRoles.All[role].PermissionKeys;
+
+            permissions.ShouldContain(Permissions.BitLocker.View);
+            permissions.ShouldNotContain(Permissions.BitLocker.RecoveryKeyRead);
+            permissions.ShouldNotContain(Permissions.BitLocker.RecoveryKeyManage);
+        }
     }
 
     /// <summary>

@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Net.Http.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -30,6 +30,13 @@ public sealed class LoginRateLimitTests
             builder.UseSetting("Redis:ConnectionString", "127.0.0.1:1,abortConnect=false,connectTimeout=100");
             builder.UseSetting("Cors:AllowedOrigins:0", "http://localhost:5173");
             builder.UseSetting("AdminAuth:LoginAttemptsPerMinutePerAddress", "3");
+
+            // Required since recovery-key escrow shipped: the Admin API validates
+            // this on start and refuses to build without it, so a factory that
+            // omits it fails host construction and every test using it dies with
+            // ObjectDisposedException rather than anything informative. A
+            // throwaway 32-byte key; it seals nothing real.
+            builder.UseSetting("RecoveryEscrow:Key", "dGVzdC1lc2Nyb3cta2V5LTMyLWJ5dGVzLWxvbmchISE=");
         }
     }
 

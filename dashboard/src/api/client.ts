@@ -741,6 +741,96 @@ export async function getDeviceBitLockerReadiness(deviceId: string): Promise<Bit
     `/admin/v1/devices/${encodeURIComponent(deviceId)}/bitlocker-readiness`)
 }
 
+// ---------------------------------------------------------------------------
+// BitLocker recovery-key escrow.
+//
+// The list type has no field for a key, plaintext or sealed -- the API returns
+// none, and there is deliberately nothing here to hold one. Only revealEscrow
+// ever carries key material, only in its response, and only in memory.
+// ---------------------------------------------------------------------------
+
+export interface EscrowRow {
+  id: string
+  volumeDeviceIdentifier: string
+  keyProtectorId: string
+  driveLetter: string | null
+  isActive: boolean
+  escrowedAt: string
+  escrowedBy: string
+  supersededAt: string | null
+  revealedCount: number
+  lastRevealedAt: string | null
+}
+
+export async function getBitLockerEscrows(deviceId: string): Promise<EscrowRow[]> {
+  return request<EscrowRow[]>(`/admin/v1/devices/${encodeURIComponent(deviceId)}/bitlocker-escrows`)
+}
+
+export async function escrowRecoveryKey(
+  deviceId: string,
+  volumeDeviceIdentifier: string,
+  keyProtectorId: string,
+  recoveryPassword: string,
+): Promise<{ id: string }> {
+  return request<{ id: string }>(
+    `/admin/v1/devices/${encodeURIComponent(deviceId)}/bitlocker-escrows`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ volumeDeviceIdentifier, keyProtectorId, recoveryPassword }),
+    },
+  )
+}
+
+export interface RevealedKey {
+  escrowId: string
+  keyProtectorId: string
+  driveLetter: string | null
+  recoveryPassword: string
+}
+
+/**
+ * Reveals an escrowed key. POST, never GET: a GET would put the operation in
+ * browser history, proxy logs and Referer headers, and cannot carry the step-up
+ * password this requires.
+ *
+ * The returned password is held in component state and nowhere else -- never in
+ * localStorage, sessionStorage, the URL or router state.
+ */
+export async function revealRecoveryKey(
+  escrowId: string,
+  currentPassword: string,
+  justification: string,
+): Promise<RevealedKey> {
+  const response = await fetch(
+    `/api/admin/v1/bitlocker-escrows/${encodeURIComponent(escrowId)}/reveal`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+      body: JSON.stringify({ currentPassword, justification }),
+    },
+  )
+
+  if (!response.ok) {
+    // Surfaces the server's reason -- rate limited, wrong password, deleted --
+    // which the shared request helper would flatten into a status code.
+    const problem = await response.json().catch(() => null)
+    throw new ApiError(
+      response.status,
+      problem?.title ?? problem?.detail ?? `Reveal failed with HTTP ${response.status}`,
+      response.headers.get('X-Correlation-Id'),
+    )
+  }
+
+  return (await response.json()) as RevealedKey
+}
+
+export async function deleteRecoveryKeyEscrow(escrowId: string): Promise<void> {
+  await request<void>(`/admin/v1/bitlocker-escrows/${encodeURIComponent(escrowId)}`, {
+    method: 'DELETE',
+  })
+}
+
 export async function requestInventoryRefresh(deviceId: string): Promise<void> {
   const response = await fetch(`/api/admin/v1/devices/${encodeURIComponent(deviceId)}/refresh-inventory`, {
     method: 'POST',
