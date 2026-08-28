@@ -308,3 +308,84 @@ someone holding a stolen session could lock the only administrator out for the
 lockout window. That is the correct trade against brute-forcing and matches the
 sign-in path, but it is worth knowing while the deployment has one administrator.
 A second account removes the concern; platform-user management does not exist yet.
+
+## Drivers and BitLocker (Milestone 13)
+
+Two read-only inventories and one gated write capability. The write half --
+installing an approved driver package -- exists in the server and agent but has
+never been exercised against real hardware; see the deferred criteria below.
+
+**Driver health does not treat a disabled device as a fault.** This platform
+disables devices itself: USB storage restriction (Milestone 11a) sets
+`CM_PROB_DISABLED`, so folding problem code 22 into the fault counts would make
+every correctly-restricted endpoint in the estate report as damaged, and would
+bury real faults underneath. `Disabled` is therefore its own state, counted and
+shown but never a fault.
+
+**Unknown is never healthy, and never unencrypted.** A device whose problem code
+could not be read is `Unknown`; a machine whose BitLocker query was refused
+reports `AccessDenied` rather than an empty volume list. An agent that loses its
+elevation must not make an encrypted estate look like plaintext.
+
+**No BitLocker recovery key is collected, stored, returned or displayed.** The
+agent calls `GetKeyProtectors`, which returns protector identifiers, and never
+`GetKeyProtectorNumericalPassword`, which returns the 48-digit password. No
+column in `device_bitlocker_volumes` can hold key material, no API field exposes
+one, and the dashboard has no control that could request one. What is recorded is
+that a recovery protector exists and the GUID naming it; a protector GUID unlocks
+nothing.
+
+**Driver installation is gated seven ways** and never through a shell: the
+archive hash is verified before a single entry is extracted, extraction refuses
+traversal and oversized or over-numerous entries, the catalogue signature and a
+*mandatory* signer pin are checked before the driver store is opened, only
+devices matching the package's hardware id are touched, a downgrade is refused
+unless explicitly authorised, every affected instance is verified individually
+afterwards, and a reboot requirement is reported rather than acted on. The agent
+never reboots.
+
+### Acceptance - Milestone 13, read-only path closed 2026-08-28
+
+Run against `LAPTOP-LVCHEQ2H` (agent 1.3.0, device `01a01bc4-...`) with
+`scripts/Invoke-M13Acceptance.ps1`, which mutates nothing by default.
+
+**27 PASS / 0 FAIL / 10 DEFERRED.**
+
+| | |
+|---|---|
+| Agent | reports 1.3.0; enrollment identity retained across the upgrade |
+| Driver inventory | 200 of 200 present devices - matches `Get-PnpDevice -PresentOnly` exactly |
+| Driver health | 0 faults; Windows independently reports 0 devices in Error |
+| BitLocker | `Available`; C: `NotEncrypted` at 0%; TPM present and enabled -> `ReadyToEncrypt` |
+| Recovery keys | no key field, no key-shaped value, protectors are GUIDs only |
+| M11/M12 regression | USB, posture, elevations and local accounts all unchanged |
+| Mutation | none - no driver installed, no task queued, no BitLocker change |
+
+**Deferred, and why.** These are not passes and are not counted as any.
+
+- **C7d - `CM_PROB_DISABLED` live verification.** No device currently reports
+  problem code 22: the restricted USB storage device is not attached, and an
+  absent device is not enumerated. The classification is covered by unit tests at
+  every layer but has not been demonstrated on live data. Proving it needs that
+  device physically connected and one inventory refresh.
+- **C10-C18 - real driver deployment.** No driver package has been approved, so
+  the hash gate, archive gates, catalogue signature and signer pin, hardware
+  targeting, downgrade refusal, per-instance verification, reboot honesty and the
+  stale/withdrawn/old-agent refusals have not been exercised end to end. Proving
+  them needs a signed vendor package and a machine that may have a driver
+  installed on it and be rebooted.
+
+### Known limitations
+
+Recovery-key **escrow** status is not determined. `Win32_EncryptableVolume`
+exposes no reliable per-volume "backed up to a directory" property, and
+`manage-bde` is a command-line tool this agent structurally cannot run
+(ADR-0005). The readiness payload states this rather than guessing.
+
+Driver health does not flag an outdated-but-working driver. A device with no
+problem code is not a fault, whatever version it runs.
+
+The 1.3.0 agent MSI is **unsigned**: no code-signing certificate exists, and the
+build refuses to fabricate a self-signed stand-in that would look like trust
+without being it. It was installed on one endpoint for acceptance under explicit
+authorisation and has not been published as an agent release.
