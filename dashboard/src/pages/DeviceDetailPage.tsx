@@ -5,6 +5,7 @@ import { DeviceUsersPanel } from './DeviceUsersPanel'
 import { DeviceGroupsPanel } from './DeviceGroupsPanel'
 import { DeviceServicesPanel } from './DeviceServicesPanel'
 import { DeviceProcessesPanel } from './DeviceProcessesPanel'
+import { isModule, type DeviceModule } from './deviceModules'
 import { DeviceUsbPanel } from './DeviceUsbPanel'
 import { DeviceDriversPanel } from './DeviceDriversPanel'
 import { DeviceBitLockerPanel } from './DeviceBitLockerPanel'
@@ -41,14 +42,12 @@ interface FeatureSpec {
   count?: number
 }
 
-type Tab = 'overview' | 'hardware' | 'network' | 'users' | 'groups' | 'software' | 'security' | 'usb' | 'drivers' | 'bitlocker' | 'updates' | 'services' | 'processes' | 'actions' | 'tasks'
-
-const MODULES: Tab[] = ['overview', 'hardware', 'network', 'users', 'groups', 'software',
-  'security', 'usb', 'updates', 'services', 'processes', 'actions', 'tasks']
-
-function isModule(value: string | null): value is Tab {
-  return value !== null && (MODULES as string[]).includes(value)
-}
+/**
+ * The module list and this alias now come from one place, so a module cannot
+ * exist as a type without also being accepted by the URL guard. See
+ * deviceModules.ts for why that mattered.
+ */
+type Tab = DeviceModule
 
 type ActionKey = 'restart' | 'shutdown' | 'lock' | 'signout'
 
