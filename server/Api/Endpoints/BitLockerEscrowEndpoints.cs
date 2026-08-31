@@ -100,6 +100,13 @@ public static class BitLockerEscrowEndpoints
             keyProtectorId = e.KeyProtectorId,
             driveLetter = e.DriveLetter,
             isActive = e.IsActive,
+
+            // Which mechanism filed this. Without it the console cannot tell an
+            // endpoint-collected key from one an administrator typed, and was
+            // rendering automatic escrows under the manual heading -- offering
+            // Replace and Delete for a record no administrator owns.
+            origin = e.Origin.ToString(),
+
             escrowedAt = e.EscrowedAt,
             escrowedBy = e.EscrowedByDisplay,
             supersededAt = e.SupersededAt,

@@ -15,6 +15,7 @@ import { useAuth } from '../auth/AuthContext'
 import { Icon } from '../components/Icon'
 import { EscrowKeyDialog, RevealKeyDialog } from './RecoveryKeyDialog'
 import {
+  activeAutomaticEscrowFor,
   activeEscrowFor,
   attemptFor,
   autoEscrowLabel,
@@ -281,8 +282,21 @@ export function DeviceBitLockerPanel({ deviceId }: { deviceId: string }) {
             </p>
           ) : (
             protectors.map(({ volume, protectorId }) => {
-              const auto = autoEscrowState(attempts, volume.deviceIdentifier, protectorId, eligible)
+              // Three independent things, deliberately not conflated: how far
+              // collection has got, the attempt row behind it, and the two
+              // escrow records -- which are separate rows with separate origins.
+              const collected = activeAutomaticEscrowFor(escrows, volume.deviceIdentifier, protectorId)
               const attempt = attemptFor(attempts, volume.deviceIdentifier, protectorId)
+
+              // A collected key is escrowed whatever the attempt row says; the
+              // row can lag, and the key is the fact that matters.
+              const auto = collected
+                ? 'Escrowed'
+                : autoEscrowState(attempts, volume.deviceIdentifier, protectorId, eligible)
+
+              // Manual is manual only. This is the fix: the manual card used to
+              // be built from every escrow for the volume, so an automatically
+              // collected key appeared under it as "Recovery key escrowed".
               const manual = activeEscrowFor(escrows, volume.deviceIdentifier)
 
               return (
@@ -307,15 +321,35 @@ export function DeviceBitLockerPanel({ deviceId }: { deviceId: string }) {
                       </span>
 
                       <p className="path-detail">
-                        {attempt
-                          ? describeAttempt(attempt)
-                          : eligible
-                            ? 'The endpoint has not reported an attempt for this protector yet.'
-                            : 'Unavailable until this device re-enrolls.'}
+                        {collected
+                          ? `Collected by ${collected.escrowedBy} on ${new Date(
+                              collected.escrowedAt,
+                            ).toLocaleString()}`
+                          : attempt
+                            ? describeAttempt(attempt)
+                            : eligible
+                              ? 'The endpoint has not reported an attempt for this protector yet.'
+                              : 'Unavailable until this device re-enrolls.'}
                       </p>
 
-                      {canManageKeys && attempt && canReset(auto) && (
-                        <div className="path-actions">
+                      <div className="path-actions">
+                        {/* Reveal is offered here too: an automatically collected
+                            key is the one that unlocks the disk, and it goes
+                            through exactly the same protected flow. Replace and
+                            Delete are deliberately absent -- no administrator
+                            owns this record, and it is replaced by the endpoint
+                            collecting again, not by hand. */}
+                        {canReadKeys && collected && (
+                          <button
+                            type="button"
+                            className="btn-ghost btn-sm"
+                            onClick={() => setRevealing(collected)}
+                          >
+                            Reveal
+                          </button>
+                        )}
+
+                        {canManageKeys && attempt && canReset(auto) && (
                           <button
                             type="button"
                             className="btn-ghost btn-sm"
@@ -326,8 +360,8 @@ export function DeviceBitLockerPanel({ deviceId }: { deviceId: string }) {
                           >
                             Reset and retry
                           </button>
-                        </div>
-                      )}
+                        )}
+                      </div>
                     </div>
 
                     <div className="escrow-path">

@@ -24,10 +24,29 @@ export const REVEAL_LIFETIME_MS = 60_000
 export type EscrowStatus = 'Escrowed' | 'NotEscrowed' | 'Superseded'
 
 export function escrowStatus(rows: EscrowRow[], volumeDeviceIdentifier: string): EscrowStatus {
-  const forVolume = rows.filter((r) => r.volumeDeviceIdentifier === volumeDeviceIdentifier)
+  const forVolume = manualEscrows(rows).filter(
+    (r) => r.volumeDeviceIdentifier === volumeDeviceIdentifier,
+  )
 
   if (forVolume.some((r) => r.isActive)) return 'Escrowed'
   return forVolume.length > 0 ? 'Superseded' : 'NotEscrowed'
+}
+
+/**
+ * Only the escrows an administrator filed.
+ *
+ * The manual card is built from this rather than from every escrow, because an
+ * automatically collected key has no administrator behind it: showing it there
+ * claimed someone had vouched for it, and offered Replace and Delete for a
+ * record nobody owns.
+ */
+export function manualEscrows(rows: EscrowRow[]): EscrowRow[] {
+  return rows.filter((r) => r.origin === 'Manual')
+}
+
+/** Only the escrows the endpoint collected. */
+export function automaticEscrows(rows: EscrowRow[]): EscrowRow[] {
+  return rows.filter((r) => r.origin === 'Automatic')
 }
 
 export function escrowStatusTone(status: EscrowStatus): 'ok' | 'warn' | 'neutral' {
@@ -57,7 +76,28 @@ export function activeEscrowFor(
   rows: EscrowRow[],
   volumeDeviceIdentifier: string,
 ): EscrowRow | undefined {
-  return rows.find((r) => r.volumeDeviceIdentifier === volumeDeviceIdentifier && r.isActive)
+  return manualEscrows(rows).find(
+    (r) => r.volumeDeviceIdentifier === volumeDeviceIdentifier && r.isActive,
+  )
+}
+
+/**
+ * The live automatically collected escrow for a protector, if one exists.
+ *
+ * Matched on protector as well as volume: a volume can carry several protectors,
+ * and a key collected for one does not unlock another.
+ */
+export function activeAutomaticEscrowFor(
+  rows: EscrowRow[],
+  volumeDeviceIdentifier: string,
+  keyProtectorId: string,
+): EscrowRow | undefined {
+  return automaticEscrows(rows).find(
+    (r) =>
+      r.volumeDeviceIdentifier === volumeDeviceIdentifier &&
+      r.isActive &&
+      sameProtector(r.keyProtectorId, keyProtectorId),
+  )
 }
 
 /**

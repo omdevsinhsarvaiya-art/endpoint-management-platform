@@ -1,6 +1,9 @@
 ﻿import { describe, expect, it } from 'vitest'
 import {
   REVEAL_LIFETIME_MS,
+  activeAutomaticEscrowFor,
+  automaticEscrows,
+  manualEscrows,
   attemptFor,
   autoEscrowLabel,
   autoEscrowState,
@@ -42,6 +45,7 @@ function escrow(overrides: Partial<EscrowRow> = {}): EscrowRow {
     keyProtectorId: '3f2504e0-4f89-11d3-9a0c-0305e82c3301',
     driveLetter: 'C:',
     isActive: true,
+    origin: 'Manual',
     escrowedAt: '2026-08-28T10:00:00Z',
     escrowedBy: 'admin@company.local',
     supersededAt: null,
@@ -296,6 +300,133 @@ describe('describing an automatic attempt', () => {
   it('never renders anything shaped like a recovery password', () => {
     for (const state of ['Pending', 'Failed', 'RetryExhausted', 'Escrowed']) {
       expect(describeAttempt({ ...base, state })).not.toMatch(/\d{6}-\d{6}/)
+    }
+  })
+})
+
+/**
+ * Escrow origin decides which card a record belongs to.
+ *
+ * The bug this pins down: the manual card was built from every escrow for a
+ * volume, so a key the endpoint had collected appeared under "Manual" as
+ * "Recovery key escrowed" -- claiming an administrator had vouched for it, and
+ * offering Replace and Delete for a record nobody owns. The automatic card had
+ * been reporting the same key correctly at the same time, so the console showed
+ * one key twice under two different stories.
+ *
+ * The two mechanisms carry different trust and different controls, so they are
+ * separated at the data level rather than by how they are drawn.
+ */
+describe('escrow origin routing', () => {
+  const VOL = VOLUME
+  const PROT = '3f2504e0-4f89-11d3-9a0c-0305e82c3301'
+
+  const manual = (over: Partial<EscrowRow> = {}): EscrowRow => ({
+    id: 'manual-1',
+    volumeDeviceIdentifier: VOL,
+    keyProtectorId: PROT,
+    driveLetter: 'C:',
+    isActive: true,
+    origin: 'Manual',
+    escrowedAt: '2026-08-28T10:00:00Z',
+    escrowedBy: 'admin@company.local',
+    supersededAt: null,
+    revealedCount: 0,
+    lastRevealedAt: null,
+    ...over,
+  })
+
+  const automatic = (over: Partial<EscrowRow> = {}): EscrowRow =>
+    manual({
+      id: 'auto-1',
+      origin: 'Automatic',
+      escrowedBy: 'OMDEVSINH-TECHS (agent)',
+      ...over,
+    })
+
+  /** 1. The regression itself. */
+  it('an automatic escrow never reaches the manual card', () => {
+    const rows = [automatic()]
+
+    expect(manualEscrows(rows)).toHaveLength(0)
+    expect(activeEscrowFor(rows, VOL)).toBeUndefined()
+
+    // ...and the manual badge must not claim a key is filed.
+    expect(escrowStatus(rows, VOL)).toBe('NotEscrowed')
+    expect(escrowStatusLabel('NotEscrowed')).toContain('No recovery key')
+  })
+
+  /**
+   * 2. Replace and Delete are driven by the manual record. With none present,
+   * there is nothing for those controls to act on.
+   */
+  it('an automatic escrow offers nothing for manual controls to target', () => {
+    const rows = [automatic()]
+
+    // Both manual mutations take the record returned here.
+    expect(activeEscrowFor(rows, VOL)).toBeUndefined()
+
+    // The automatic path still finds it, so it is not simply lost.
+    expect(activeAutomaticEscrowFor(rows, VOL, PROT)?.id).toBe('auto-1')
+  })
+
+  /** 3. */
+  it('a manual escrow appears only in the manual card', () => {
+    const rows = [manual()]
+
+    expect(activeEscrowFor(rows, VOL)?.id).toBe('manual-1')
+    expect(escrowStatus(rows, VOL)).toBe('Escrowed')
+
+    expect(automaticEscrows(rows)).toHaveLength(0)
+    expect(activeAutomaticEscrowFor(rows, VOL, PROT)).toBeUndefined()
+  })
+
+  /** 4. Both origins for one protector: two records, two cards, no duplication. */
+  it('when both exist each appears in exactly one card', () => {
+    const rows = [manual(), automatic()]
+
+    const inManual = activeEscrowFor(rows, VOL)
+    const inAuto = activeAutomaticEscrowFor(rows, VOL, PROT)
+
+    expect(inManual?.id).toBe('manual-1')
+    expect(inAuto?.id).toBe('auto-1')
+
+    // Distinct records, not one record rendered twice.
+    expect(inManual?.id).not.toBe(inAuto?.id)
+    expect(manualEscrows(rows)).toHaveLength(1)
+    expect(automaticEscrows(rows)).toHaveLength(1)
+  })
+
+  /** 5. */
+  it('an existing automatic escrow stays visible as escrowed automatically', () => {
+    const rows = [automatic()]
+    const found = activeAutomaticEscrowFor(rows, VOL, PROT)
+
+    expect(found).toBeDefined()
+    expect(found!.escrowedBy).toContain('(agent)')
+    expect(autoEscrowLabel('Escrowed')).toBe('Escrowed automatically')
+    expect(autoEscrowTone('Escrowed')).toBe('ok')
+  })
+
+  /** A collected key for one protector must not satisfy another. */
+  it('does not match an automatic escrow across protectors', () => {
+    const rows = [automatic()]
+
+    expect(activeAutomaticEscrowFor(rows, VOL, '7c9e6679-7425-40de-944b-e07fc1f90ae7'))
+      .toBeUndefined()
+  })
+
+  /** Superseded automatic records are history, not the current key. */
+  it('ignores a superseded automatic escrow', () => {
+    const rows = [automatic({ isActive: false, supersededAt: '2026-08-31T00:00:00Z' })]
+
+    expect(activeAutomaticEscrowFor(rows, VOL, PROT)).toBeUndefined()
+  })
+
+  /** Neither card may render anything shaped like a key. */
+  it('no rendered summary contains a recovery-password shape', () => {
+    for (const row of [manual(), automatic()]) {
+      expect(describeEscrow(row)).not.toMatch(/\d{6}-\d{6}/)
     }
   })
 })

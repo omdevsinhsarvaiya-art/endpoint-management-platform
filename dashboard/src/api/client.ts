@@ -755,6 +755,16 @@ export interface EscrowRow {
   keyProtectorId: string
   driveLetter: string | null
   isActive: boolean
+
+  /**
+   * Which mechanism filed this key.
+   *
+   * `Manual` was typed by a named administrator who vouched for it; `Automatic`
+   * was collected and sealed by the endpoint itself. They carry different trust
+   * and different controls, so the console must never render one as the other.
+   */
+  origin: 'Manual' | 'Automatic'
+
   escrowedAt: string
   escrowedBy: string
   supersededAt: string | null
