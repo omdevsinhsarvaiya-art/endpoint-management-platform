@@ -127,6 +127,11 @@ services:
       # Admin API only. The Agent API is deliberately not given this key.
       ENDPOINTPLATFORM_RecoveryEscrow__Key: ${RECOVERY_ESCROW_KEY:?set RECOVERY_ESCROW_KEY in infra/.env}
       ENDPOINTPLATFORM_RecoveryEscrow__KeyVersion: ${RECOVERY_ESCROW_KEY_VERSION:-1}
+      # The sealing pair. Both halves here, and ONLY here: the Admin API is the
+      # one process that may open an automatically escrowed recovery password.
+      # Unset by default, which leaves automatic escrow switched off.
+      ENDPOINTPLATFORM_RecoveryEscrow__SealingPublicKey: ${RECOVERY_SEALING_PUBLIC_KEY:-}
+      ENDPOINTPLATFORM_RecoveryEscrow__SealingPrivateKey: ${RECOVERY_SEALING_PRIVATE_KEY:-}
       ASPNETCORE_ENVIRONMENT: Production
 
       # Outside Development the host calls UseHttpsRedirection(). TLS terminates
@@ -168,6 +173,11 @@ services:
       ENDPOINTPLATFORM_SecretProtection__Key: ${SECRET_PROTECTION_KEY:?set SECRET_PROTECTION_KEY in infra/.env}
 
       ENDPOINTPLATFORM_PackageStorage__Directory: /var/lib/endpoint-platform/packages
+      # PUBLIC half only. This process seals nothing and opens nothing; it needs
+      # the key to pin at enrollment and to reject an envelope sealed elsewhere.
+      # AgentApiKeyBoundaryGuard fails this host at startup if the private key or
+      # the master escrow key ever appears in its configuration.
+      ENDPOINTPLATFORM_RecoveryEscrow__SealingPublicKey: ${RECOVERY_SEALING_PUBLIC_KEY:-}
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"
     volumes:

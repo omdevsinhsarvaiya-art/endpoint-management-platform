@@ -36,11 +36,32 @@
     ON RECOVERY KEYS
     ----------------
     This script never requests, prints, logs or stores BitLocker recovery key
-    material. It cannot: the agent does not read a recovery password, the API
-    returns no field containing one, and the checks below assert that absence
-    rather than relying on it. Protector GUIDs are identifiers, not secrets -
-    one names a protector and unlocks nothing - and even those are only counted,
-    never printed.
+    material, and the checks below assert that absence rather than relying on
+    it. Protector GUIDs are identifiers, not secrets - one names a protector and
+    unlocks nothing - and even those are only counted, never printed.
+
+    The reason for that absence changed after M13, and the earlier wording here
+    is now wrong. This script used to say the agent does not read a recovery
+    password at all. That was true under decision J-4, which has since been
+    explicitly reversed: automatic escrow is approved, and the agent does call
+    GetKeyProtectorNumericalPassword for a protector it has detected. See
+    docs/threat-model.md, where the original decision is preserved alongside the
+    reversal and what it costs.
+
+    The security property these checks defend is therefore no longer 'the agent
+    cannot read a key'. It is:
+
+        the agent does not expose or transmit a plaintext recovery password
+        outside the approved local sealing path
+
+    A password may be read ONLY after every gate passes - the device is eligible
+    for automatic escrow, a sealing-key fingerprint was pinned at enrollment, the
+    offered public key matches that pin, the protector association is confirmed,
+    and no escrow already exists for it. It is then sealed on the endpoint and
+    leaves only as an envelope no server process can open. Criterion 9 below is
+    unchanged in strength: no API response may contain a key field or anything
+    shaped like a key, and that holds whether the key was typed by an
+    administrator or collected automatically.
 
     ON DEFERRED CRITERIA
     --------------------
@@ -386,7 +407,7 @@ if ($readiness.availability -eq 'Available') {
 }
 
 # ==========================================================================
-Section '6. NO RECOVERY KEY IS COLLECTED OR RETURNED (criterion 9)'
+Section '6. NO RECOVERY KEY IS EXPOSED OR RETURNED (criterion 9)'
 
 # Checked structurally: every property NAME is compared for exact equality
 # against the forbidden list, and every string VALUE is tested for the shape of
@@ -464,6 +485,88 @@ $nonGuid = @($protectorIds | Where-Object { -not [guid]::TryParse(($_ -replace '
 Set-Criterion 'C9b Recovery protectors are reported as identifiers only' `
     $(if ($nonGuid -eq 0) { 'PASS' } else { 'FAIL' }) `
     "$($protectorIds.Count) protector id(s), $nonGuid not a GUID (ids are not printed by this script)"
+
+# --------------------------------------------------------------------------
+# Retrieval gates (criterion 9c-9g)
+#
+# Added when decision J-4 was reversed and the agent gained the ability to read
+# a recovery password. The gates are what keep that ability narrow: a password
+# is read ONLY when the device is eligible, the sealing key matches the
+# fingerprint pinned at enrollment, the protector association is confirmed, and
+# no escrow already exists for that protector.
+#
+# These are asserted where they can actually be observed -- in the agent, by
+# EndpointAgent.Core.Tests.BitLocker.AutomaticEscrowGateTests, which drives the
+# gate with a reader that COUNTS CALLS and requires that count to be zero. That
+# is a stronger claim than this script could make from outside: it proves the
+# password was never retrieved, not merely that it was never returned over the
+# API. Nothing here can see inside the endpoint, so these are recorded as
+# deferred-to-automated-test rather than asserted twice and weakly.
+#
+# Run them with:
+#   dotnet test agent/tests/EndpointAgent.Core.Tests #     --filter FullyQualifiedName~AutomaticEscrowGateTests
+
+# Each entry names the automated test that actually proves it. Those tests drive
+# the reader with a spy that COUNTS CALLS and require the count to be zero, which
+# is a stronger claim than this script can make from outside: it proves the
+# password was never retrieved, not merely that it was never returned.
+#
+# Run them with:
+#   dotnet test agent/tests/EndpointAgent.Core.Tests --filter FullyQualifiedName~BitLocker
+#   dotnet test server/tests/EndpointPlatform.AgentApi.Tests --filter FullyQualifiedName~AutomaticEscrow
+#   dotnet test server/tests/EndpointPlatform.Api.Tests --filter FullyQualifiedName~EscrowAttemptReset
+
+$gateTests = @(
+    @{ Id = 'C9c No pinned fingerprint - password is NOT retrieved'
+       Test = 'AutomaticEscrowRunnerTests.A_missing_fingerprint_reads_nothing' }
+    @{ Id = 'C9d Fingerprint mismatch - password is NOT retrieved'
+       Test = 'AutomaticEscrowRunnerTests.B_fingerprint_mismatch_reads_nothing' }
+    @{ Id = 'C9e Already escrowed - password is NOT retrieved'
+       Test = 'AutomaticEscrowRunnerTests.C_already_escrowed_reads_nothing' }
+    @{ Id = 'C9f Retry not due - password is NOT retrieved'
+       Test = 'AutomaticEscrowRunnerTests.D_retry_not_due_reads_nothing' }
+    @{ Id = 'C9g Retry exhausted - password is NOT retrieved'
+       Test = 'AutomaticEscrowRunnerTests.E_retry_exhausted_reads_nothing' }
+    @{ Id = 'C9h Missing sealing key - password is NOT retrieved'
+       Test = 'AutomaticEscrowRunnerTests.F_missing_sealing_key_reads_nothing' }
+    @{ Id = 'C9i Successful path retrieves the password EXACTLY ONCE'
+       Test = 'AutomaticEscrowRunnerTests.G_all_gates_pass_reads_exactly_once_and_uploads_an_envelope' }
+    @{ Id = 'C9j The password is sealed on the endpoint before it leaves'
+       Test = 'AutomaticEscrowGateTests.The_sealed_envelope_contains_no_trace_of_the_password' }
+    @{ Id = 'C9k Agent API receives an opaque envelope only'
+       Test = 'AutomaticEscrowIngestionTests.A_plaintext_recovery_password_is_rejected' }
+    @{ Id = 'C9l Agent API cannot decrypt what it stores'
+       Test = 'AutomaticEscrowIngestionTests.The_agent_api_holds_nothing_that_can_decrypt_what_it_stored' }
+    @{ Id = 'C9m Agent API configuration holds no private or master key'
+       Test = 'SealingKeyGuardTests.The_agent_api_refuses_to_start_with_decryption_key_material' }
+    @{ Id = 'C9n Admin API cannot be configured so escrow succeeds but reveal never can'
+       Test = 'SealingKeyGuardTests.A_public_key_without_its_private_half_is_refused' }
+    @{ Id = 'C9o An untrusted sealing key is refused with no silent fallback'
+       Test = 'SealingKeyGuardTests.A_mismatched_keypair_is_refused' }
+    @{ Id = 'C9p PostgreSQL stores ciphertext only'
+       Test = 'AutomaticEscrowIngestionTests.A_sealed_envelope_is_accepted_and_stored_as_ciphertext' }
+    @{ Id = 'C9q No plaintext or ciphertext reaches the audit trail'
+       Test = 'AutomaticEscrowIngestionTests.Every_ingestion_outcome_is_audited_without_secrets' }
+    @{ Id = 'C9r Unpinned credential is refused server-side as well as on the endpoint'
+       Test = 'AutomaticEscrowIngestionTests.A_credential_without_a_pinned_fingerprint_is_rejected' }
+    @{ Id = 'C9s Re-enrollment pins the sealing key and confers eligibility'
+       Test = 'AutomaticEscrowIngestionTests.Enrollment_pins_the_sealing_key_and_makes_the_device_eligible' }
+    @{ Id = 'C9t Manual escrow and the protected reveal path still work'
+       Test = 'BitLockerEscrowEndpointTests (22 tests, unchanged)' }
+    @{ Id = 'C9u Reveal remains permission + scope + step-up + rate limited'
+       Test = 'BitLockerEscrowEndpointTests.A_user_is_limited_to_five_reveals_per_window' }
+    @{ Id = 'C9v reset-attempts requires recovery_key.manage and device scope'
+       Test = 'EscrowAttemptResetTests.Bitlocker_view_alone_cannot_reset' }
+    @{ Id = 'C9w Rollback cannot silently invalidate automatic escrows'
+       Test = 'AutomaticEscrowRollbackTests.Rollback_is_refused_while_automatic_escrows_exist_and_permitted_once_they_are_gone' }
+    @{ Id = 'C9x Agent and server agree on what a recovery password is'
+       Test = 'RecoveryPasswordConformanceTests.The_agent_and_the_server_agree' }
+)
+
+foreach ($gate in $gateTests) {
+    Set-Criterion $gate.Id 'DEFERRED' `
+        "Proven by $($gate.Test). Not observable from the API: these assert what the endpoint did NOT do."
+}
 
 # ==========================================================================
 Section '7. DRIVER PACKAGE MANAGEMENT (criteria 10-18)'

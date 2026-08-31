@@ -87,8 +87,33 @@ public sealed class Program
                 .ValidateOnStart();
 
             builder.Services.AddSingleton<IRecoveryKeyProtector, AesGcmRecoveryKeyProtector>();
+
+            // The private half of the endpoint sealing keypair. This is the only
+            // process in the platform that holds it, and the only place an
+            // automatically escrowed password can be read.
+            //
+            // Not validated on start, unlike the master key above, and the
+            // difference is deliberate. A missing master key means manual escrow
+            // silently cannot work; a missing sealing key means only that hybrid
+            // reveal is unavailable, which is a perfectly ordinary state for an
+            // estate with no automatic escrows yet. Refusing to boot over it would
+            // take the console down for a capability nothing is using.
+            // Phase 3 left a gap: automatic escrow could succeed while reveal was
+            // impossible, and nothing said so until a key was needed. Checked at
+            // startup now -- a configured public key must have its matching private
+            // half here, or this host does not start.
+            AdminApiSealingKeyGuard.AssertRevealRemainsPossible(builder.Configuration);
+
+            builder.Services.AddSingleton<IHybridEnvelopeUnsealer>(
+                _ => new RsaHybridEnvelopeUnsealer(
+                    builder.Configuration["RecoveryEscrow:SealingPrivateKey"]));
+
+            builder.Services.AddSingleton<IEscrowSealingKeyProvider>(
+                _ => new EscrowSealingKeyProvider(
+                    builder.Configuration["RecoveryEscrow:SealingPublicKey"]));
             builder.Services.AddSingleton<RevealRateLimiter>();
             builder.Services.AddScoped<RecoveryEscrowService>();
+            builder.Services.AddScoped<Infrastructure.BitLocker.EscrowAttemptAdminService>();
 
             builder.Services
                 .AddAuthentication(AdminAuthenticationHandler.SchemeName)

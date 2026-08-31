@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Minimal typed client for the Admin API.
  *
  * All requests go through the Vite dev proxy (`/api` -> Admin API), so the
@@ -1527,5 +1527,54 @@ export async function updateDeviceAgent(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ releaseId }),
     },
+  )
+}
+
+/** Automatic-escrow retry state for one protector. Metadata only; no key material. */
+export interface EscrowAttemptRow {
+  id: string
+  deviceId: string
+  volumeDeviceIdentifier: string
+  keyProtectorId: string
+  state: string
+  attemptCount: number
+  maxAttempts: number
+  lastFailure: string
+  nextAttemptAt: string | null
+  lastAttemptAt: string | null
+  escrowedAt: string | null
+}
+
+/**
+ * A device's automatic-escrow position.
+ *
+ * `eligible` comes from the device's active credential, not from whether any
+ * attempt exists. The two say different things: a device that is not eligible
+ * must re-enroll before it can participate at all, whereas one that is eligible
+ * with no attempts yet simply has not been reached, and will be.
+ */
+export interface AutomaticEscrowStatus {
+  eligible: boolean
+  sealingKeyFingerprint: string | null
+  attempts: EscrowAttemptRow[]
+}
+
+export function getBitLockerEscrowAttempts(deviceId: string): Promise<AutomaticEscrowStatus> {
+  return request<AutomaticEscrowStatus>(
+    `/api/admin/v1/devices/${encodeURIComponent(deviceId)}/bitlocker-escrow-attempts`,
+  )
+}
+
+/**
+ * Re-arms automatic collection for one protector that stopped retrying.
+ *
+ * Grants no access to any key: it clears a failure count so the endpoint may try
+ * again. Revealing a password still requires its own permission, the step-up
+ * password and the reveal rate limiter.
+ */
+export function resetEscrowAttempts(attemptId: string): Promise<{ status: string }> {
+  return request<{ status: string }>(
+    `/api/admin/v1/bitlocker-escrow-attempts/${encodeURIComponent(attemptId)}/reset`,
+    { method: 'POST' },
   )
 }

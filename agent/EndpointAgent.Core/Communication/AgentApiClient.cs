@@ -564,4 +564,44 @@ public sealed class AgentApiClient(HttpClient httpClient, ILogger<AgentApiClient
         }
     }
 
+
+    public async Task<AgentApiResult<BitLockerEscrowStatusResponse>> GetBitLockerEscrowStatusAsync(
+        DeviceCredential credential, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(credential);
+
+        using var message = new HttpRequestMessage(
+            HttpMethod.Get, AgentProtocol.RoutePrefix + AgentProtocol.Routes.BitLockerEscrowStatus);
+
+        AddProtocolHeaders(message, Core.AgentVersion.Current);
+        message.Headers.Add(AgentProtocol.Headers.Credential, credential.ToHeaderValue());
+        message.Headers.Add(AgentProtocol.Headers.DeviceId, credential.DeviceId.ToString());
+
+        return await SendAsync<BitLockerEscrowStatusResponse>(
+            message, "bitlocker-escrow-status", cancellationToken);
+    }
+
+    public async Task<AgentApiResult<EscrowRecoveryKeyResponse>> EscrowRecoveryKeyAsync(
+        EscrowRecoveryKeyRequest request,
+        DeviceCredential credential,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(credential);
+
+        using var message = new HttpRequestMessage(
+            HttpMethod.Post, AgentProtocol.RoutePrefix + AgentProtocol.Routes.BitLockerEscrow)
+        {
+            // The sealed envelope. Opaque to this client, to the transport, and to
+            // the server process that receives it.
+            Content = JsonContent.Create(request),
+        };
+
+        AddProtocolHeaders(message, Core.AgentVersion.Current);
+        message.Headers.Add(AgentProtocol.Headers.Credential, credential.ToHeaderValue());
+        message.Headers.Add(AgentProtocol.Headers.DeviceId, credential.DeviceId.ToString());
+
+        return await SendAsync<EscrowRecoveryKeyResponse>(
+            message, "bitlocker-escrow", cancellationToken);
+    }
 }

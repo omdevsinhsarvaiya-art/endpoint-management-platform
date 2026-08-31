@@ -1,4 +1,4 @@
-using EndpointPlatform.Domain.Auditing;
+﻿using EndpointPlatform.Domain.Auditing;
 using EndpointPlatform.Domain.Devices;
 using EndpointPlatform.Domain.Enrollment;
 using EndpointPlatform.Infrastructure.Auditing;
@@ -17,7 +17,8 @@ public sealed class AgentEnrollmentService(
     EndpointPlatformDbContext dbContext,
     AuditWriter auditWriter,
     TimeProvider timeProvider,
-    ILogger<AgentEnrollmentService> logger)
+    ILogger<AgentEnrollmentService> logger,
+    Security.IEscrowSealingKeyProvider sealingKey)
 {
     private readonly EndpointPlatformDbContext _dbContext = dbContext
         ?? throw new ArgumentNullException(nameof(dbContext));
@@ -30,6 +31,9 @@ public sealed class AgentEnrollmentService(
 
     private readonly ILogger<AgentEnrollmentService> _logger = logger
         ?? throw new ArgumentNullException(nameof(logger));
+
+    private readonly Security.IEscrowSealingKeyProvider _sealingKey = sealingKey
+        ?? throw new ArgumentNullException(nameof(sealingKey));
 
     public async Task<EnrollmentOutcome> EnrollAsync(
         string presentedToken,
@@ -127,6 +131,20 @@ public sealed class AgentEnrollmentService(
             SecretGenerator.HashSecret(secret),
             now);
 
+        // Pin the sealing key to this credential, at the one moment the device's
+        // identity is being established anyway. Doing it here rather than on first
+        // use is what makes trust-on-first-use unnecessary: the fingerprint is
+        // bound to the same authenticated exchange that issued the credential.
+        //
+        // With no sealing key configured the credential is simply left unpinned,
+        // and the device stays ineligible for automatic escrow. Enrollment itself
+        // is never failed over it -- a machine must be able to enroll and report
+        // inventory whether or not escrow is available.
+        if (_sealingKey.IsConfigured)
+        {
+            credential.PinSealingKey(_sealingKey.Fingerprint!);
+        }
+
         _dbContext.AgentCredentials.Add(credential);
 
         _auditWriter.Stage(
@@ -175,7 +193,9 @@ public sealed class AgentEnrollmentService(
             token.Id,
             credential.KeyId);
 
-        return EnrollmentOutcome.Enrolled(device.Id, credential.KeyId, secret, reEnrolled);
+        return EnrollmentOutcome.Enrolled(
+            device.Id, credential.KeyId, secret, reEnrolled,
+            _sealingKey.PublicKeySpki, _sealingKey.Fingerprint);
     }
 
     private async Task AuditRefusalAsync(
@@ -241,10 +261,14 @@ public sealed record EnrollmentOutcome(
     Guid DeviceId,
     string? CredentialKeyId,
     string? CredentialSecret,
-    bool ReEnrolled)
+    bool ReEnrolled,
+    string? SealingPublicKey = null,
+    string? SealingKeyFingerprint = null)
 {
-    public static EnrollmentOutcome Enrolled(Guid deviceId, string keyId, string secret, bool reEnrolled) =>
-        new(true, deviceId, keyId, secret, reEnrolled);
+    public static EnrollmentOutcome Enrolled(
+        Guid deviceId, string keyId, string secret, bool reEnrolled,
+        string? sealingPublicKey = null, string? sealingKeyFingerprint = null) =>
+        new(true, deviceId, keyId, secret, reEnrolled, sealingPublicKey, sealingKeyFingerprint);
 
     public static EnrollmentOutcome Refused() => new(false, Guid.Empty, null, null, false);
 }

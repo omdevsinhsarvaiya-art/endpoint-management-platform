@@ -1,4 +1,4 @@
-using System.Runtime.Versioning;
+﻿using System.Runtime.Versioning;
 using System.Security.AccessControl;
 using System.Security.Cryptography;
 using System.Security.Principal;
@@ -101,7 +101,11 @@ public sealed class DpapiDeviceCredentialStore : IDeviceCredentialStore
                     return null;
                 }
 
-                return new DeviceCredential(persisted.DeviceId, persisted.KeyId, persisted.Secret);
+                return new DeviceCredential(
+                    persisted.DeviceId,
+                    persisted.KeyId,
+                    persisted.Secret,
+                    persisted.SealingKeyFingerprint);
             }
             finally
             {
@@ -126,7 +130,11 @@ public sealed class DpapiDeviceCredentialStore : IDeviceCredentialStore
             EnsureSecuredStateDirectory();
 
             var plainBytes = JsonSerializer.SerializeToUtf8Bytes(
-                new PersistedCredential(credential.DeviceId, credential.KeyId, credential.Secret));
+                new PersistedCredential(
+                    credential.DeviceId,
+                    credential.KeyId,
+                    credential.Secret,
+                    credential.SealingKeyFingerprint));
 
             try
             {
@@ -241,5 +249,15 @@ public sealed class DpapiDeviceCredentialStore : IDeviceCredentialStore
         }
     }
 
-    private sealed record PersistedCredential(Guid DeviceId, string KeyId, string Secret);
+    /// <remarks>
+    /// <c>SealingKeyFingerprint</c> is nullable and last so a blob written by an
+    /// earlier agent deserializes cleanly with it absent. That absence is exactly
+    /// the ineligible state automatic escrow requires, so no upgrade step is needed
+    /// and none is silently skipped.
+    /// </remarks>
+    private sealed record PersistedCredential(
+        Guid DeviceId,
+        string KeyId,
+        string Secret,
+        string? SealingKeyFingerprint = null);
 }

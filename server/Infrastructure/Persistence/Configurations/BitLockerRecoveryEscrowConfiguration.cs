@@ -25,8 +25,23 @@ internal sealed class BitLockerRecoveryEscrowConfiguration
         builder.Property(e => e.SealedRecoveryPassword).HasMaxLength(4096).IsRequired();
 
         builder.Property(e => e.KeyVersion).IsRequired();
-        builder.Property(e => e.EscrowedByUserId).IsRequired();
+
+        // Nullable since automatic escrow: an agent-originated row has no human
+        // actor. Existing manual rows are unaffected -- they already carry one.
+        builder.Property(e => e.EscrowedByUserId);
+
         builder.Property(e => e.EscrowedByDisplay).HasMaxLength(320).IsRequired();
+
+        // Stored as text so a database dump stays readable and so adding a scheme
+        // or an origin later cannot renumber the existing ones.
+        builder.Property(e => e.Origin)
+            .HasConversion<string>()
+            .HasMaxLength(16)
+            .IsRequired();
+
+        builder.Property(e => e.SealScheme)
+            .HasMaxLength(BitLockerSealScheme.MaxLength)
+            .IsRequired();
         builder.Property(e => e.EscrowedAt).IsRequired();
         builder.Property(e => e.IsActive).IsRequired();
         builder.Property(e => e.RevealedCount).IsRequired();

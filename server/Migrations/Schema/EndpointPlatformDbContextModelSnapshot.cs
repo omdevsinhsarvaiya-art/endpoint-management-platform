@@ -245,6 +245,86 @@ namespace EndpointPlatform.Migrations.Schema
                     b.ToTable("audit_log_entries", "endpoint_platform");
                 });
 
+            modelBuilder.Entity("EndpointPlatform.Domain.BitLocker.BitLockerEscrowAttempt", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<int>("AttemptCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("attempt_count");
+
+                    b.Property<Guid>("DeviceId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("device_id");
+
+                    b.Property<DateTimeOffset?>("EscrowedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("escrowed_at");
+
+                    b.Property<DateTimeOffset>("FirstSeenAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("first_seen_at");
+
+                    b.Property<string>("KeyProtectorId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("key_protector_id");
+
+                    b.Property<DateTimeOffset?>("LastAttemptAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_attempt_at");
+
+                    b.Property<string>("LastFailure")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("last_failure");
+
+                    b.Property<DateTimeOffset?>("NextAttemptAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("next_attempt_at");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("organization_id");
+
+                    b.Property<DateTimeOffset?>("ResetAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("reset_at");
+
+                    b.Property<Guid?>("ResetByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("reset_by_user_id");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)")
+                        .HasColumnName("state");
+
+                    b.Property<string>("VolumeDeviceIdentifier")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("volume_device_identifier");
+
+                    b.HasKey("Id")
+                        .HasName("pk_bitlocker_escrow_attempts");
+
+                    b.HasIndex("State", "NextAttemptAt")
+                        .HasDatabaseName("ix_bitlocker_escrow_attempts_due");
+
+                    b.HasIndex("DeviceId", "VolumeDeviceIdentifier", "KeyProtectorId")
+                        .IsUnique()
+                        .HasDatabaseName("ux_bitlocker_escrow_attempts_protector");
+
+                    b.ToTable("bitlocker_escrow_attempts", "endpoint_platform");
+                });
+
             modelBuilder.Entity("EndpointPlatform.Domain.BitLocker.BitLockerRecoveryEscrow", b =>
                 {
                     b.Property<Guid>("Id")
@@ -284,7 +364,7 @@ namespace EndpointPlatform.Migrations.Schema
                         .HasColumnType("character varying(320)")
                         .HasColumnName("escrowed_by_display");
 
-                    b.Property<Guid>("EscrowedByUserId")
+                    b.Property<Guid?>("EscrowedByUserId")
                         .HasColumnType("uuid")
                         .HasColumnName("escrowed_by_user_id");
 
@@ -314,9 +394,21 @@ namespace EndpointPlatform.Migrations.Schema
                         .HasColumnType("uuid")
                         .HasColumnName("organization_id");
 
+                    b.Property<string>("Origin")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("origin");
+
                     b.Property<int>("RevealedCount")
                         .HasColumnType("integer")
                         .HasColumnName("revealed_count");
+
+                    b.Property<string>("SealScheme")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("seal_scheme");
 
                     b.Property<string>("SealedRecoveryPassword")
                         .IsRequired()
@@ -1417,6 +1509,11 @@ namespace EndpointPlatform.Migrations.Schema
                     b.Property<DateTimeOffset?>("RevokedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("revoked_at");
+
+                    b.Property<string>("SealingKeyFingerprint")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("sealing_key_fingerprint");
 
                     b.Property<string>("SecretHash")
                         .IsRequired()
@@ -2710,6 +2807,16 @@ namespace EndpointPlatform.Migrations.Schema
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_audit_log_entries_organizations_organization_id");
+                });
+
+            modelBuilder.Entity("EndpointPlatform.Domain.BitLocker.BitLockerEscrowAttempt", b =>
+                {
+                    b.HasOne("EndpointPlatform.Domain.Devices.Device", null)
+                        .WithMany()
+                        .HasForeignKey("DeviceId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_bitlocker_escrow_attempts_devices_device_id");
                 });
 
             modelBuilder.Entity("EndpointPlatform.Domain.BitLocker.BitLockerRecoveryEscrow", b =>

@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -8,6 +8,15 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\Domain\EndpointPlatform.Domain.csproj" />
+    <!--
+      Test-only, and only for the recovery-password conformance test. The agent
+      and the server state the same validation rule in two places because the
+      agent cannot reference the server's domain; this reference is what lets a
+      test drive both over one corpus and prove they still agree. No production
+      assembly gains a reference, and ArchitectureTests inspects production
+      assemblies only.
+    -->
+    <ProjectReference Include="..\..\..\agent\EndpointAgent.Core\EndpointAgent.Core.csproj" />
   </ItemGroup>
 
 </Project>

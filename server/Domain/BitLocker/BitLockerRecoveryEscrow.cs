@@ -72,6 +72,67 @@ public sealed class BitLockerRecoveryEscrow : Entity
         EscrowedByDisplay = Guard.NotNullOrWhiteSpace(escrowedByDisplay, nameof(escrowedByDisplay), 320);
         EscrowedAt = now;
         IsActive = true;
+
+        Origin = BitLockerEscrowOrigin.Manual;
+        SealScheme = BitLockerSealScheme.AesGcmV1;
+    }
+
+    /// <summary>
+    /// An escrow sealed on the endpoint and uploaded by the agent.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Separate from the manual constructor rather than an optional parameter on
+    /// it, because the two differ in what the server is able to know. The manual
+    /// path receives a password, validates it, and seals it -- so an invalid value
+    /// is refused before it is stored. This path receives an envelope the server
+    /// cannot open, so there is nothing here to validate against: the format check
+    /// happened on the endpoint before sealing, and the server's guarantee is
+    /// narrower by design.
+    /// </para>
+    /// <para>
+    /// <paramref name="escrowedByUserId"/> has no counterpart here. No
+    /// administrator was involved, and inventing a sentinel user would put a
+    /// fictional actor into the audit trail.
+    /// </para>
+    /// </remarks>
+    /// <param name="sealedRecoveryPassword">
+    /// The hybrid envelope produced on the endpoint. Opaque to every server
+    /// process except the Admin API, which alone holds the unwrapping key.
+    /// </param>
+    public static BitLockerRecoveryEscrow Automatic(
+        Guid organizationId,
+        Guid deviceId,
+        string volumeDeviceIdentifier,
+        string keyProtectorId,
+        string? driveLetter,
+        string sealedRecoveryPassword,
+        int keyVersion,
+        string agentDisplay,
+        DateTimeOffset now)
+    {
+        var escrow = new BitLockerRecoveryEscrow
+        {
+            OrganizationId = Guard.NotEmpty(organizationId, nameof(organizationId)),
+            DeviceId = Guard.NotEmpty(deviceId, nameof(deviceId)),
+            VolumeDeviceIdentifier = Guard.NotNullOrWhiteSpace(
+                volumeDeviceIdentifier, nameof(volumeDeviceIdentifier), maxLength: 256),
+            KeyProtectorId = NormalizeProtectorId(keyProtectorId),
+            DriveLetter = Guard.OptionalMaxLength(driveLetter, 8, nameof(driveLetter)),
+            SealedRecoveryPassword = Guard.NotNullOrWhiteSpace(
+                sealedRecoveryPassword, nameof(sealedRecoveryPassword), maxLength: 4096),
+            KeyVersion = keyVersion > 0
+                ? keyVersion
+                : throw new ArgumentOutOfRangeException(nameof(keyVersion), "Key version must be positive."),
+            EscrowedByUserId = null,
+            EscrowedByDisplay = Guard.NotNullOrWhiteSpace(agentDisplay, nameof(agentDisplay), 320),
+            EscrowedAt = now,
+            IsActive = true,
+            Origin = BitLockerEscrowOrigin.Automatic,
+            SealScheme = BitLockerSealScheme.HybridRsaV1,
+        };
+
+        return escrow;
     }
 
     public Guid OrganizationId { get; private set; }
@@ -101,9 +162,33 @@ public sealed class BitLockerRecoveryEscrow : Entity
     /// </summary>
     public int KeyVersion { get; private set; }
 
-    public Guid EscrowedByUserId { get; private set; }
+    /// <summary>
+    /// The administrator who filed this, or null when the endpoint did.
+    /// </summary>
+    /// <remarks>
+    /// Nullable since automatic escrow: an agent-originated record has no human
+    /// actor, and the alternative -- a reserved system user id -- would put an
+    /// account that nobody can sign in as into the audit trail and the console.
+    /// <see cref="Origin"/> is what distinguishes the two cases; a null here is a
+    /// consequence of it, not the signal itself.
+    /// </remarks>
+    public Guid? EscrowedByUserId { get; private set; }
 
+    /// <summary>
+    /// Who or what filed it, for display: an administrator's address, or the
+    /// agent identified by hostname.
+    /// </summary>
     public string EscrowedByDisplay { get; private set; }
+
+    /// <summary>Whether an administrator typed this in or the endpoint collected it.</summary>
+    public BitLockerEscrowOrigin Origin { get; private set; }
+
+    /// <summary>
+    /// Which sealing scheme produced <see cref="SealedRecoveryPassword"/>, so the
+    /// reveal path can dispatch instead of guessing. See
+    /// <see cref="BitLockerSealScheme"/>.
+    /// </summary>
+    public string SealScheme { get; private set; } = BitLockerSealScheme.AesGcmV1;
 
     public DateTimeOffset EscrowedAt { get; private set; }
 

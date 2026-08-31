@@ -1,4 +1,4 @@
-import type { EscrowRow } from '../api/client'
+﻿import type { EscrowRow } from '../api/client'
 
 /**
  * Presentation logic for recovery-key escrow, kept out of the component so the
@@ -127,4 +127,181 @@ export function describeEscrow(row: EscrowRow): string {
         : `revealed ${row.revealedCount} times`
 
   return `Escrowed by ${row.escrowedBy} on ${when} — ${reveals}`
+}
+
+
+// ---------------------------------------------------------------- automatic
+
+/**
+ * Where automatic collection has got to for one protector.
+ *
+ * `Unavailable` is not a server state -- it is derived from the device having no
+ * pinned sealing key, which is every device enrolled before automatic escrow
+ * existed. It reads differently from a failure on purpose: nothing is wrong with
+ * the machine, it simply has to re-enroll before it can participate.
+ */
+export type AutoEscrowState =
+  | 'NotEscrowed'
+  | 'Pending'
+  | 'Escrowed'
+  | 'Failed'
+  | 'RetryExhausted'
+  | 'Unavailable'
+
+export interface EscrowAttemptRow {
+  id: string
+  deviceId: string
+  volumeDeviceIdentifier: string
+  keyProtectorId: string
+  state: string
+  attemptCount: number
+  maxAttempts: number
+  lastFailure: string
+  nextAttemptAt: string | null
+  lastAttemptAt: string | null
+  escrowedAt: string | null
+}
+
+/** The automatic state for one protector, given what the server reported. */
+export function autoEscrowState(
+  attempts: EscrowAttemptRow[],
+  volumeDeviceIdentifier: string,
+  keyProtectorId: string,
+  eligible: boolean,
+): AutoEscrowState {
+  // Checked before anything else: an ineligible device has no meaningful
+  // per-protector state, and showing "not escrowed" would imply it was going to be.
+  if (!eligible) return 'Unavailable'
+
+  const match = attempts.find(
+    (a) =>
+      a.volumeDeviceIdentifier === volumeDeviceIdentifier &&
+      sameProtector(a.keyProtectorId, keyProtectorId),
+  )
+
+  if (!match) return 'NotEscrowed'
+
+  switch (match.state) {
+    case 'Escrowed':
+      return 'Escrowed'
+    case 'Failed':
+      return 'Failed'
+    case 'RetryExhausted':
+      return 'RetryExhausted'
+    default:
+      return 'Pending'
+  }
+}
+
+export function autoEscrowLabel(state: AutoEscrowState): string {
+  switch (state) {
+    case 'Escrowed':
+      return 'Escrowed automatically'
+    case 'Pending':
+      return 'Collection pending'
+    case 'Failed':
+      return 'Collection failed'
+    case 'RetryExhausted':
+      return 'Retry exhausted'
+    case 'Unavailable':
+      return 'Automatic escrow unavailable — re-enrollment required'
+    default:
+      return 'Not escrowed automatically'
+  }
+}
+
+export function autoEscrowTone(state: AutoEscrowState): 'ok' | 'warn' | 'crit' | 'neutral' {
+  switch (state) {
+    case 'Escrowed':
+      return 'ok'
+    case 'Pending':
+      return 'neutral'
+    case 'RetryExhausted':
+      // Distinct from Failed: nothing further happens without an administrator.
+      return 'crit'
+    case 'Failed':
+      return 'warn'
+    case 'Unavailable':
+      return 'neutral'
+    default:
+      return 'warn'
+  }
+}
+
+/**
+ * How an attempt reads to an operator deciding whether to intervene.
+ *
+ * Deliberately says what happens next rather than only what happened, because the
+ * question in front of someone looking at this is "do I need to do something".
+ */
+export function describeAttempt(attempt: EscrowAttemptRow): string {
+  if (attempt.state === 'Escrowed') {
+    return attempt.escrowedAt
+      ? `Collected automatically on ${new Date(attempt.escrowedAt).toLocaleString()}`
+      : 'Collected automatically'
+  }
+
+  if (attempt.state === 'RetryExhausted') {
+    return `Stopped after ${attempt.attemptCount} attempts (${failureLabel(attempt.lastFailure)}). ` +
+      'Automatic collection will not resume until it is reset.'
+  }
+
+  if (attempt.state === 'Failed') {
+    const next = attempt.nextAttemptAt
+      ? `retrying ${new Date(attempt.nextAttemptAt).toLocaleString()}`
+      : 'retry scheduled'
+
+    return `Attempt ${attempt.attemptCount} of ${attempt.maxAttempts} failed ` +
+      `(${failureLabel(attempt.lastFailure)}); ${next}.`
+  }
+
+  return 'Waiting for the endpoint to collect this key.'
+}
+
+/** Plain-English failure categories. The server never sends a message, only a category. */
+export function failureLabel(category: string): string {
+  switch (category) {
+    case 'WindowsRefused':
+      return 'Windows refused the request'
+    case 'MalformedPassword':
+      return 'the value returned was not a valid recovery password'
+    case 'FingerprintMismatch':
+      return 'the sealing key did not match this device'
+    case 'NotEligible':
+      return 'the device is not eligible'
+    case 'SealingFailed':
+      return 'sealing failed on the endpoint'
+    case 'UploadFailed':
+      return 'the upload did not complete'
+    case 'ProtectorGone':
+      return 'the protector no longer exists'
+    default:
+      return 'reason not recorded'
+  }
+}
+
+/** Whether an operator can re-arm this protector. */
+export function canReset(state: AutoEscrowState): boolean {
+  return state === 'RetryExhausted' || state === 'Failed'
+}
+
+function sameProtector(left: string, right: string): boolean {
+  return normalise(left) === normalise(right)
+}
+
+function normalise(value: string): string {
+  return value.trim().replace(/^\{|\}$/g, '').toLowerCase()
+}
+
+/** The attempt row for one protector, if the server has recorded one. */
+export function attemptFor(
+  attempts: EscrowAttemptRow[],
+  volumeDeviceIdentifier: string,
+  keyProtectorId: string,
+): EscrowAttemptRow | undefined {
+  return attempts.find(
+    (a) =>
+      a.volumeDeviceIdentifier === volumeDeviceIdentifier &&
+      sameProtector(a.keyProtectorId, keyProtectorId),
+  )
 }

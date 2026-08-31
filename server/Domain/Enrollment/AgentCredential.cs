@@ -65,6 +65,53 @@ public sealed class AgentCredential : AuditableEntity
 
     public DateTimeOffset? RevokedAt { get; private set; }
 
+    /// <summary>
+    /// SHA-256 of the sealing public key's SPKI, pinned when this credential was
+    /// issued. Null for credentials issued before automatic escrow existed.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Deliberately a property of the credential rather than of the device, and
+    /// that placement is the whole eligibility model. Pinning is established
+    /// during authenticated enrollment, so it belongs to the trust established at
+    /// that moment. Re-enrollment revokes every active credential and issues a new
+    /// one, which means a revoked credential takes its pinning with it and a device
+    /// cannot inherit trust it never re-established.
+    /// </para>
+    /// <para>
+    /// <b>Null means ineligible.</b> Trust-on-first-use was considered and
+    /// rejected: an agent that accepted whatever fingerprint it was handed on
+    /// first contact would give anyone able to impersonate the server that
+    /// machine's recovery passwords from then on. Devices enrolled before this
+    /// feature therefore keep working for inventory and must re-enroll before
+    /// automatic escrow is available to them, which is a deliberate operational
+    /// cost rather than an oversight.
+    /// </para>
+    /// </remarks>
+    public string? SealingKeyFingerprint { get; private set; }
+
+    /// <summary>Whether this credential permits automatic recovery-password escrow.</summary>
+    public bool IsAutomaticEscrowEligible => IsActive && !string.IsNullOrEmpty(SealingKeyFingerprint);
+
+    /// <summary>
+    /// Pins the sealing key fingerprint at issue time.
+    /// </summary>
+    /// <remarks>
+    /// Write-once. A credential whose pinning could be changed afterwards would
+    /// reduce the pin to a suggestion, which is the property the whole design
+    /// depends on not having.
+    /// </remarks>
+    public void PinSealingKey(string fingerprint)
+    {
+        if (SealingKeyFingerprint is not null)
+        {
+            throw new InvalidOperationException(
+                "This credential already has a pinned sealing key. Rotation issues a new credential.");
+        }
+
+        SealingKeyFingerprint = Guard.NotNullOrWhiteSpace(fingerprint, nameof(fingerprint), maxLength: 64);
+    }
+
     /// <summary>Set on every successful authentication; stale values reveal orphaned credentials.</summary>
     public DateTimeOffset? LastUsedAt { get; private set; }
 

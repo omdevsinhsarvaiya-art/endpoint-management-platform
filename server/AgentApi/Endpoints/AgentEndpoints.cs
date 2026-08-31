@@ -91,6 +91,12 @@ public static class AgentEndpoints
         group.MapPost(AgentProtocol.Routes.SecretRedeem, RedeemSecretAsync)
             .WithName("AgentRedeemSecret");
 
+        group.MapPost(AgentProtocol.Routes.BitLockerEscrow, EscrowRecoveryKeyAsync)
+            .WithName("AgentEscrowRecoveryKey");
+
+        group.MapGet(AgentProtocol.Routes.BitLockerEscrowStatus, GetEscrowStatusAsync)
+            .WithName("AgentBitLockerEscrowStatus");
+
         return endpoints;
     }
 
@@ -443,7 +449,9 @@ public static class AgentEndpoints
             outcome.DeviceId,
             outcome.CredentialKeyId!,
             outcome.CredentialSecret!,
-            outcome.ReEnrolled));
+            outcome.ReEnrolled,
+            outcome.SealingPublicKey,
+            outcome.SealingKeyFingerprint));
     }
 
     /// <summary>
@@ -594,7 +602,13 @@ public static class AgentEndpoints
             enrolled.CredentialKeyId!,
             enrolled.CredentialSecret!,
             enrolled.ReEnrolled,
-            PollAfterSeconds: 0));
+            PollAfterSeconds: 0,
+            // The claim path issues a credential exactly as direct enrollment
+            // does, so it pins the same sealing key. Omitting it here would leave
+            // approved-by-request devices permanently ineligible for automatic
+            // escrow, for no reason a reader could find.
+            enrolled.SealingPublicKey,
+            enrolled.SealingKeyFingerprint));
     }
 
     private static async Task<IResult> HeartbeatAsync(
@@ -958,5 +972,146 @@ public static class AgentEndpoints
         }
 
         return null;
+    }
+    // ---- automatic BitLocker recovery-password escrow ---------------------
+
+    /// <summary>
+    /// Accepts an endpoint-sealed recovery envelope.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This endpoint cannot read what it stores.</b> The Agent API holds the
+    /// public sealing key and nothing that could unwrap an envelope, so a request
+    /// here deposits ciphertext the process is structurally unable to open. That is
+    /// the reason automatic escrow was built this way rather than posting the
+    /// password over TLS: this process is reachable by every managed endpoint.
+    /// </para>
+    /// <para>
+    /// The device comes from the authenticated credential and never from the body,
+    /// so an agent can only file against itself.
+    /// </para>
+    /// </remarks>
+    private static async Task<IResult> EscrowRecoveryKeyAsync(
+        [FromBody] EscrowRecoveryKeyRequest request,
+        [FromHeader(Name = AgentProtocol.Headers.Credential)] string? credentialHeader,
+        [FromHeader(Name = AgentProtocol.Headers.ProtocolVersion)] int? protocolVersion,
+        AgentAuthenticationService authenticationService,
+        Infrastructure.BitLocker.AutomaticEscrowIngestionService ingestion,
+        Infrastructure.Persistence.EndpointPlatformDbContext dbContext,
+        CancellationToken cancellationToken)
+    {
+        if (protocolVersion != AgentProtocol.Version)
+        {
+            return Results.Problem(
+                title: "Unsupported agent protocol version.",
+                statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        var authentication = await authenticationService.AuthenticateAsync(credentialHeader, cancellationToken);
+
+        if (!authentication.Success)
+        {
+            return Results.Unauthorized();
+        }
+
+        if (request is null
+            || string.IsNullOrWhiteSpace(request.VolumeDeviceIdentifier)
+            || string.IsNullOrWhiteSpace(request.KeyProtectorId)
+            || string.IsNullOrWhiteSpace(request.SealedEnvelope))
+        {
+            return Results.Problem(
+                title: "A volume, a protector and a sealed envelope are required.",
+                statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        // The credential the caller actually authenticated with, re-read so
+        // eligibility is judged on current state rather than on anything the
+        // request asserts.
+        var credential = await dbContext.AgentCredentials
+            .AsNoTracking()
+            .SingleOrDefaultAsync(c => c.Id == authentication.CredentialId, cancellationToken);
+
+        if (credential is null)
+        {
+            return Results.Unauthorized();
+        }
+
+        var result = await ingestion.IngestAsync(
+            authentication.Device!,
+            credential,
+            request.VolumeDeviceIdentifier.Trim(),
+            request.KeyProtectorId.Trim(),
+            request.SealedEnvelope,
+            cancellationToken);
+
+        return result.Outcome switch
+        {
+            Infrastructure.BitLocker.AutomaticEscrowIngestOutcome.Escrowed =>
+                Results.Ok(new EscrowRecoveryKeyResponse("escrowed", result.EscrowId)),
+
+            // Idempotent success: repeated inventory must be free.
+            Infrastructure.BitLocker.AutomaticEscrowIngestOutcome.AlreadyEscrowed =>
+                Results.Ok(new EscrowRecoveryKeyResponse("already-escrowed", result.EscrowId)),
+
+            Infrastructure.BitLocker.AutomaticEscrowIngestOutcome.NotEligible =>
+                Results.Problem(title: result.Error, statusCode: StatusCodes.Status403Forbidden),
+
+            Infrastructure.BitLocker.AutomaticEscrowIngestOutcome.FingerprintMismatch =>
+                Results.Problem(title: result.Error, statusCode: StatusCodes.Status403Forbidden),
+
+            _ => Results.Problem(title: result.Error, statusCode: StatusCodes.Status400BadRequest),
+        };
+    }
+
+    /// <summary>
+    /// Reports which of this device's protectors are already escrowed.
+    /// </summary>
+    /// <remarks>
+    /// Metadata only. The agent uses this to avoid retrieving a password it has
+    /// already filed, which is both an idempotence measure and a privacy one: a
+    /// machine already escrowed never reads its recovery password again.
+    /// </remarks>
+    private static async Task<IResult> GetEscrowStatusAsync(
+        [FromHeader(Name = AgentProtocol.Headers.Credential)] string? credentialHeader,
+        [FromHeader(Name = AgentProtocol.Headers.ProtocolVersion)] int? protocolVersion,
+        AgentAuthenticationService authenticationService,
+        Infrastructure.BitLocker.AutomaticEscrowIngestionService ingestion,
+        Infrastructure.Security.IEscrowSealingKeyProvider sealingKey,
+        Infrastructure.Persistence.EndpointPlatformDbContext dbContext,
+        CancellationToken cancellationToken)
+    {
+        if (protocolVersion != AgentProtocol.Version)
+        {
+            return Results.Problem(
+                title: "Unsupported agent protocol version.",
+                statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        var authentication = await authenticationService.AuthenticateAsync(credentialHeader, cancellationToken);
+
+        if (!authentication.Success)
+        {
+            return Results.Unauthorized();
+        }
+
+        var credential = await dbContext.AgentCredentials
+            .AsNoTracking()
+            .SingleOrDefaultAsync(c => c.Id == authentication.CredentialId, cancellationToken);
+
+        if (credential is null)
+        {
+            return Results.Unauthorized();
+        }
+
+        var protectors = await ingestion.GetStatusAsync(authentication.Device!.Id, cancellationToken);
+
+        return Results.Ok(new BitLockerEscrowStatusResponse(
+            credential.IsAutomaticEscrowEligible,
+            credential.SealingKeyFingerprint,
+            // Offered, not trusted: the agent checks this against the fingerprint
+            // it pinned at enrollment before it seals anything to it.
+            sealingKey.PublicKeySpki,
+            [.. protectors.Select(p => new BitLockerEscrowStatusItem(
+                p.Volume, p.Protector, p.Escrowed, p.EscrowedAt, p.State, p.Due, p.NextAttemptAt))]));
     }
 }

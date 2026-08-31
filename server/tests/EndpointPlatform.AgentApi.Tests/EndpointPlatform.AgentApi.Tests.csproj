@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -16,6 +16,13 @@
   <ItemGroup>
     <ProjectReference Include="..\..\AgentApi\EndpointPlatform.AgentApi.csproj" />
     <ProjectReference Include="..\..\Migrations\EndpointPlatform.Migrations.csproj" />
+    <!--
+      Test-only. The end-to-end test drives the real agent-side gate and sealer
+      against the real Agent API host, so the one thing faked is the Windows call
+      that would need an encrypted volume. ArchitectureTests inspects production
+      assemblies only; neither API gains a reference to the agent.
+    -->
+    <ProjectReference Include="..\..\..\agent\EndpointAgent.Core\EndpointAgent.Core.csproj" />
   </ItemGroup>
 
 </Project>

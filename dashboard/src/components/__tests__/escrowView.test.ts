@@ -1,6 +1,14 @@
-import { describe, expect, it } from 'vitest'
+﻿import { describe, expect, it } from 'vitest'
 import {
   REVEAL_LIFETIME_MS,
+  attemptFor,
+  autoEscrowLabel,
+  autoEscrowState,
+  autoEscrowTone,
+  canReset,
+  describeAttempt,
+  failureLabel,
+  type EscrowAttemptRow,
   activeEscrowFor,
   describeEscrow,
   escrowStatus,
@@ -168,5 +176,126 @@ describe('revealed key lifetime', () => {
 
     expect(secondsRemaining(revealedAt, revealedAt + REVEAL_LIFETIME_MS)).toBe(0)
     expect(secondsRemaining(revealedAt, revealedAt + 999_999)).toBe(0)
+  })
+})
+
+/**
+ * Automatic escrow, as the console presents it.
+ *
+ * The state that gets the most attention here is the one that is not a failure:
+ * a device with no pinned sealing key. It reads as "unavailable, re-enrollment
+ * required" rather than "not escrowed", because nothing is wrong with the machine
+ * and telling an operator to investigate would waste their time.
+ */
+describe('automatic escrow state', () => {
+  const VOL = VOLUME
+  const PROT = '3f2504e0-4f89-11d3-9a0c-0305e82c3301'
+
+  function attempt(overrides: Partial<EscrowAttemptRow> = {}): EscrowAttemptRow {
+    return {
+      id: 'a1',
+      deviceId: 'd1',
+      volumeDeviceIdentifier: VOL,
+      keyProtectorId: PROT,
+      state: 'Pending',
+      attemptCount: 0,
+      maxAttempts: 5,
+      lastFailure: 'None',
+      nextAttemptAt: null,
+      lastAttemptAt: null,
+      escrowedAt: null,
+      ...overrides,
+    }
+  }
+
+  it('reports an ineligible device as unavailable rather than as a failure', () => {
+    expect(autoEscrowState([], VOL, PROT, false)).toBe('Unavailable')
+    expect(autoEscrowLabel('Unavailable')).toContain('re-enrollment required')
+
+    // Not a warning colour: nothing is wrong with the machine.
+    expect(autoEscrowTone('Unavailable')).toBe('neutral')
+  })
+
+  it('distinguishes never-attempted from attempted-and-failed', () => {
+    expect(autoEscrowState([], VOL, PROT, true)).toBe('NotEscrowed')
+    expect(autoEscrowState([attempt({ state: 'Failed' })], VOL, PROT, true)).toBe('Failed')
+  })
+
+  /** Exhausted is worse than failed: nothing happens next without a person. */
+  it('separates exhausted from failed, and escalates it', () => {
+    expect(autoEscrowState([attempt({ state: 'RetryExhausted' })], VOL, PROT, true))
+      .toBe('RetryExhausted')
+
+    expect(autoEscrowTone('RetryExhausted')).toBe('crit')
+    expect(autoEscrowTone('Failed')).toBe('warn')
+  })
+
+  it('reports a collected key as escrowed', () => {
+    expect(autoEscrowState([attempt({ state: 'Escrowed' })], VOL, PROT, true)).toBe('Escrowed')
+    expect(autoEscrowTone('Escrowed')).toBe('ok')
+  })
+
+  it('does not confuse one protector with another', () => {
+    const other = '7c9e6679-7425-40de-944b-e07fc1f90ae7'
+
+    expect(autoEscrowState([attempt({ state: 'Escrowed' })], VOL, other, true)).toBe('NotEscrowed')
+    expect(attemptFor([attempt()], VOL, other)).toBeUndefined()
+  })
+
+  it('matches protector ids across brace and case differences', () => {
+    expect(attemptFor([attempt()], VOL, `{${PROT.toUpperCase()}}`)?.id).toBe('a1')
+  })
+
+  /** Only a stopped protector can be re-armed; offering it otherwise is noise. */
+  it('offers a reset only where there is something to re-arm', () => {
+    expect(canReset('RetryExhausted')).toBe(true)
+    expect(canReset('Failed')).toBe(true)
+    expect(canReset('Escrowed')).toBe(false)
+    expect(canReset('Pending')).toBe(false)
+    expect(canReset('Unavailable')).toBe(false)
+  })
+})
+
+describe('describing an automatic attempt', () => {
+  const base: EscrowAttemptRow = {
+    id: 'a1',
+    deviceId: 'd1',
+    volumeDeviceIdentifier: 'v',
+    keyProtectorId: 'p',
+    state: 'Failed',
+    attemptCount: 2,
+    maxAttempts: 5,
+    lastFailure: 'WindowsRefused',
+    nextAttemptAt: '2026-08-31T10:00:00Z',
+    lastAttemptAt: '2026-08-31T09:00:00Z',
+    escrowedAt: null,
+  }
+
+  it('says where the schedule has got to and what happens next', () => {
+    const text = describeAttempt(base)
+
+    expect(text).toContain('2 of 5')
+    expect(text).toContain('Windows refused')
+  })
+
+  it('says plainly that an exhausted protector will not resume on its own', () => {
+    expect(describeAttempt({ ...base, state: 'RetryExhausted' }))
+      .toContain('will not resume until it is reset')
+  })
+
+  it('translates every failure category into something readable', () => {
+    expect(failureLabel('FingerprintMismatch')).toContain('sealing key')
+    expect(failureLabel('ProtectorGone')).toContain('no longer exists')
+    expect(failureLabel('something-new')).toContain('not recorded')
+  })
+
+  /**
+   * The description is built from counts, categories and timestamps, so there is
+   * no path by which key material could reach it.
+   */
+  it('never renders anything shaped like a recovery password', () => {
+    for (const state of ['Pending', 'Failed', 'RetryExhausted', 'Escrowed']) {
+      expect(describeAttempt({ ...base, state })).not.toMatch(/\d{6}-\d{6}/)
+    }
   })
 })

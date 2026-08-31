@@ -147,6 +147,16 @@ public static class Program
             builder.Services.AddSingleton<IWindowsUpdateCollector, WindowsUpdateCollector>();
             builder.Services.AddSingleton<IDriverCollector, WindowsDriverCollector>();
 
+            // Recovery-password retrieval, registered SEPARATELY from the BitLocker
+            // collector above and deliberately so. The collector reads protector
+            // identifiers for inventory and must stay incapable of reading a
+            // password; this reader reads one password for one protector and is
+            // reachable only through AutomaticEscrowGate, which runs eligibility,
+            // pinning, association, deduplication and the retry schedule first.
+            builder.Services.AddSingleton<IRecoveryPasswordReader, WindowsRecoveryPasswordReader>();
+            builder.Services.AddSingleton<EndpointAgent.Core.BitLocker.AutomaticEscrowGate>();
+            builder.Services.AddSingleton<EndpointAgent.Core.BitLocker.AutomaticEscrowRunner>();
+
             // Writing drivers is registered separately from reading them: the
             // collector is read-only by contract, and the installer is the only
             // component that can change what kernel code this machine runs.

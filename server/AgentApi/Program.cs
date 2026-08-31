@@ -1,4 +1,4 @@
-using EndpointPlatform.Infrastructure.Configuration;
+﻿using EndpointPlatform.Infrastructure.Configuration;
 using Microsoft.AspNetCore.RateLimiting;
 using System.Threading.RateLimiting;
 using System.Reflection;
@@ -51,6 +51,24 @@ public sealed class Program
 
             builder.Services.AddPlatformHosting();
             builder.Services.AddEndpointPlatformInfrastructure(builder.Configuration, builder.Environment);
+
+            // The key boundary, asserted rather than assumed.
+            //
+            // This process is reachable by every managed endpoint and must never be
+            // able to decrypt an escrowed recovery password. Both APIs compile
+            // against the same infrastructure assembly, so until now nothing
+            // structural stopped a copied environment file or a stray registration
+            // from handing it the means. This fails the host instead, at startup,
+            // where it cannot be missed.
+            Infrastructure.Security.AgentApiKeyBoundaryGuard.AssertNoDecryptionKeys(builder.Configuration);
+
+            // Public half only: enough to know which key endpoints seal to, and to
+            // pin it at enrollment. It encrypts and cannot decrypt.
+            builder.Services.AddSingleton<Infrastructure.Security.IEscrowSealingKeyProvider>(
+                _ => new Infrastructure.Security.EscrowSealingKeyProvider(
+                    builder.Configuration["RecoveryEscrow:SealingPublicKey"]));
+
+            builder.Services.AddScoped<Infrastructure.BitLocker.AutomaticEscrowIngestionService>();
 
             // The Agent API had NO rate limiting at all, including on the anonymous
             // enrollment endpoint that already existed. Those endpoints are the only

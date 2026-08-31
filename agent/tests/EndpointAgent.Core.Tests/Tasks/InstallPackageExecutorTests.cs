@@ -149,6 +149,20 @@ public sealed class InstallPackageExecutorTests
 
     private sealed class FakeApi(byte[] content) : IAgentApiClient
     {
+        // Automatic escrow is not exercised by these tests. Throwing rather than
+        // returning a bland success keeps them honest: if one of them ever starts
+        // reaching this path, it fails loudly instead of quietly appearing to escrow.
+        public Task<AgentApiResult<EndpointPlatform.Contracts.Agent.BitLockerEscrowStatusResponse>>
+            GetBitLockerEscrowStatusAsync(DeviceCredential credential, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task<AgentApiResult<EndpointPlatform.Contracts.Agent.EscrowRecoveryKeyResponse>>
+            EscrowRecoveryKeyAsync(
+                EndpointPlatform.Contracts.Agent.EscrowRecoveryKeyRequest request,
+                DeviceCredential credential,
+                CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
         public Task<AgentApiResult<EnrollmentRequestResponse>> RequestEnrollmentAsync(
             EnrollmentRequestRequest request, CancellationToken cancellationToken = default) =>
             Task.FromResult(AgentApiResult<EnrollmentRequestResponse>.Success(

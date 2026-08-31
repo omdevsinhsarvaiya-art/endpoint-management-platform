@@ -1,4 +1,4 @@
-using EndpointPlatform.Domain.Enrollment;
+﻿using EndpointPlatform.Domain.Enrollment;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
@@ -23,6 +23,10 @@ internal sealed class AgentCredentialConfiguration : IEntityTypeConfiguration<Ag
             .HasMaxLength(AgentCredential.SecretHashLength)
             .IsFixedLength()
             .IsRequired();
+
+        // Nullable by design: null means this credential predates automatic escrow
+        // (or was issued without pinning) and the device is not eligible for it.
+        builder.Property(c => c.SealingKeyFingerprint).HasMaxLength(64);
 
         builder.Property(c => c.IssuedAt).IsRequired();
         builder.Property(c => c.CreatedAt).IsRequired();

@@ -144,6 +144,32 @@ public interface IAgentApiClient
         Stream destination,
         DeviceCredential credential,
         CancellationToken cancellationToken = default);
+    /// <summary>
+    /// Asks which recovery protectors are owed an escrow.
+    /// </summary>
+    /// <remarks>
+    /// Returns metadata only -- eligibility, the key to seal to, and each
+    /// protector's escrow and retry position. No key material comes back, and the
+    /// sealing key it does return is public and is verified against the pinned
+    /// fingerprint before anything is sealed to it.
+    /// </remarks>
+    Task<AgentApiResult<EndpointPlatform.Contracts.Agent.BitLockerEscrowStatusResponse>>
+        GetBitLockerEscrowStatusAsync(
+            DeviceCredential credential, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Uploads a sealed recovery envelope.
+    /// </summary>
+    /// <remarks>
+    /// The request carries ciphertext only. A plaintext recovery password is never
+    /// sent to the server by any path, and this contract has no field one could
+    /// occupy.
+    /// </remarks>
+    Task<AgentApiResult<EndpointPlatform.Contracts.Agent.EscrowRecoveryKeyResponse>>
+        EscrowRecoveryKeyAsync(
+            EndpointPlatform.Contracts.Agent.EscrowRecoveryKeyRequest request,
+            DeviceCredential credential,
+            CancellationToken cancellationToken = default);
 }
 
 /// <summary>Placeholder for a response body-less call (204 No Content).</summary>
@@ -182,4 +208,5 @@ public enum AgentApiStatus
 
     /// <summary>Network failure, timeout or 5xx: retry with backoff.</summary>
     TransientFailure = 3,
+
 }

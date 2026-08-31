@@ -1,4 +1,4 @@
-using System.ComponentModel.DataAnnotations;
+﻿using System.ComponentModel.DataAnnotations;
 using EndpointPlatform.Api.Security;
 using EndpointPlatform.Domain.Authorization;
 using EndpointPlatform.Infrastructure.BitLocker;
@@ -53,6 +53,22 @@ public static class BitLockerEscrowEndpoints
 
         escrow.MapDelete("/{escrowId:guid}", DeleteAsync)
             .WithName("DeleteBitLockerRecoveryKey")
+            .RequirePermission(Permissions.BitLocker.RecoveryKeyManage);
+
+        // Automatic-escrow retry state.
+        //
+        // Addressed by ATTEMPT id, not escrow id, and the difference is not
+        // cosmetic: an escrow row exists only once a key has been filed, so a
+        // protector that exhausted its attempts -- the exact case reset exists for
+        // -- has no escrow to name. Keying the route on escrows would have made it
+        // unable to reach anything it was built to fix.
+        device.MapGet("/bitlocker-escrow-attempts", ListAttemptsAsync)
+            .WithName("ListBitLockerEscrowAttempts")
+            .RequirePermission(Permissions.BitLocker.View);
+
+        endpoints.MapGroup("/admin/v1/bitlocker-escrow-attempts")
+            .MapPost("/{attemptId:guid}/reset", ResetAttemptsAsync)
+            .WithName("ResetBitLockerEscrowAttempts")
             .RequirePermission(Permissions.BitLocker.RecoveryKeyManage);
 
         return endpoints;
@@ -292,4 +308,86 @@ public static class BitLockerEscrowEndpoints
     /// an administrator who cannot reach a device should not learn it exists.
     /// </summary>
     private static IResult OutOfScope() => Results.NotFound();
+    // ------------------------------------------- automatic escrow retry state
+
+    /// <summary>
+    /// Automatic-escrow status for a device's protectors.
+    /// </summary>
+    /// <remarks>
+    /// Under <c>bitlocker.view</c> rather than a key permission: this reports where
+    /// collection has got to, and carries no key material of any kind. Someone who
+    /// may see that a machine is encrypted may see whether its key was filed.
+    /// </remarks>
+    private static async Task<IResult> ListAttemptsAsync(
+        Guid deviceId,
+        Infrastructure.BitLocker.EscrowAttemptAdminService attempts,
+        DeviceScopeAuthorizer scope,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var actor = AdminActor.Required(httpContext.User);
+
+        if (!await scope.CanActOnDeviceAsync(actor.UserId, actor.OrganizationId, deviceId, cancellationToken))
+        {
+            return OutOfScope();
+        }
+
+        return Results.Ok(await attempts.GetStatusAsync(actor.OrganizationId, deviceId, cancellationToken));
+    }
+
+    /// <summary>
+    /// Re-arms automatic escrow for one protector that stopped retrying.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Requires <c>recovery_key.manage</c> and device scope, and is audited. Scope
+    /// is resolved from the attempt's own device rather than anything the caller
+    /// supplies, so quoting another group's attempt id yields a 404 rather than a
+    /// reset.
+    /// </para>
+    /// <para>
+    /// <b>This grants no access to any key.</b> It clears a failure count so the
+    /// endpoint may try again; the recovery password is neither read, returned nor
+    /// touched, and revealing one still requires the separate permission, the
+    /// step-up password and the reveal rate limiter.
+    /// </para>
+    /// </remarks>
+    private static async Task<IResult> ResetAttemptsAsync(
+        Guid attemptId,
+        Infrastructure.BitLocker.EscrowAttemptAdminService attempts,
+        DeviceScopeAuthorizer scope,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var actor = AdminActor.Required(httpContext.User);
+
+        var attempt = await attempts.FindAsync(actor.OrganizationId, attemptId, cancellationToken);
+
+        if (attempt is null)
+        {
+            return Results.NotFound();
+        }
+
+        if (!await scope.CanActOnDeviceAsync(
+                actor.UserId, actor.OrganizationId, attempt.DeviceId, cancellationToken))
+        {
+            return OutOfScope();
+        }
+
+        var outcome = await attempts.ResetAsync(
+            actor.OrganizationId, attemptId, actor.UserId, actor.Email, cancellationToken);
+
+        return outcome switch
+        {
+            Infrastructure.BitLocker.EscrowResetOutcome.Reset =>
+                Results.Ok(new { status = "reset" }),
+
+            Infrastructure.BitLocker.EscrowResetOutcome.NotExhausted =>
+                Results.Problem(
+                    title: "This protector is not in a stopped state, so there is nothing to re-arm.",
+                    statusCode: StatusCodes.Status409Conflict),
+
+            _ => Results.NotFound(),
+        };
+    }
 }

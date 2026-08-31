@@ -1,4 +1,4 @@
-namespace EndpointAgent.Core.Abstractions;
+﻿namespace EndpointAgent.Core.Abstractions;
 
 /// <summary>
 /// The device credential issued at enrollment: the machine's identity.
@@ -9,10 +9,35 @@ namespace EndpointAgent.Core.Abstractions;
 /// may ever be logged; <see cref="ToString"/> is overridden to enforce that even
 /// an accidental structured-logging capture yields nothing.
 /// </remarks>
-public sealed record DeviceCredential(Guid DeviceId, string KeyId, string Secret)
+/// <param name="SealingKeyFingerprint">
+/// Hex SHA-256 of the escrow sealing key's SPKI, pinned at enrollment.
+/// <para>
+/// <b>Null means this device may not escrow recovery passwords automatically.</b>
+/// Credentials stored before automatic escrow existed deserialize with it null, so
+/// every already-enrolled machine is ineligible until it re-enrolls -- which is the
+/// intended behaviour, not an upgrade gap. Trust-on-first-use was rejected: an
+/// agent that accepted whatever fingerprint arrived first would hand its recovery
+/// passwords to anyone able to impersonate the server once.
+/// </para>
+/// </param>
+public sealed record DeviceCredential(
+    Guid DeviceId,
+    string KeyId,
+    string Secret,
+    string? SealingKeyFingerprint = null)
 {
     /// <summary>The wire form presented in the credential header: <c>keyId.secret</c>.</summary>
     public string ToHeaderValue() => $"{KeyId}.{Secret}";
+
+    /// <summary>
+    /// Whether this credential permits automatic recovery-password escrow.
+    /// </summary>
+    /// <remarks>
+    /// Checked before Windows is asked for anything. A device that is not eligible
+    /// never reaches the retrieval call at all, so an ineligible machine's recovery
+    /// password is not merely unsent -- it is never read.
+    /// </remarks>
+    public bool IsAutomaticEscrowEligible => !string.IsNullOrWhiteSpace(SealingKeyFingerprint);
 
     public override string ToString() => $"DeviceCredential(DeviceId: {DeviceId}, KeyId: {KeyId}, Secret: <redacted>)";
 }

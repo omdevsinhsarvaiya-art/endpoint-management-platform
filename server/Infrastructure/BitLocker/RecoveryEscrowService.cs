@@ -55,6 +55,7 @@ public sealed record RevealResult(
 public sealed class RecoveryEscrowService(
     EndpointPlatformDbContext dbContext,
     IRecoveryKeyProtector protector,
+    IHybridEnvelopeUnsealer hybridUnsealer,
     RevealRateLimiter rateLimiter,
     AdminAuthService authService,
     AuditWriter auditWriter,
@@ -66,6 +67,9 @@ public sealed class RecoveryEscrowService(
 
     private readonly IRecoveryKeyProtector _protector = protector
         ?? throw new ArgumentNullException(nameof(protector));
+
+    private readonly IHybridEnvelopeUnsealer _hybridUnsealer = hybridUnsealer
+        ?? throw new ArgumentNullException(nameof(hybridUnsealer));
 
     private readonly RevealRateLimiter _rateLimiter = rateLimiter
         ?? throw new ArgumentNullException(nameof(rateLimiter));
@@ -314,7 +318,28 @@ public sealed class RecoveryEscrowService(
         string plaintext;
         try
         {
-            plaintext = _protector.Unprotect(escrow.SealedRecoveryPassword);
+            // Dispatch, not a second reveal path. Every check above this line --
+            // permission, device scope, step-up password, rate limit -- has already
+            // run and runs identically whichever way the key was filed. All that
+            // differs here is which key opens the envelope: the symmetric master
+            // key for a manually typed password, the RSA private half for one
+            // sealed on an endpoint.
+            plaintext = escrow.SealScheme == BitLockerSealScheme.HybridRsaV1
+                ? _hybridUnsealer.Unseal(escrow.SealedRecoveryPassword)
+                : _protector.Unprotect(escrow.SealedRecoveryPassword);
+        }
+        catch (InvalidOperationException ex)
+        {
+            // The hybrid private key is not configured on this host. Distinct from
+            // a cryptographic failure: the record is fine and will reveal once the
+            // key is provisioned, so it must not be reported as a lost key.
+            _logger.LogError(ex,
+                "Escrow {EscrowId} is sealed with {Scheme} but no sealing private key is configured.",
+                escrow.Id, escrow.SealScheme);
+
+            return new RevealResult(EscrowOutcome.NotFound, null,
+                "This key was sealed on the endpoint and the escrow sealing private key is not "
+                + "configured on this server, so it cannot be revealed here.", 0);
         }
         catch (CryptographicException ex)
         {

@@ -85,6 +85,22 @@ public static class AgentProtocol
         /// </summary>
         public const string SecretRedeem = "/secrets/redeem";
 
+        /// <summary>
+        /// Automatic BitLocker recovery-password escrow.
+        /// <c>/bitlocker/escrow</c> (POST) accepts an endpoint-sealed envelope;
+        /// <c>/bitlocker/escrow-status</c> (GET) reports which protectors are
+        /// already filed so the agent can skip collecting them.
+        /// <para>
+        /// The POST body carries ciphertext only. A plaintext recovery password is
+        /// not accepted here and could not be stored if it were sent: the envelope
+        /// validator rejects anything that is not a well-formed sealed envelope.
+        /// </para>
+        /// </summary>
+        public const string BitLockerEscrow = "/bitlocker/escrow";
+
+        /// <summary>Escrow status for this device, at {RoutePrefix}/bitlocker/escrow-status.</summary>
+        public const string BitLockerEscrowStatus = "/bitlocker/escrow-status";
+
         /// <summary>Agent downloads package content from {RoutePrefix}/packages/{id}/content.</summary>
         public const string Packages = "/packages";
 

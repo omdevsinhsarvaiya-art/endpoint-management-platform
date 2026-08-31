@@ -1,4 +1,4 @@
-namespace EndpointPlatform.Contracts.Agent;
+﻿namespace EndpointPlatform.Contracts.Agent;
 
 /// <summary>
 /// Request body for <c>POST /agent/v1/enroll</c>.
@@ -26,11 +26,29 @@ public sealed record EnrollRequest(
 /// to a log or configuration file.
 /// </param>
 /// <param name="ReEnrolled">True when an existing device record was updated rather than created.</param>
+/// <param name="SealingPublicKey">
+/// Base64 SPKI of the RSA-3072 public key that automatic recovery-password escrow
+/// seals under. Public material: it encrypts and cannot decrypt, so transmitting it
+/// costs nothing. Null when the server has no sealing key configured, which leaves
+/// the device ineligible for automatic escrow rather than failing enrollment.
+/// </param>
+/// <param name="SealingKeyFingerprint">
+/// SHA-256 over that SPKI, hex-encoded. The agent pins this alongside its
+/// credential and refuses to seal under any key that does not match.
+/// <para>
+/// Delivered here, during authenticated enrollment, precisely so it never has to be
+/// accepted on trust later. A fingerprint fetched on first use could be supplied by
+/// anyone able to impersonate the server; one established at enrollment is bound to
+/// the same exchange that established the device's identity.
+/// </para>
+/// </param>
 public sealed record EnrollResponse(
     Guid DeviceId,
     string CredentialKeyId,
     string CredentialSecret,
-    bool ReEnrolled);
+    bool ReEnrolled,
+    string? SealingPublicKey = null,
+    string? SealingKeyFingerprint = null);
 
 /// <summary>Request body for <c>POST /agent/v1/heartbeat</c>.</summary>
 /// <param name="Hostname">Current hostname; updates the device record.</param>
@@ -110,10 +128,19 @@ public sealed record EnrollmentClaimRequest(string RequestSecret);
 /// <param name="Status">
 /// <c>approved</c>, <c>pending</c> (keep waiting), or <c>rejected</c> (stop asking).
 /// </param>
+/// <param name="SealingPublicKey">
+/// As <see cref="EnrollResponse.SealingPublicKey"/>. Present only on approval:
+/// the claim path issues a credential exactly as direct enrollment does, so it
+/// must pin the same sealing key or a device approved this way would silently
+/// never be eligible for automatic escrow.
+/// </param>
+/// <param name="SealingKeyFingerprint">As <see cref="EnrollResponse.SealingKeyFingerprint"/>.</param>
 public sealed record EnrollmentClaimResponse(
     string Status,
     Guid? DeviceId,
     string? CredentialKeyId,
     string? CredentialSecret,
     bool ReEnrolled,
-    int PollAfterSeconds);
+    int PollAfterSeconds,
+    string? SealingPublicKey = null,
+    string? SealingKeyFingerprint = null);

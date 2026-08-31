@@ -327,13 +327,61 @@ could not be read is `Unknown`; a machine whose BitLocker query was refused
 reports `AccessDenied` rather than an empty volume list. An agent that loses its
 elevation must not make an encrypted estate look like plaintext.
 
-**No BitLocker recovery key is collected, stored, returned or displayed.** The
-agent calls `GetKeyProtectors`, which returns protector identifiers, and never
-`GetKeyProtectorNumericalPassword`, which returns the 48-digit password. No
-column in `device_bitlocker_volumes` can hold key material, no API field exposes
-one, and the dashboard has no control that could request one. What is recorded is
-that a recovery protector exists and the GUID naming it; a protector GUID unlocks
-nothing.
+**Superseded (M13, decision J-4): no BitLocker recovery key is collected.** The
+original position is kept here rather than deleted, because it was correct on its
+own terms and the reasons it was given up should be readable beside it:
+
+> The agent calls `GetKeyProtectors`, which returns protector identifiers, and
+> never `GetKeyProtectorNumericalPassword`, which returns the 48-digit password.
+> No column in `device_bitlocker_volumes` can hold key material, no API field
+> exposes one, and the dashboard has no control that could request one. What is
+> recorded is that a recovery protector exists and the GUID naming it; a
+> protector GUID unlocks nothing.
+
+That guarantee was absolute and cheap: an agent that cannot read a recovery
+password cannot leak one, whatever else goes wrong on the endpoint.
+
+**Current position: automatic recovery-password escrow is approved and the agent
+does call `GetKeyProtectorNumericalPassword`.** The reversal was made
+deliberately, to escrow recovery credentials without an administrator
+transcribing 48 digits per machine, which did not scale and left most machines
+with no filed key at all.
+
+**The cost is aggregation, and it is material.** The platform now collects the
+disk-unlock credential for every enrolled encrypted endpoint, automatically,
+rather than holding the few an administrator individually chose to file. Two
+consequences follow. The exfiltration value of the database rises sharply: it
+becomes a single place from which an entire estate's disks can be unlocked. And
+the limitation recorded under J-2 -- that an attacker holding both a database
+dump and the host configuration can decrypt escrowed passwords -- now applies
+estate-wide rather than to a handful of records.
+
+What bounds it:
+
+- **Plaintext never reaches any server process during ingestion.** The endpoint
+  seals with AES-256-GCM under a per-record key, wraps that key with RSA-3072-OAEP,
+  and uploads only the envelope. The Agent API, which every managed endpoint can
+  reach, holds the public key alone and cannot decrypt what it stores. The private
+  key stays in the Admin API, and plaintext returns only through the existing
+  reveal path: permission, device scope, step-up password, rate limit, audit.
+- **The sealing key is pinned at enrollment.** An agent seals only to the key
+  matching the SHA-256 SPKI fingerprint it was given during authenticated
+  enrollment, so impersonating the server does not yield recovery passwords.
+  Trust-on-first-use was considered and rejected for exactly that reason.
+- **Devices enrolled before this feature are not eligible** and must re-enroll.
+  Their credentials carry no pinned fingerprint, and the agent will not read a
+  recovery password without one. This is an operational cost accepted knowingly.
+- **Retrieval is gated before it happens, not after.** Eligibility, the
+  fingerprint, and whether the protector is already escrowed are all checked
+  before Windows is asked for anything, so an ineligible or already-escrowed
+  machine never materialises its password at all.
+
+**Known limitation: the retrieved password cannot be reliably erased from
+memory.** WMI returns it as a .NET `string`, which is immutable, garbage
+collected, and may be copied by the runtime during heap compaction. Buffers used
+during sealing are zeroed; that string cannot be, and no claim is made that it
+is. The exposure is narrowed by never retrieving unless an escrow is actually
+owed, and by using the value once rather than holding it.
 
 **Driver installation is gated seven ways** and never through a shell: the
 archive hash is verified before a single entry is extracted, extraction refuses

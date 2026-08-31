@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
+﻿import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import {
   ApiError,
   escrowRecoveryKey,
@@ -104,6 +104,7 @@ export function EscrowKeyDialog({
             <label htmlFor="recovery-key">Recovery password</label>
             <input
               id="recovery-key"
+              className="recovery-input"
               value={password}
               onChange={(e) => setPassword(formatRecoveryPasswordInput(e.target.value))}
               placeholder="000000-000000-000000-000000-000000-000000-000000-000000"

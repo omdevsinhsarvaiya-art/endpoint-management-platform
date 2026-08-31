@@ -1,6 +1,7 @@
-using EndpointPlatform.Infrastructure.Persistence;
+﻿using EndpointPlatform.Infrastructure.Persistence;
 using EndpointPlatform.Infrastructure.Persistence.Interceptors;
 using EndpointPlatform.Infrastructure.Persistence.Seeding;
+using System.Security.Cryptography;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
@@ -76,6 +77,22 @@ public sealed class AgentApiPostgresFixture : IAsyncLifetime
         return new EndpointPlatformDbContext(options);
     }
 
+    /// <summary>
+    /// The escrow sealing keypair for these tests.
+    /// </summary>
+    /// <remarks>
+    /// The test process holds both halves because it plays both roles: the endpoint
+    /// that seals, and the operator who later proves the Agent API could not have.
+    /// Only the public half is ever configured into the host under test.
+    /// </remarks>
+    public static readonly RSA SealingKey = RSA.Create(3072);
+
+    public static string SealingPublicKeySpki { get; } =
+        Convert.ToBase64String(SealingKey.ExportSubjectPublicKeyInfo());
+
+    public static string SealingFingerprint { get; } =
+        Convert.ToHexString(SHA256.HashData(SealingKey.ExportSubjectPublicKeyInfo())).ToLowerInvariant();
+
     private sealed class AgentApiTestFactory(string connectionString) : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -86,6 +103,13 @@ public sealed class AgentApiPostgresFixture : IAsyncLifetime
             // and the tests must prove that.
             builder.UseSetting("Redis:ConnectionString", "127.0.0.1:1,abortConnect=false,connectTimeout=100");
             builder.UseSetting("Redis:InstanceName", "endpointplatform:agentapitest:");
+
+            // The PUBLIC half only, which is the whole point: the Agent API is
+            // given the key endpoints seal to and nothing that could open what
+            // they send. AgentApiKeyBoundaryGuard fails this host at startup if a
+            // private or master key is ever configured here, so a test that tried
+            // to hand it one would not get as far as asserting anything.
+            builder.UseSetting("RecoveryEscrow:SealingPublicKey", SealingPublicKeySpki);
         }
     }
 }

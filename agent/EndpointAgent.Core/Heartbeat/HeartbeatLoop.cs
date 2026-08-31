@@ -1,4 +1,4 @@
-using EndpointAgent.Core.Abstractions;
+﻿using EndpointAgent.Core.Abstractions;
 using EndpointAgent.Core.Configuration;
 using EndpointAgent.Core.Enrollment;
 using EndpointPlatform.Contracts.Agent;
@@ -32,6 +32,7 @@ public sealed class HeartbeatLoop(
     IInventoryCollector inventoryCollector,
     EndpointAgent.Core.Tasks.TaskDispatcher taskDispatcher,
     EndpointAgent.Core.Policies.PolicyRunner policyRunner,
+    EndpointAgent.Core.BitLocker.AutomaticEscrowRunner escrowRunner,
     IOptions<AgentOptions> agentOptions,
     IOptions<EnrollmentOptions> enrollmentOptions,
     TimeProvider timeProvider,
@@ -55,6 +56,9 @@ public sealed class HeartbeatLoop(
 
     private readonly EndpointAgent.Core.Tasks.TaskDispatcher _taskDispatcher = taskDispatcher
         ?? throw new ArgumentNullException(nameof(taskDispatcher));
+
+    private readonly EndpointAgent.Core.BitLocker.AutomaticEscrowRunner _escrowRunner = escrowRunner
+        ?? throw new ArgumentNullException(nameof(escrowRunner));
 
     private readonly EndpointAgent.Core.Policies.PolicyRunner _policyRunner = policyRunner
         ?? throw new ArgumentNullException(nameof(policyRunner));
@@ -153,6 +157,16 @@ public sealed class HeartbeatLoop(
                         await RunPoliciesAsync(credential, stoppingToken);
                     }
 
+                    // Automatic recovery-password escrow, on every successful
+                    // heartbeat rather than only when inventory is requested.
+                    //
+                    // The retry schedule lives on the server, so this has to tick
+                    // often enough for a one-minute backoff to be honoured -- but
+                    // it costs one GET, and that GET is what decides whether
+                    // anything happens at all. A device with nothing owed does no
+                    // work and never touches BitLocker.
+                    await RunAutomaticEscrowAsync(credential, stoppingToken);
+
                     await DelayAsync(interval, stoppingToken);
                     continue;
                 }
@@ -229,6 +243,33 @@ public sealed class HeartbeatLoop(
         catch (Exception ex)
         {
             _logger.LogError(ex, "Task dispatch failed; queued tasks will be retried on the next heartbeat.");
+        }
+    }
+
+    /// <summary>
+    /// Runs one automatic recovery-password escrow pass.
+    /// </summary>
+    /// <remarks>
+    /// Isolated like the other per-tick activities: an escrow failure must never
+    /// stop heartbeats, because a device that stops checking in is a much worse
+    /// outcome than one whose key is not yet filed.
+    /// </remarks>
+    private async Task RunAutomaticEscrowAsync(DeviceCredential credential, CancellationToken stoppingToken)
+    {
+        try
+        {
+            await _escrowRunner.RunAsync(credential, stoppingToken);
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // The exception is logged, not its contents interpreted. Nothing on
+            // this path carries a recovery password: the gate returns categories
+            // and envelopes, never a plaintext value.
+            _logger.LogError(ex, "Automatic recovery-key escrow failed; it will be retried on schedule.");
         }
     }
 

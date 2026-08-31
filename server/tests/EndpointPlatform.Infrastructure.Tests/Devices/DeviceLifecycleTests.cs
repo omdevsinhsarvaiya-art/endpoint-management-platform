@@ -1,4 +1,4 @@
-using EndpointPlatform.Domain.Devices;
+﻿using EndpointPlatform.Domain.Devices;
 using EndpointPlatform.Domain.Enrollment;
 using EndpointPlatform.Domain.Identity;
 using EndpointPlatform.Infrastructure.Auditing;
@@ -40,7 +40,10 @@ public sealed class DeviceLifecycleTests(PostgresFixture fixture)
     }
 
     private static AgentEnrollmentService Enrollment(Infrastructure.Persistence.EndpointPlatformDbContext db) =>
-        new(db, Audit(db), TimeProvider.System, NullLogger<AgentEnrollmentService>.Instance);
+        new(db, Audit(db), TimeProvider.System, NullLogger<AgentEnrollmentService>.Instance,
+            // Unconfigured: these tests predate automatic escrow and assert enrollment
+            // behaviour that must not change when no sealing key is present.
+            new Infrastructure.Security.EscrowSealingKeyProvider(null));
 
     [Fact]
     public async Task Offboarding_revokes_credentials_and_retires_the_device()
