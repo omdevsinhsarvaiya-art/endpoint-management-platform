@@ -233,6 +233,96 @@ public sealed class AgentEnrollmentManagerTests
         _api.EnrollCalls.ShouldBe(0);
     }
 
+    /// <summary>
+    /// Enrollment must persist the sealing-key fingerprint, not just the credential.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the gap that made automatic escrow silently impossible in the first
+    /// production run. The server pinned the fingerprint against the credential it
+    /// issued, the response carried it, the DPAPI store round-tripped it correctly,
+    /// and the gate read it -- but nothing ever put it into the credential the agent
+    /// constructed. Every device therefore stored null, and the runner declined at
+    /// its first gate without ever contacting the server.
+    /// </para>
+    /// <para>
+    /// It failed safe, which is why it went unnoticed: the symptom was nothing
+    /// happening at all. Nothing in the suite covered the step between "the server
+    /// sent it" and "the agent kept it", so this test exists precisely there.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task Enrollment_persists_the_sealing_key_fingerprint()
+    {
+        const string fingerprint = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+
+        _api.EnrollResult = AgentApiResult<EnrollResponse>.Success(new EnrollResponse(
+            Guid.CreateVersion7(), new string('c', 32), new string('d', 64), ReEnrolled: false,
+            SealingPublicKey: "spki-base64", SealingKeyFingerprint: fingerprint));
+
+        var result = await CreateManager().EnsureEnrolledAsync("valid-token", "1.0.0");
+
+        result.ShouldNotBeNull();
+        result.SealingKeyFingerprint.ShouldBe(fingerprint);
+
+        // ...and it must be in what was PERSISTED, not merely in what was returned.
+        _store.Stored.ShouldNotBeNull();
+        _store.Stored.SealingKeyFingerprint.ShouldBe(fingerprint);
+
+        // The whole point of persisting it.
+        _store.Stored.IsAutomaticEscrowEligible.ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// A server with no sealing key configured leaves the credential unpinned, and
+    /// that is a working device, not a broken one.
+    /// </summary>
+    [Fact]
+    public async Task Enrollment_without_a_sealing_key_yields_a_valid_but_ineligible_credential()
+    {
+        _api.EnrollResult = AgentApiResult<EnrollResponse>.Success(new EnrollResponse(
+            Guid.CreateVersion7(), new string('c', 32), new string('d', 64), ReEnrolled: false));
+
+        var result = await CreateManager().EnsureEnrolledAsync("valid-token", "1.0.0");
+
+        result.ShouldNotBeNull();
+        result.SealingKeyFingerprint.ShouldBeNull();
+
+        // Usable for everything else: this is every device enrolled before the
+        // feature existed, and it must keep working.
+        result.KeyId.ShouldNotBeNullOrWhiteSpace();
+        result.ToHeaderValue().ShouldContain(".");
+        result.IsAutomaticEscrowEligible.ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// Re-enrollment replaces the stored fingerprint, so a device that re-enrolls
+    /// after a rotation pins the key it was actually given.
+    /// </summary>
+    [Fact]
+    public async Task Re_enrollment_persists_the_new_fingerprint()
+    {
+        const string oldFingerprint = "1111111111111111111111111111111111111111111111111111111111111111";
+        const string newFingerprint = "2222222222222222222222222222222222222222222222222222222222222222";
+
+        // A device that had already pinned an older key.
+        _store.Stored = new DeviceCredential(
+            Guid.CreateVersion7(), new string('a', 32), new string('b', 64), oldFingerprint);
+
+        // Removing the credential is what triggers re-enrollment.
+        _store.Stored = null;
+
+        _api.EnrollResult = AgentApiResult<EnrollResponse>.Success(new EnrollResponse(
+            Guid.CreateVersion7(), new string('c', 32), new string('d', 64), ReEnrolled: true,
+            SealingPublicKey: "spki-base64", SealingKeyFingerprint: newFingerprint));
+
+        var result = await CreateManager().EnsureEnrolledAsync("valid-token", "1.0.0");
+
+        result!.SealingKeyFingerprint.ShouldBe(newFingerprint);
+        _store.Stored!.SealingKeyFingerprint.ShouldBe(newFingerprint);
+        _store.Stored.SealingKeyFingerprint.ShouldNotBe(oldFingerprint);
+    }
+
     [Fact]
     public async Task Successful_enrollment_persists_the_credential_before_returning()
     {

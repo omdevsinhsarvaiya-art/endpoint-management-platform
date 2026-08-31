@@ -1,4 +1,4 @@
-using EndpointAgent.Core.Abstractions;
+﻿using EndpointAgent.Core.Abstractions;
 using EndpointAgent.Core.Configuration;
 using EndpointAgent.Windows;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -39,6 +39,87 @@ public sealed class DpapiDeviceCredentialStoreTests : IDisposable
 
     private static DeviceCredential MakeCredential() =>
         new(Guid.CreateVersion7(), new string('a', 32), new string('b', 64));
+
+    /// <summary>
+    /// The sealing-key fingerprint must survive the DPAPI round trip.
+    /// </summary>
+    /// <remarks>
+    /// It is the value that decides whether this machine may collect a recovery
+    /// password at all, and it is stored alongside the credential rather than
+    /// anywhere else precisely so that revoking one revokes the other. A round trip
+    /// that dropped it would leave a device permanently and silently ineligible.
+    /// </remarks>
+    [Fact]
+    public async Task A_pinned_fingerprint_survives_the_round_trip()
+    {
+        const string fingerprint = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+
+        var credential = new DeviceCredential(
+            Guid.CreateVersion7(), new string('a', 32), new string('b', 64), fingerprint);
+
+        await _store.SaveAsync(credential);
+        var loaded = await _store.LoadAsync();
+
+        loaded.ShouldNotBeNull();
+        loaded.SealingKeyFingerprint.ShouldBe(fingerprint);
+        loaded.IsAutomaticEscrowEligible.ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// A blob written before automatic escrow existed has no fingerprint field.
+    /// It must still load -- the device keeps working -- and must be ineligible.
+    /// </summary>
+    /// <remarks>
+    /// This is the upgrade path for every device already in the field. The field is
+    /// nullable and last in the persisted record so an older blob deserializes with
+    /// it absent, which is exactly the ineligible state required.
+    /// </remarks>
+    [Fact]
+    public async Task A_credential_stored_without_a_fingerprint_loads_and_is_ineligible()
+    {
+        var credential = new DeviceCredential(
+            Guid.CreateVersion7(), new string('a', 32), new string('b', 64));
+
+        await _store.SaveAsync(credential);
+        var loaded = await _store.LoadAsync();
+
+        loaded.ShouldNotBeNull();
+        loaded.KeyId.ShouldBe(credential.KeyId);
+        loaded.SealingKeyFingerprint.ShouldBeNull();
+        loaded.IsAutomaticEscrowEligible.ShouldBeFalse();
+    }
+
+    /// <summary>Re-enrollment overwrites the stored pin rather than keeping the old one.</summary>
+    [Fact]
+    public async Task Saving_again_replaces_the_stored_fingerprint()
+    {
+        var deviceId = Guid.CreateVersion7();
+
+        await _store.SaveAsync(new DeviceCredential(
+            deviceId, new string('a', 32), new string('b', 64), new string('1', 64)));
+
+        await _store.SaveAsync(new DeviceCredential(
+            deviceId, new string('c', 32), new string('d', 64), new string('2', 64)));
+
+        var loaded = await _store.LoadAsync();
+
+        loaded!.SealingKeyFingerprint.ShouldBe(new string('2', 64));
+    }
+
+    /// <summary>
+    /// The credential must never render its secret, fingerprint included in the
+    /// check because a future edit could add it to the same string.
+    /// </summary>
+    [Fact]
+    public void The_credential_never_renders_its_secret()
+    {
+        var rendered = new DeviceCredential(
+            Guid.CreateVersion7(), new string('a', 32), "super-secret-value", new string('f', 64))
+            .ToString();
+
+        rendered.ShouldNotContain("super-secret-value");
+        rendered.ShouldContain("redacted");
+    }
 
     [Fact]
     public async Task Load_returns_null_when_nothing_was_stored()

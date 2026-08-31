@@ -1561,7 +1561,7 @@ export interface AutomaticEscrowStatus {
 
 export function getBitLockerEscrowAttempts(deviceId: string): Promise<AutomaticEscrowStatus> {
   return request<AutomaticEscrowStatus>(
-    `/api/admin/v1/devices/${encodeURIComponent(deviceId)}/bitlocker-escrow-attempts`,
+    `/admin/v1/devices/${encodeURIComponent(deviceId)}/bitlocker-escrow-attempts`,
   )
 }
 
@@ -1574,7 +1574,7 @@ export function getBitLockerEscrowAttempts(deviceId: string): Promise<AutomaticE
  */
 export function resetEscrowAttempts(attemptId: string): Promise<{ status: string }> {
   return request<{ status: string }>(
-    `/api/admin/v1/bitlocker-escrow-attempts/${encodeURIComponent(attemptId)}/reset`,
+    `/admin/v1/bitlocker-escrow-attempts/${encodeURIComponent(attemptId)}/reset`,
     { method: 'POST' },
   )
 }

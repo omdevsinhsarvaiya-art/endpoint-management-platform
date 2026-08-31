@@ -1,4 +1,4 @@
-using Microsoft.Extensions.Options;
+﻿using Microsoft.Extensions.Options;
 using EndpointAgent.Core.Configuration;
 using System.Security.Cryptography;
 using EndpointAgent.Core.Abstractions;
@@ -90,10 +90,16 @@ public sealed class AgentEnrollmentManager(
 
         var response = result.Value!;
 
+        // The sealing-key fingerprint is pinned here, at the one moment the
+        // server's identity has been authenticated, and is stored with the
+        // credential. Omitting it leaves the credential ineligible for automatic
+        // escrow no matter what the server believes -- the agent's first gate
+        // reads this value, not the server's.
         var credential = new DeviceCredential(
             response.DeviceId,
             response.CredentialKeyId,
-            response.CredentialSecret);
+            response.CredentialSecret,
+            response.SealingKeyFingerprint);
 
         // Persist before returning: if the process dies between here and first
         // heartbeat, the identity must survive.
@@ -272,8 +278,15 @@ public sealed class AgentEnrollmentManager(
             return null;
         }
 
+        // Same pinning as the direct-token path above. A device approved through
+        // the request/claim flow must end up in exactly the same state as one
+        // enrolled with a token, or approval-enrolled machines would silently
+        // never be eligible.
         var credential = new DeviceCredential(
-            response.DeviceId.Value, response.CredentialKeyId, response.CredentialSecret);
+            response.DeviceId.Value,
+            response.CredentialKeyId,
+            response.CredentialSecret,
+            response.SealingKeyFingerprint);
 
         try
         {
