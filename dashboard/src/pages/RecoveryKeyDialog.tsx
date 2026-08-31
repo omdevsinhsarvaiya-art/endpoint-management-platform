@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
+﻿import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import {
   ApiError,
   escrowRecoveryKey,
@@ -8,10 +8,13 @@ import {
 } from '../api/client'
 import { useDialogDismiss } from '../components/useDialogDismiss'
 import {
+  beginReveal,
+  endReveal,
   formatRecoveryPasswordInput,
-  hasExpired,
+  isRevealed,
   looksLikeRecoveryPassword,
-  secondsRemaining,
+  noReveal,
+  type RevealSession,
 } from './escrowView'
 
 /**
@@ -147,9 +150,14 @@ export function EscrowKeyDialog({
  * Reveals an escrowed recovery key after step-up authentication.
  *
  * Nothing is fetched when this opens. The key is requested only when an
- * administrator submits their own password and a justification, is held in
- * component state alone, and is dropped automatically after
- * its bounded lifetime (60 seconds) or when the dialog closes -- whichever comes first.
+ * administrator submits their own password and a justification, and is held in
+ * component state alone -- never in storage, a URL or router state.
+ *
+ * It stays on screen until the operator presses Done, and is dropped then, or
+ * when the dialog unmounts for any other reason. There is no timer: 48 digits
+ * read aloud or copied onto a printout takes longer than a countdown allows,
+ * and a key cleared mid-recovery is worse than one the operator dismisses when
+ * finished.
  */
 export function RevealKeyDialog({
   escrow,
@@ -160,37 +168,21 @@ export function RevealKeyDialog({
 }) {
   const [password, setPassword] = useState('')
   const [justification, setJustification] = useState('')
-  const [revealed, setRevealed] = useState<string | null>(null)
-  const [revealedAt, setRevealedAt] = useState<number | null>(null)
-  const [now, setNow] = useState(() => Date.now())
+  const [session, setSession] = useState<RevealSession>(noReveal)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [copied, setCopied] = useState(false)
 
   useDialogDismiss(onClose)
-  const timer = useRef<number | undefined>(undefined)
 
   const forget = useCallback(() => {
-    setRevealed(null)
-    setRevealedAt(null)
+    setSession(endReveal())
     setCopied(false)
   }, [])
 
-  // Ticks only while a key is on screen, so the countdown is live and the key
-  // is dropped the moment its lifetime is up even if nobody touches the page.
-  useEffect(() => {
-    if (revealedAt === null) return
-
-    timer.current = window.setInterval(() => setNow(Date.now()), 1000)
-    return () => window.clearInterval(timer.current)
-  }, [revealedAt])
-
-  useEffect(() => {
-    if (revealedAt !== null && hasExpired(revealedAt, now)) forget()
-  }, [now, revealedAt, forget])
-
   // Whatever ends this component -- closing, navigating, a route change -- the
-  // key does not outlive it.
+  // key does not outlive it. There is deliberately no timer: the key stays until
+  // the operator dismisses it.
   useEffect(() => () => forget(), [forget])
 
   async function submit(event: FormEvent) {
@@ -203,9 +195,7 @@ export function RevealKeyDialog({
 
       // The password is cleared the instant it has been used.
       setPassword('')
-      setRevealed(result.recoveryPassword)
-      setRevealedAt(Date.now())
-      setNow(Date.now())
+      setSession(beginReveal(result.recoveryPassword))
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'The recovery key could not be revealed.')
     } finally {
@@ -218,7 +208,7 @@ export function RevealKeyDialog({
       <div className="dialog" role="dialog" aria-modal="true">
         <h2>Reveal recovery key</h2>
 
-        {revealed === null ? (
+        {!isRevealed(session) ? (
           <>
             <p className="muted">
               Revealing a recovery key is recorded against your account with the reason you give
@@ -268,9 +258,8 @@ export function RevealKeyDialog({
         ) : (
           <>
             <div className="warn-banner">
-              This key is on screen for {secondsRemaining(revealedAt!, now)} more second
-              {secondsRemaining(revealedAt!, now) === 1 ? '' : 's'}, then it is cleared. Copying it
-              places it on your clipboard, where it will stay until something replaces it.
+              This key stays on screen until you press Done. Copying it places it on your
+              clipboard, where it will stay until something replaces it.
             </div>
 
             <div className="field">
@@ -284,7 +273,7 @@ export function RevealKeyDialog({
                   wordBreak: 'break-all',
                 }}
               >
-                {revealed}
+                {session.key}
               </code>
             </div>
 
@@ -293,7 +282,7 @@ export function RevealKeyDialog({
                 type="button"
                 className="btn-ghost"
                 onClick={() => {
-                  void navigator.clipboard?.writeText(revealed).then(() => setCopied(true))
+                  void navigator.clipboard?.writeText(session.key!).then(() => setCopied(true))
                 }}
               >
                 {copied ? 'Copied' : 'Copy'}

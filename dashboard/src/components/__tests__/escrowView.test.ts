@@ -1,6 +1,9 @@
 ﻿import { describe, expect, it } from 'vitest'
 import {
-  REVEAL_LIFETIME_MS,
+  beginReveal,
+  endReveal,
+  isRevealed,
+  noReveal,
   activeAutomaticEscrowFor,
   automaticEscrows,
   manualEscrows,
@@ -18,9 +21,7 @@ import {
   escrowStatusLabel,
   escrowStatusTone,
   formatRecoveryPasswordInput,
-  hasExpired,
   looksLikeRecoveryPassword,
-  secondsRemaining,
 } from '../../pages/escrowView'
 import type { EscrowRow } from '../../api/client'
 
@@ -158,28 +159,83 @@ describe('recovery password entry', () => {
   })
 })
 
-describe('revealed key lifetime', () => {
-  const revealedAt = 1_000_000
+/**
+ * A revealed key stays until the operator dismisses it.
+ *
+ * The dialog previously cleared it after sixty seconds. That was removed
+ * deliberately: reading 48 digits aloud, or copying them onto a printout for a
+ * machine that will not boot, takes longer than a countdown allows, and a key
+ * that vanishes mid-recovery is worse than one an operator dismisses when they
+ * are finished.
+ *
+ * The property under test is the absence of a mechanism, which is harder to
+ * assert than a behaviour. `RevealSession` therefore takes no clock and exposes
+ * no deadline, so these tests can show that no passage of time changes anything.
+ */
+describe('revealed key visibility', () => {
+  const KEY = '011000-011000-011000-011000-011000-011000-011000-011000'
 
-  it('is bounded to a minute', () => {
-    expect(REVEAL_LIFETIME_MS).toBe(60_000)
+  it('starts with nothing revealed', () => {
+    expect(isRevealed(noReveal)).toBe(false)
+    expect(noReveal.key).toBeNull()
   })
 
-  it('counts down while the key is on screen', () => {
-    expect(secondsRemaining(revealedAt, revealedAt)).toBe(60)
-    expect(secondsRemaining(revealedAt, revealedAt + 30_000)).toBe(30)
+  it('holds the key once revealed', () => {
+    const session = beginReveal(KEY)
+
+    expect(isRevealed(session)).toBe(true)
+    expect(session.key).toBe(KEY)
   })
 
   /**
-   * The assertion that matters: once the lifetime is up the key is gone, and the
-   * countdown never reports time that is not there.
+   * 1. The removed behaviour. Sixty seconds was the old deadline; a day is well
+   * past anything a timer would have survived.
    */
-  it('expires exactly at the deadline and never reports negative time', () => {
-    expect(hasExpired(revealedAt, revealedAt + REVEAL_LIFETIME_MS - 1)).toBe(false)
-    expect(hasExpired(revealedAt, revealedAt + REVEAL_LIFETIME_MS)).toBe(true)
+  it('remains visible after sixty seconds, and after a day', () => {
+    const session = beginReveal(KEY)
 
-    expect(secondsRemaining(revealedAt, revealedAt + REVEAL_LIFETIME_MS)).toBe(0)
-    expect(secondsRemaining(revealedAt, revealedAt + 999_999)).toBe(0)
+    // There is no clock to advance: the session is the same value however much
+    // time passes, which is the point.
+    for (const _elapsedMs of [60_000, 60_001, 3_600_000, 86_400_000]) {
+      expect(isRevealed(session)).toBe(true)
+      expect(session.key).toBe(KEY)
+    }
+  })
+
+  /** 2. Done clears it immediately. */
+  it('pressing Done clears the key at once', () => {
+    const session = endReveal()
+
+    expect(isRevealed(session)).toBe(false)
+    expect(session.key).toBeNull()
+  })
+
+  /** 3. Nothing of the key survives the transition. */
+  it('the key is not present after Done', () => {
+    const after = endReveal()
+
+    expect(after.key).toBeNull()
+    expect(JSON.stringify(after)).not.toContain(KEY)
+    expect(JSON.stringify(after)).not.toMatch(/\d{6}-\d{6}/)
+  })
+
+  /**
+   * The session carries the key and nothing else, so there is no second field
+   * a copy could linger in after it is cleared.
+   */
+  it('carries the key and nothing else', () => {
+    expect(Object.keys(beginReveal(KEY))).toEqual(['key'])
+  })
+
+  /** Revealing again after Done works, and is a fresh session. */
+  it('a later reveal starts a new session', () => {
+    const first = beginReveal(KEY)
+    const cleared = endReveal()
+    const second = beginReveal(KEY)
+
+    expect(isRevealed(first)).toBe(true)
+    expect(isRevealed(cleared)).toBe(false)
+    expect(isRevealed(second)).toBe(true)
   })
 })
 

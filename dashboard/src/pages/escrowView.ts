@@ -4,23 +4,41 @@
  * Presentation logic for recovery-key escrow, kept out of the component so the
  * rules that protect the key can be asserted directly.
  *
- * The one that matters most is {@link REVEAL_LIFETIME_MS}: a revealed key is
- * held in component state for a bounded time and then dropped. Everything else
- * here exists so the panel can describe an escrow without ever needing the key
- * itself.
+ * The one that matters most is that a revealed key lives in component state and
+ * nowhere else -- never in storage, a URL or router state -- and is dropped when
+ * the operator dismisses it or the view unmounts. Everything else here exists so
+ * the panel can describe an escrow without ever needing the key itself.
  */
 
 /**
- * How long a revealed key stays on screen.
+ * A revealed key, held for exactly as long as the operator keeps it open.
  *
- * Short deliberately. The key is in browser memory for exactly as long as
- * somebody is reading it, and an operator who walks away does not leave a disk
- * encryption key on a screen behind them. Long enough to read a 48-digit number
- * aloud or copy it; not long enough to forget it is there.
+ * Modelled as a value rather than left implicit in component state so the one
+ * property that matters can be asserted directly: **nothing here is a function
+ * of time.** There is no deadline, no timer and no clock input, so no amount of
+ * elapsed time can transition a revealed key back to hidden. It leaves the
+ * screen when the operator dismisses it, and on unmount.
  */
-export const REVEAL_LIFETIME_MS = 60_000
+export interface RevealSession {
+  key: string | null
+}
 
-/** How a volume's escrow state should read in the panel. */
+/** No key on screen. */
+export const noReveal: RevealSession = { key: null }
+
+export function beginReveal(key: string): RevealSession {
+  return { key }
+}
+
+/** What "Done" does: drops the key immediately. */
+export function endReveal(): RevealSession {
+  return noReveal
+}
+
+export function isRevealed(session: RevealSession): boolean {
+  return session.key !== null
+}
+
 export type EscrowStatus = 'Escrowed' | 'NotEscrowed' | 'Superseded'
 
 export function escrowStatus(rows: EscrowRow[], volumeDeviceIdentifier: string): EscrowStatus {
@@ -137,16 +155,6 @@ export function formatRecoveryPasswordInput(raw: string): string {
   }
 
   return groups.join('-')
-}
-
-/** Seconds left before a revealed key is dropped from memory. */
-export function secondsRemaining(revealedAt: number, now: number): number {
-  const remaining = Math.ceil((revealedAt + REVEAL_LIFETIME_MS - now) / 1000)
-  return remaining > 0 ? remaining : 0
-}
-
-export function hasExpired(revealedAt: number, now: number): boolean {
-  return now - revealedAt >= REVEAL_LIFETIME_MS
 }
 
 /**
