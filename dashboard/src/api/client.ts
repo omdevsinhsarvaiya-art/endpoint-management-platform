@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Minimal typed client for the Admin API.
  *
  * All requests go through the Vite dev proxy (`/api` -> Admin API), so the
@@ -985,8 +985,19 @@ export async function uploadPackage(file: File, meta: NewPackageMeta): Promise<v
   if (!r.ok) throw new ApiError(r.status, 'Package upload failed', r.headers.get('X-Correlation-Id'))
 }
 
+/**
+ * Disable a package: it stops being deployable.
+ *
+ * Catalogue availability only. Nothing is uninstalled, and devices that already
+ * have this package are unaffected.
+ */
 export async function withdrawPackage(packageId: string): Promise<void> {
   await request(`/admin/v1/packages/${encodeURIComponent(packageId)}/withdraw`, { method: 'POST' })
+}
+
+/** Enable a previously disabled package, making it deployable again. */
+export async function restorePackage(packageId: string): Promise<void> {
+  await request(`/admin/v1/packages/${encodeURIComponent(packageId)}/restore`, { method: 'POST' })
 }
 
 export async function deployPackageToDevice(packageId: string, deviceId: string): Promise<void> {

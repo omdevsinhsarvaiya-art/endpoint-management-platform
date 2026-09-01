@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
+import { signingLabel, upgradeTargets } from './agentUpdateView'
 import { useAuth } from '../auth/AuthContext'
 import { DeviceUsersPanel } from './DeviceUsersPanel'
 import { DeviceGroupsPanel } from './DeviceGroupsPanel'
@@ -14,8 +15,10 @@ import { useTaskTracker } from '../components/useTaskTracker'
 import {
   ApiError,
   cancelDeviceTask,
+  getAgentReleases,
   getLatestAgentRelease,
   updateDeviceAgent,
+  type AgentReleaseRow,
   type LatestAgentRelease,
   getDevice,
   getDeviceTasks,
@@ -118,11 +121,18 @@ export function DeviceDetailPage() {
   const [actionMsg, setActionMsg] = useState<string | null>(null)
   const [editingName, setEditingName] = useState(false)
   const [latestAgent, setLatestAgent] = useState<LatestAgentRelease | null>(null)
+  const [releases, setReleases] = useState<AgentReleaseRow[]>([])
+  const [targetReleaseId, setTargetReleaseId] = useState<string>('')
 
   // The published agent release, for the "update agent" affordance. Fetched
   // once per page visit: releases change rarely, and the compare is cheap.
   useEffect(() => {
     getLatestAgentRelease().then(setLatestAgent).catch(() => setLatestAgent(null))
+
+    // The full list too, so the operator can choose a target rather than only
+    // taking whatever happens to be latest. Both are cheap and change rarely.
+    // A failure here simply leaves no targets, which the panel states plainly.
+    getAgentReleases().then(setReleases).catch(() => setReleases([]))
   }, [])
 
   // The open module lives in the query string rather than component state, so
@@ -304,26 +314,34 @@ export function DeviceDetailPage() {
   const canRename = hasPermission('device.rename')
   const canDeploy = hasPermission('software.deploy')
 
-  // Strictly newer, numerically — mirrors the server's rule, which re-checks
-  // anyway; hiding the button just avoids offering a guaranteed 409.
-  const agentOutdated = (() => {
-    if (!latestAgent?.available || !latestAgent.version) return false
-    const parse = (v: string) => v.split('.').map((n) => Number(n))
-    const a = parse(latestAgent.version)
-    const b = parse(device.agentVersion)
-    if (a.length !== 3 || b.length !== 3 || a.some(Number.isNaN) || b.some(Number.isNaN)) return false
-    for (let i = 0; i < 3; i++) {
-      if (a[i] !== b[i]) return a[i] > b[i]
-    }
-    return false
-  })()
+  // Every published release this device could legitimately move to, newest
+  // first. The rules -- retired, not-newer, unpublished, unreadable version --
+  // live in agentUpdateView and are unit tested there; this page had its own
+  // inline copy of the comparison, which is now gone.
+  const targets = device
+    ? upgradeTargets(
+        {
+          deviceId: device.id,
+          hostname: device.hostname,
+          agentVersion: device.agentVersion,
+          status: device.status,
+        },
+        releases,
+      )
+    : []
+
+  const chosen = targets.find((r) => r.id === targetReleaseId) ?? targets[0]
+
+  // The server re-checks all of this and returns 409 regardless; offering only
+  // reachable targets just avoids inviting a guaranteed refusal.
+  const agentOutdated = targets.length > 0
 
   async function onUpdateAgent() {
-    if (!deviceId || !latestAgent?.releaseId) return
+    if (!deviceId || !chosen) return
     setActionMsg(null)
     try {
-      const { taskId } = await updateDeviceAgent(deviceId, latestAgent.releaseId)
-      track(taskId, `Update agent to ${latestAgent.version}`)
+      const { taskId } = await updateDeviceAgent(deviceId, chosen.id)
+      track(taskId, `Update agent to ${chosen.version}`)
       await load()
     } catch (e) {
       setActionMsg(
@@ -905,17 +923,53 @@ export function DeviceDetailPage() {
             </div>
           )}
 
-          {canDeploy && agentOutdated && (
+          {canDeploy && agentOutdated && chosen && (
             <div className="action-group">
               <h3>Agent</h3>
               <p className="group-note">
-                This device runs agent {device.agentVersion}; release {latestAgent?.version} is
-                published. The agent downloads the MSI itself, verifies its hash and signature, and
-                restarts into the new version — identity, enrollment and credential are preserved.
+                This device runs agent <code>{device.agentVersion}</code>. The agent downloads the
+                MSI itself, verifies its hash and signature, and restarts into the new version —
+                identity, enrollment and credential are preserved.
               </p>
-              <button type="button" className="btn-primary" onClick={() => void onUpdateAgent()}>
-                Update agent to {latestAgent?.version}
-              </button>
+
+              <div className="field" style={{ maxWidth: 360 }}>
+                <label htmlFor="agent-target">Target version</label>
+                <select
+                  id="agent-target"
+                  value={chosen.id}
+                  onChange={(e) => setTargetReleaseId(e.target.value)}
+                >
+                  {targets.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.version}
+                    </option>
+                  ))}
+                </select>
+                {/* Surfaced, not enforced here: the agent verifies the signature
+                    itself and refuses an unsigned build. Showing it makes that
+                    refusal predictable rather than a failed task. */}
+                <span className="muted">{signingLabel(chosen)}</span>
+              </div>
+
+              <div className="btn-row">
+                <button type="button" className="btn-primary" onClick={() => void onUpdateAgent()}>
+                  Update agent to {chosen.version}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* A device with nothing newer available should say so rather than
+              showing an empty section or implying an update is pending. */}
+          {canDeploy && !agentOutdated && device.status !== 'Retired' && (
+            <div className="action-group">
+              <h3>Agent</h3>
+              <p className="group-note">
+                Running agent <code>{device.agentVersion}</code>.
+                {latestAgent?.version
+                  ? ` No newer published release is available (latest is ${latestAgent.version}).`
+                  : ' No published release is available.'}
+              </p>
             </div>
           )}
 

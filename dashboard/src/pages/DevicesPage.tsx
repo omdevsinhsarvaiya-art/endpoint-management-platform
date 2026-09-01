@@ -1,7 +1,27 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { deviceName, getDevices, type DevicePage } from '../api/client'
+import {
+  deviceName,
+  getAgentReleases,
+  getDevices,
+  updateDeviceAgent,
+  type AgentReleaseRow,
+  type DeviceListItem,
+  type DevicePage,
+} from '../api/client'
+import { ConfirmDialog } from '../components/ConfirmDialog'
 import { Icon } from '../components/Icon'
+import {
+  describeIneligibility,
+  describeSelection,
+  eligibleDevices,
+  ineligibilityReason,
+  publishedReleases,
+  signingLabel,
+  summariseResults,
+  toCandidate,
+  type UpdateOutcome,
+} from './agentUpdateView'
 
 const PAGE_SIZE = 25
 
@@ -28,6 +48,19 @@ export function DevicesPage() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
+  // ---- agent updates ----
+  // Selection is by explicit device id and nothing else. There is no "every
+  // device" action anywhere in this page: "all eligible" fills these checkboxes
+  // from the rows currently on screen, so the operator sees exactly which
+  // machines an installer would reach before confirming.
+  const [releases, setReleases] = useState<AgentReleaseRow[]>([])
+  const [targetReleaseId, setTargetReleaseId] = useState('')
+  const [selected, setSelected] = useState<string[]>([])
+  const [confirming, setConfirming] = useState(false)
+  const [updating, setUpdating] = useState(false)
+  const [outcome, setOutcome] = useState<string | null>(null)
+  const [refusals, setRefusals] = useState<UpdateOutcome[]>([])
+
   const load = useCallback(async () => {
     setLoading(true)
     try {
@@ -46,6 +79,80 @@ export function DevicesPage() {
     const timer = setInterval(() => void load(), 30_000)
     return () => clearInterval(timer)
   }, [load])
+
+  useEffect(() => {
+    // A failure here is not surfaced: the update controls simply do not appear,
+    // which is the correct outcome when the release list cannot be read.
+    getAgentReleases()
+      .then((rows) => setReleases(rows))
+      .catch(() => setReleases([]))
+  }, [])
+
+  // Any change to what is on screen drops the selection. Carrying ticks across
+  // a page, a search or a filter change would let an operator confirm devices
+  // they can no longer see.
+  useEffect(() => {
+    setSelected([])
+    setOutcome(null)
+    setRefusals([])
+  }, [page, search, view])
+
+  const targets = useMemo(() => publishedReleases(releases), [releases])
+  const target = targets.find((r) => r.id === targetReleaseId) ?? targets[0] ?? null
+
+  const rows: DeviceListItem[] = useMemo(() => data?.items ?? [], [data])
+  const candidates = useMemo(() => rows.map(toCandidate), [rows])
+
+  const eligibleOnPage = useMemo(
+    () => (target ? eligibleDevices(candidates, target) : []),
+    [candidates, target],
+  )
+
+  const selectedCandidates = candidates.filter((c) => selected.includes(c.deviceId))
+
+  function toggle(deviceId: string) {
+    setSelected((current) =>
+      current.includes(deviceId)
+        ? current.filter((id) => id !== deviceId)
+        : [...current, deviceId],
+    )
+  }
+
+  /**
+   * Queues the update one device at a time.
+   *
+   * Sequential on purpose: each call is authorized, version-checked and audited
+   * independently by the server, and a refusal on one device must not stop the
+   * rest or be attributed to another. Every result is kept so the report can
+   * name what was refused.
+   */
+  async function runUpdate() {
+    if (!target) return
+
+    setConfirming(false)
+    setUpdating(true)
+    setOutcome(null)
+
+    const results: UpdateOutcome[] = []
+
+    for (const candidate of eligibleDevices(selectedCandidates, target)) {
+      try {
+        await updateDeviceAgent(candidate.deviceId, target.id)
+        results.push({ hostname: candidate.hostname, error: null })
+      } catch (e) {
+        results.push({
+          hostname: candidate.hostname,
+          error: e instanceof Error ? e.message : 'Refused',
+        })
+      }
+    }
+
+    setOutcome(summariseResults(results))
+    setRefusals(results.filter((r) => r.error !== null))
+    setSelected([])
+    setUpdating(false)
+    void load()
+  }
 
   const totalPages = data ? Math.max(1, Math.ceil(data.totalCount / PAGE_SIZE)) : 1
 
@@ -93,6 +200,76 @@ export function DevicesPage() {
           </button>
         </div>
 
+        {/* Only shown once a published release exists. An unpublished build --
+            1.4.1 today -- is not a target and must not be offerable here. */}
+        {target && rows.length > 0 && (
+          <div className="toolbar">
+            <label htmlFor="bulk-release" className="muted" style={{ fontSize: 13 }}>
+              Update agent to
+            </label>
+            <select
+              id="bulk-release"
+              style={{ width: 'auto', minWidth: 110 }}
+              value={target.id}
+              onChange={(e) => {
+                setTargetReleaseId(e.target.value)
+                setSelected([])
+              }}
+            >
+              {targets.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.version}
+                </option>
+              ))}
+            </select>
+
+            <button
+              type="button"
+              className="btn-sm"
+              disabled={eligibleOnPage.length === 0}
+              onClick={() => setSelected(eligibleOnPage.map((d) => d.deviceId))}
+            >
+              Select all eligible on this page ({eligibleOnPage.length})
+            </button>
+
+            {selected.length > 0 && (
+              <button type="button" className="btn-sm" onClick={() => setSelected([])}>
+                Clear
+              </button>
+            )}
+
+            <div className="spacer" />
+
+            <span className="muted" style={{ fontSize: 12.5 }}>{signingLabel(target)}</span>
+
+            <button
+              type="button"
+              className="btn-primary"
+              disabled={updating || eligibleDevices(selectedCandidates, target).length === 0}
+              onClick={() => setConfirming(true)}
+            >
+              {updating
+                ? 'Queueing…'
+                : `Update selected (${eligibleDevices(selectedCandidates, target).length})`}
+            </button>
+          </div>
+        )}
+
+        {outcome && (
+          <div className={refusals.length > 0 ? 'warn-banner' : 'info-banner'}>
+            {outcome}
+            {refusals.length > 0 && (
+              <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>
+                {refusals.map((r) => (
+                  <li key={r.hostname}>
+                    {r.hostname}: {r.error}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+
         {loading && !data && <div className="loading">Loading devices…</div>}
 
         {data && data.items.length === 0 && (
@@ -122,6 +299,7 @@ export function DevicesPage() {
               <table className="table">
                 <thead>
                   <tr>
+                    {target && <th style={{ width: 28 }} aria-label="Select for agent update" />}
                     <th>Name</th>
                     <th>Hostname</th>
                     <th>Status</th>
@@ -134,6 +312,30 @@ export function DevicesPage() {
                 <tbody>
                   {data.items.map((device) => (
                     <tr key={device.id}>
+                      {target && (
+                        <td>
+                          {/* Ineligible rows have no checkbox at all rather than a
+                              disabled one: an operator cannot tick a machine the
+                              update would be refused on, and hovering says why. */}
+                          {ineligibilityReason(toCandidate(device), target) === null ? (
+                            <input
+                              type="checkbox"
+                              checked={selected.includes(device.id)}
+                              onChange={() => toggle(device.id)}
+                              aria-label={`Select ${deviceName(device)} for agent update`}
+                            />
+                          ) : (
+                            <span
+                              className="muted"
+                              title={describeIneligibility(
+                                ineligibilityReason(toCandidate(device), target)!,
+                              )}
+                            >
+                              —
+                            </span>
+                          )}
+                        </td>
+                      )}
                       {/* The administrator's label leads. The Windows hostname
                           keeps its own column so the row still says which
                           physical machine this is. */}
@@ -201,6 +403,21 @@ export function DevicesPage() {
           </>
         )}
       </div>
+
+      {confirming && target && (
+        <ConfirmDialog
+          title="Update agent on selected devices"
+          confirmLabel="Queue update"
+          onCancel={() => setConfirming(false)}
+          onConfirm={() => void runUpdate()}
+        >
+          {describeSelection(selectedCandidates, target)} Each device downloads the installer and
+          runs it as SYSTEM, then restarts its own service.{' '}
+          {eligibleDevices(selectedCandidates, target)
+            .map((d) => d.hostname)
+            .join(', ')}
+        </ConfirmDialog>
+      )}
     </>
   )
 }

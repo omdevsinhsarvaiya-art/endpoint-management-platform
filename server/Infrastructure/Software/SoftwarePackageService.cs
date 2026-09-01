@@ -113,6 +113,36 @@ public sealed class SoftwarePackageService(
         await _dbContext.SoftwarePackages.AsNoTracking().SingleOrDefaultAsync(
             p => p.Id == packageId && p.OrganizationId == organizationId && !p.IsWithdrawn, cancellationToken);
 
+    /// <summary>
+    /// Returns a withdrawn package to the catalogue.
+    /// </summary>
+    /// <remarks>
+    /// Audited under its own action so the trail reads as a pair: a package that
+    /// was withdrawn and later restored shows both, rather than one event whose
+    /// meaning depends on the row's current state.
+    /// </remarks>
+    public async Task<bool> RestoreAsync(
+        Guid organizationId, Guid packageId, Guid actorId, string actorDisplay,
+        CancellationToken cancellationToken = default)
+    {
+        var package = await _dbContext.SoftwarePackages.SingleOrDefaultAsync(
+            p => p.Id == packageId && p.OrganizationId == organizationId, cancellationToken);
+        if (package is null)
+        {
+            return false;
+        }
+
+        package.Restore();
+
+        _auditWriter.Stage(organizationId, AuditActorType.PlatformUser, actorId, actorDisplay,
+            action: "software.package.restore", AuditResult.Success,
+            a => a.OnTarget("software_package", package.Id.ToString(), $"{package.Name} {package.Version}")
+                  .Requiring(Permissions.Software.Deploy));
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        return true;
+    }
+
     public async Task<bool> WithdrawAsync(
         Guid organizationId, Guid packageId, Guid actorId, string actorDisplay,
         CancellationToken cancellationToken = default)

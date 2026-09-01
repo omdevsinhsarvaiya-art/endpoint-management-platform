@@ -1,4 +1,4 @@
-﻿/* ---------------------------------------------------------------------------
+/* ---------------------------------------------------------------------------
    Endpoint Management Platform — dashboard design system.
 
    Midnight-blue enterprise security console. Layered navy surfaces, restrained
@@ -520,6 +520,24 @@ h1, h2, h3 { color: var(--color-text); }
   gap: 8px;
   margin-top: auto;
   padding-top: 4px;
+}
+
+/* The revealed key itself.
+   Bordered and inset like .escrow-path, so the panel holding a disk-unlock
+   credential reads as a deliberate object on the page rather than as loose text
+   pressed against the dialog edge. Monospaced and spaced for the same reason as
+   the input below: 48 digits get read aloud and copied onto paper. */
+.revealed-key {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 8px);
+  padding: 14px 16px;
+  background: var(--color-elevated);
+  font-family: 'Cascadia Mono', 'SF Mono', Consolas, monospace;
+  font-size: 15px;
+  letter-spacing: 0.06em;
+  line-height: 1.7;
+  word-break: break-all;
+  user-select: all;
 }
 
 /* Recovery-password entry: monospaced and grouped, so 48 digits can actually be

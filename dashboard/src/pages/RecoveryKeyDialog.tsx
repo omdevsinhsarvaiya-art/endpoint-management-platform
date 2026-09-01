@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import {
   ApiError,
   escrowRecoveryKey,
@@ -68,16 +68,18 @@ export function EscrowKeyDialog({
   }
 
   return (
-    <div className="dialog-backdrop">
-      <div className="dialog" role="dialog" aria-modal="true">
-        <h2>Escrow a recovery key</h2>
-
-        <p className="muted">
-          Volume {volume.driveLetter ?? volume.deviceIdentifier}. The key is encrypted before it is
-          stored and is never shown again unless an administrator explicitly reveals it.
-        </p>
+    <div className="overlay" role="dialog" aria-modal="true" aria-labelledby="escrow-key-title">
+      <div className="dialog" style={{ maxWidth: 520 }}>
+        <div className="dialog-header">
+          <h2 id="escrow-key-title">Escrow a recovery key</h2>
+          <div className="sub">
+            Volume {volume.driveLetter ?? volume.deviceIdentifier}. The key is encrypted before it
+            is stored and is never shown again unless an administrator explicitly reveals it.
+          </div>
+        </div>
 
         <form onSubmit={submit}>
+          <div className="dialog-body">
           <div className="field">
             <label htmlFor="protector">Key protector</label>
             {volume.recoveryProtectorIds?.length > 0 ? (
@@ -131,8 +133,9 @@ export function EscrowKeyDialog({
           )}
 
           {error && <div className="warn-banner">{error}</div>}
+          </div>
 
-          <div className="dialog-actions">
+          <div className="dialog-footer">
             <button type="button" className="btn-ghost" onClick={onClose}>
               Cancel
             </button>
@@ -204,18 +207,20 @@ export function RevealKeyDialog({
   }
 
   return (
-    <div className="dialog-backdrop">
-      <div className="dialog" role="dialog" aria-modal="true">
-        <h2>Reveal recovery key</h2>
+    <div className="overlay" role="dialog" aria-modal="true" aria-labelledby="reveal-key-title">
+      <div className="dialog" style={{ maxWidth: 520 }}>
+        <div className="dialog-header">
+          <h2 id="reveal-key-title">Reveal recovery key</h2>
+          <div className="sub">
+            {isRevealed(session)
+              ? `Recovery password for ${escrow.driveLetter ?? escrow.volumeDeviceIdentifier}`
+              : 'Revealing a recovery key is recorded against your account with the reason you give below.'}
+          </div>
+        </div>
 
         {!isRevealed(session) ? (
-          <>
-            <p className="muted">
-              Revealing a recovery key is recorded against your account with the reason you give
-              below. Confirm your own password to continue.
-            </p>
-
-            <form onSubmit={submit}>
+          <form onSubmit={submit}>
+            <div className="dialog-body">
               <div className="field">
                 <label htmlFor="reveal-justification">Why do you need this key?</label>
                 <input
@@ -240,44 +245,35 @@ export function RevealKeyDialog({
               </div>
 
               {error && <div className="warn-banner">{error}</div>}
+            </div>
 
-              <div className="dialog-actions">
-                <button type="button" className="btn-ghost" onClick={onClose}>
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="btn-primary"
-                  disabled={busy || password.length === 0 || justification.trim().length < 3}
-                >
-                  {busy ? 'Verifying…' : 'Reveal key'}
-                </button>
-              </div>
-            </form>
-          </>
+            <div className="dialog-footer">
+              <button type="button" className="btn-ghost" onClick={onClose}>
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="btn-primary"
+                disabled={busy || password.length === 0 || justification.trim().length < 3}
+              >
+                {busy ? 'Verifying…' : 'Reveal key'}
+              </button>
+            </div>
+          </form>
         ) : (
           <>
+            <div className="dialog-body">
             <div className="warn-banner">
               This key stays on screen until you press Done. Copying it places it on your
               clipboard, where it will stay until something replaces it.
             </div>
 
-            <div className="field">
-              <label>Recovery password for {escrow.driveLetter ?? escrow.volumeDeviceIdentifier}</label>
-              <code
-                style={{
-                  display: 'block',
-                  padding: '10px',
-                  fontSize: '1.05em',
-                  letterSpacing: '0.04em',
-                  wordBreak: 'break-all',
-                }}
-              >
-                {session.key}
-              </code>
+              {/* Bordered and inset like the escrow cards, so the key reads as a
+                  panel rather than as loose text against the dialog edge. */}
+              <code className="revealed-key">{session.key}</code>
             </div>
 
-            <div className="dialog-actions">
+            <div className="dialog-footer">
               <button
                 type="button"
                 className="btn-ghost"

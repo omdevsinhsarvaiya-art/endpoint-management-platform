@@ -6,6 +6,7 @@ using EndpointPlatform.Domain.Tasks;
 using EndpointPlatform.Infrastructure.Agents;
 using EndpointPlatform.Infrastructure.Auditing;
 using EndpointPlatform.Infrastructure.Persistence;
+using EndpointPlatform.Infrastructure.Security;
 using EndpointPlatform.Infrastructure.Tasks;
 using Microsoft.EntityFrameworkCore;
 
@@ -220,9 +221,25 @@ public static class AgentReleaseEndpoints
         AgentReleaseService releaseService,
         EndpointPlatformDbContext dbContext,
         DeviceTaskService taskService,
+        DeviceScopeAuthorizer scope,
         CancellationToken cancellationToken)
     {
         var actor = AdminActor.Required(httpContext.User);
+
+        // Device scope, checked first and on its own.
+        //
+        // This route previously filtered on OrganizationId alone, which is a
+        // weaker rule than every other device-targeted endpoint applies: an
+        // administrator scoped to one group could queue an agent update -- an
+        // installer running as SYSTEM -- on any machine in the tenant. Scope is
+        // deny-by-default, so an account with no scope rows now reaches nothing.
+        //
+        // Answered as 404 rather than 403, matching the other device routes: a
+        // caller who cannot act on a device is not told it exists.
+        if (!await scope.CanActOnDeviceAsync(actor.UserId, actor.OrganizationId, deviceId, cancellationToken))
+        {
+            return Results.NotFound();
+        }
 
         var release = await dbContext.AgentReleases
             .AsNoTracking()

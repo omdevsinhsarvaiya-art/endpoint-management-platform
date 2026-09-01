@@ -121,6 +121,33 @@ public sealed class SoftwarePackage : AuditableEntity
         WithdrawnAt = now;
     }
 
+    /// <summary>
+    /// Makes a withdrawn package deployable again.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The inverse of <see cref="Withdraw"/>, and deliberately nothing more.
+    /// Availability in the catalogue is the only thing either method controls:
+    /// withdrawing does not uninstall anything, and restoring does not reinstall
+    /// anything. Devices that already have this package keep it either way.
+    /// </para>
+    /// <para>
+    /// Idempotent in the same shape as Withdraw -- restoring a package that is
+    /// already available is a no-op rather than an error, so a double click or a
+    /// retried request cannot produce a different outcome.
+    /// </para>
+    /// </remarks>
+    public void Restore()
+    {
+        if (!IsWithdrawn)
+        {
+            return;
+        }
+
+        IsWithdrawn = false;
+        WithdrawnAt = null;
+    }
+
     private static string ValidateSha256(string value)
     {
         var v = Guard.NotNullOrWhiteSpace(value, nameof(value), maxLength: 64).ToLowerInvariant();

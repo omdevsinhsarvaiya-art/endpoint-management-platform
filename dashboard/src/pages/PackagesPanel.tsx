@@ -4,6 +4,7 @@ import {
   getDevices,
   getPackages,
   uploadPackage,
+  restorePackage,
   withdrawPackage,
   type PackageRow,
 } from '../api/client'
@@ -84,12 +85,31 @@ export function PackagesPanel() {
   }
 
   async function onWithdraw(pkg: PackageRow) {
-    if (!window.confirm(`Withdraw "${pkg.name} ${pkg.version}"? It can no longer be deployed or downloaded.`)) return
+    // Says what it does and, as importantly, what it does not: nothing is
+    // uninstalled and no device changes. Only future deployment stops.
+    if (
+      !window.confirm(
+        `Disable "${pkg.name} ${pkg.version}"? It can no longer be deployed or downloaded. ` +
+          'Devices that already have it are unaffected and nothing is uninstalled.',
+      )
+    ) {
+      return
+    }
     try {
       await withdrawPackage(pkg.id)
       await load()
     } catch {
       setError('Could not withdraw the package.')
+    }
+  }
+
+  async function onRestore(pkg: PackageRow) {
+    if (!window.confirm(`Enable "${pkg.name} ${pkg.version}"? It becomes deployable again.`)) return
+    try {
+      await restorePackage(pkg.id)
+      await load()
+    } catch {
+      setError('Could not enable the package.')
     }
   }
 
@@ -245,14 +265,27 @@ export function PackagesPanel() {
                   </td>
                   <td>
                     {p.isWithdrawn ? (
-                      <span className="badge crit">Withdrawn</span>
+                      <span className="badge crit">Disabled</span>
                     ) : (
-                      <span className="badge ok">Active</span>
+                      <span className="badge ok">Available</span>
                     )}
                   </td>
                   {canDeploy && (
                     <td style={{ textAlign: 'right' }}>
-                      {!p.isWithdrawn && (
+                      {p.isWithdrawn ? (
+                        <div className="btn-row" style={{ justifyContent: 'flex-end' }}>
+                          {/* Disabling only removes a package from the catalogue,
+                              so it is reversible: nothing was uninstalled and
+                              nothing has to be rebuilt to put it back. */}
+                          <button
+                            type="button"
+                            className="btn-sm"
+                            onClick={() => void onRestore(p)}
+                          >
+                            Enable
+                          </button>
+                        </div>
+                      ) : (
                         <div className="btn-row" style={{ justifyContent: 'flex-end' }}>
                           <button
                             type="button"
@@ -261,14 +294,15 @@ export function PackagesPanel() {
                           >
                             Deploy
                           </button>
-                          {/* Withdrawing is irreversible for existing deployments,
-                              so it is separated from Deploy by intent styling. */}
+                          {/* Stops future deployment only. Existing installs are
+                              untouched, which is why this is no longer styled as
+                              a destructive action. */}
                           <button
                             type="button"
-                            className="btn-danger btn-sm"
+                            className="btn-sm"
                             onClick={() => void onWithdraw(p)}
                           >
-                            Withdraw
+                            Disable
                           </button>
                         </div>
                       )}

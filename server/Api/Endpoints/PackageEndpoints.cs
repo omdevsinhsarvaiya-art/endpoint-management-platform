@@ -34,6 +34,12 @@ public static class PackageEndpoints
             .WithName("WithdrawPackage")
             .RequirePermission(Permissions.Software.Deploy);
 
+        // The inverse. Same permission as withdrawing: both change whether a
+        // package may be deployed, and neither touches an installed one.
+        group.MapPost("/{packageId:guid}/restore", RestoreAsync)
+            .WithName("RestoreSoftwarePackage")
+            .RequirePermission(Permissions.Software.Deploy);
+
         group.MapPost("/{packageId:guid}/deploy", DeployAsync)
             .WithName("DeployPackage")
             .RequirePermission(Permissions.Software.Deploy);
@@ -120,6 +126,17 @@ public static class PackageEndpoints
                 "Uploaded content does not match the declared SHA-256.", statusCode: StatusCodes.Status400BadRequest),
             _ => Results.Problem(result.Error ?? "Invalid package.", statusCode: StatusCodes.Status400BadRequest),
         };
+    }
+
+    /// <summary>Returns a withdrawn package to the catalogue.</summary>
+    private static async Task<IResult> RestoreAsync(
+        Guid packageId, SoftwarePackageService packageService, HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var actor = AdminActor.Required(httpContext.User);
+        var ok = await packageService.RestoreAsync(
+            actor.OrganizationId, packageId, actor.UserId, actor.Email, cancellationToken);
+        return ok ? Results.NoContent() : Results.NotFound();
     }
 
     private static async Task<IResult> WithdrawAsync(
