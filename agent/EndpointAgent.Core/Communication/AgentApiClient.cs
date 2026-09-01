@@ -245,7 +245,7 @@ public sealed class AgentApiClient(HttpClient httpClient, ILogger<AgentApiClient
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
         {
-            _logger.LogWarning("Agent package download failed to reach the server: {Reason}", ex.GetType().Name);
+            _logger.LogWarning("Agent package download failed to reach the server: {Reason}", Describe(ex));
             return AgentApiResult<Unit>.Transient();
         }
 
@@ -273,7 +273,7 @@ public sealed class AgentApiClient(HttpClient httpClient, ILogger<AgentApiClient
             }
             catch (Exception ex) when (ex is HttpRequestException or IOException or TaskCanceledException)
             {
-                _logger.LogWarning("Agent package download stream failed: {Reason}", ex.GetType().Name);
+                _logger.LogWarning("Agent package download stream failed: {Reason}", Describe(ex));
                 return AgentApiResult<Unit>.Transient();
             }
 
@@ -320,7 +320,7 @@ public sealed class AgentApiClient(HttpClient httpClient, ILogger<AgentApiClient
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
         {
-            _logger.LogWarning("Agent {What} download failed to reach the server: {Reason}", what, ex.GetType().Name);
+            _logger.LogWarning("Agent {What} download failed to reach the server: {Reason}", what, Describe(ex));
             return AgentApiResult<Unit>.Transient();
         }
 
@@ -348,7 +348,7 @@ public sealed class AgentApiClient(HttpClient httpClient, ILogger<AgentApiClient
             }
             catch (Exception ex) when (ex is HttpRequestException or IOException or TaskCanceledException)
             {
-                _logger.LogWarning("Agent {What} download stream failed: {Reason}", what, ex.GetType().Name);
+                _logger.LogWarning("Agent {What} download stream failed: {Reason}", what, Describe(ex));
                 return AgentApiResult<Unit>.Transient();
             }
 
@@ -422,7 +422,7 @@ public sealed class AgentApiClient(HttpClient httpClient, ILogger<AgentApiClient
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
         {
-            _logger.LogWarning("Agent update download failed to reach the server: {Reason}", ex.GetType().Name);
+            _logger.LogWarning("Agent update download failed to reach the server: {Reason}", Describe(ex));
             return AgentApiResult<Unit>.Transient();
         }
 
@@ -452,7 +452,7 @@ public sealed class AgentApiClient(HttpClient httpClient, ILogger<AgentApiClient
             {
                 // An interrupted download leaves only a partial temp file the
                 // executor deletes; nothing about the current install is touched.
-                _logger.LogWarning("Agent update download stream failed: {Reason}", ex.GetType().Name);
+                _logger.LogWarning("Agent update download stream failed: {Reason}", Describe(ex));
                 return AgentApiResult<Unit>.Transient();
             }
 
@@ -478,7 +478,7 @@ public sealed class AgentApiClient(HttpClient httpClient, ILogger<AgentApiClient
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
         {
             _logger.LogWarning("Agent {Operation} request failed to reach the server: {Reason}",
-                operation, ex.GetType().Name);
+                operation, Describe(ex));
             return AgentApiResult<T>.Transient();
         }
 
@@ -538,7 +538,7 @@ public sealed class AgentApiClient(HttpClient httpClient, ILogger<AgentApiClient
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
         {
             _logger.LogWarning("Agent {Operation} request failed to reach the server: {Reason}",
-                operation, ex.GetType().Name);
+                operation, Describe(ex));
             return AgentApiResult<Unit>.Transient();
         }
 
@@ -603,5 +603,51 @@ public sealed class AgentApiClient(HttpClient httpClient, ILogger<AgentApiClient
 
         return await SendAsync<EscrowRecoveryKeyResponse>(
             message, "bitlocker-escrow", cancellationToken);
+    }
+
+    /// <summary>
+    /// The exception type and message, followed by each inner cause.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Transport failures were logged as <c>ex.GetType().Name</c> alone, which for a
+    /// transport error is almost never the useful part: every TLS failure, DNS
+    /// failure, refused connection and timeout arrives as the same
+    /// <c>HttpRequestException</c>, and the reason lives one or two levels down in
+    /// the inner chain. An untrusted certificate chain reported as
+    /// "HttpRequestException" is indistinguishable from the server being switched
+    /// off, which is what made one endpoint failing to enrol take a full
+    /// investigation to explain.
+    /// </para>
+    /// <para>
+    /// <b>Safe to log.</b> These messages describe the transport -- the host, the
+    /// certificate problem, the socket error -- and never the request body or
+    /// headers, which is where this client carries enrollment secrets, credentials
+    /// and sealed envelopes. Nothing here reaches into <see cref="HttpRequestMessage.Content"/>.
+    /// The chain is bounded so a self-referencing or pathological exception cannot
+    /// produce an unbounded log line.
+    /// </para>
+    /// </remarks>
+    private static string Describe(Exception exception)
+    {
+        const int MaxDepth = 4;
+        const int MaxMessageLength = 300;
+
+        var parts = new List<string>(MaxDepth);
+        var current = exception;
+
+        for (var depth = 0; current is not null && depth < MaxDepth; depth++)
+        {
+            var message = current.Message ?? string.Empty;
+            if (message.Length > MaxMessageLength)
+            {
+                message = message[..MaxMessageLength] + "...";
+            }
+
+            parts.Add($"{current.GetType().Name}: {message}");
+            current = current.InnerException;
+        }
+
+        return string.Join(" -> ", parts);
     }
 }
