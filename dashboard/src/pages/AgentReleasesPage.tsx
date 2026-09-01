@@ -10,15 +10,25 @@ import {
 import { useAuth } from '../auth/AuthContext'
 import { Icon } from '../components/Icon'
 import { ConfirmDialog } from '../components/ConfirmDialog'
+import {
+  deploymentWarning,
+  describeReleaseGap,
+  newestPublished,
+  newestUpdateEligible,
+  newestUploaded,
+  releaseGap,
+  requiresUnsignedAcknowledgement,
+} from './agentReleaseView'
 
 /**
  * Windows Agent distribution: which build is current, downloading the MSI, and
  * the release lifecycle (upload as Draft → publish → revoke).
  *
- * The page never claims more than the platform knows: the "latest" card is the
- * newest published release, per-device installed versions live on the Devices
- * page, and an unsigned release says so in the open rather than hiding the
- * absence of a signature.
+ * The page never claims more than the platform knows. "Latest" is deliberately
+ * three separate answers -- newest held, newest offered, newest a fleet update
+ * would install -- because they can differ and the difference is the useful
+ * part. Per-device installed versions live on the Devices page, and an unsigned
+ * release says so in the open rather than hiding the absence of a signature.
  */
 export function AgentReleasesPage() {
   const { hasPermission } = useAuth()
@@ -54,7 +64,15 @@ export function AgentReleasesPage() {
     void load()
   }, [load])
 
-  const latest = releases.find((r) => r.status === 'Published')
+  // Ordered by version, not by upload time. The list arrives newest-created
+  // first, so the old `find(status === 'Published')` returned whichever
+  // published release was uploaded most recently -- which is only the highest
+  // version by coincidence, and stops being so the moment an older build is
+  // published after a newer one.
+  const latest = newestPublished(releases)
+  const uploaded = newestUploaded(releases)
+  const eligible = newestUpdateEligible(releases)
+  const gap = releaseGap(releases)
 
   async function onUpload() {
     if (!file) return
@@ -82,6 +100,20 @@ export function AgentReleasesPage() {
   }
 
   async function onPublish(release: AgentReleaseRow) {
+    // Publishing is what makes a build installable fleet-wide. The platform does
+    // not refuse to publish an unsigned one and the agent installs it on hash
+    // verification alone, so the only thing standing between an unsigned build
+    // and every device is this decision -- which therefore has to be a decision,
+    // not a click.
+    if (requiresUnsignedAcknowledgement(release)) {
+      const warning = deploymentWarning(release)
+      if (!window.confirm(
+        `Publish ${release.version}?\n\n${warning}\n\n`
+        + 'Devices will accept it after verifying its SHA-256 only. Continue?')) {
+        return
+      }
+    }
+
     setError(null)
     setNotice(null)
     try {
@@ -224,10 +256,29 @@ export function AgentReleasesPage() {
         </div>
       )}
 
+      {/* The three answers, stated together. A newer draft sitting above the
+          published build is a normal and deliberate state -- it is where an
+          unsigned build belongs -- but it has to be visible rather than inferred
+          from two cards showing two different numbers. */}
+      {uploaded && gap !== 'none' && (
+        <div className="warn-banner" role="status">
+          <strong>{describeReleaseGap(gap, uploaded, eligible)}</strong>
+          {uploaded && !latest && (
+            <div className="row-sub">Newest registered: {uploaded.version} ({uploaded.status}).</div>
+          )}
+          {uploaded && latest && (
+            <div className="row-sub">
+              Newest registered {uploaded.version} ({uploaded.status}) · fleet updates target{' '}
+              {eligible?.version ?? 'nothing'}.
+            </div>
+          )}
+        </div>
+      )}
+
       {latest && (
         <div className="card card-section">
           <div className="card-header">
-            <h2>Windows Agent — latest release</h2>
+            <h2>Windows Agent — latest published release</h2>
             <span className="badge ok">Published</span>
           </div>
           <div className="detail-title" style={{ marginBottom: 10 }}>
