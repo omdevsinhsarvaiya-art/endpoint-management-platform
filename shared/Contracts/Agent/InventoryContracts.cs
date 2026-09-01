@@ -60,6 +60,20 @@ public sealed record InventoryBitLocker(
 /// GUIDs identifying the recovery-password protectors. Identifiers only: a protector
 /// id reveals nothing and unlocks nothing.
 /// </param>
+/// <param name="HasTpmProtector">
+/// Whether a TPM-only startup protector (type 1) exists. Null when unread. Reported
+/// separately from the recovery-password protector and never merged with it: the two
+/// answer different questions and only one of them has a secret behind it.
+/// </param>
+/// <param name="TpmProtectorIds">GUIDs identifying the TPM-only protectors.</param>
+/// <param name="HasTpmPinProtector">
+/// Whether a TPM+PIN startup protector (type 4) exists. Null when unread.
+/// </param>
+/// <param name="TpmPinProtectorIds">
+/// GUIDs identifying the TPM+PIN protectors. Identifiers only. There is no field
+/// here for a PIN, and the agent never asks Windows for one -- a startup PIN cannot
+/// be read back from a protector at all, only replaced.
+/// </param>
 public sealed record InventoryBitLockerVolume(
     string DeviceIdentifier,
     string? DriveLetter,
@@ -70,7 +84,11 @@ public sealed record InventoryBitLockerVolume(
     int? EncryptionPercentage,
     int? EncryptionMethod,
     bool? HasRecoveryPasswordProtector,
-    IReadOnlyList<string>? RecoveryProtectorIds);
+    IReadOnlyList<string>? RecoveryProtectorIds,
+    bool? HasTpmProtector = null,
+    IReadOnlyList<string>? TpmProtectorIds = null,
+    bool? HasTpmPinProtector = null,
+    IReadOnlyList<string>? TpmPinProtectorIds = null);
 
 /// <summary>
 /// One PnP device and its bound driver.

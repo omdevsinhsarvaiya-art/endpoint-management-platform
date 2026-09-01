@@ -53,6 +53,13 @@ internal sealed class DeviceBitLockerVolumeConfiguration : IEntityTypeConfigurat
         // payload cannot use the column as storage.
         builder.Property(v => v.RecoveryProtectorIds).HasMaxLength(1024);
 
+        // Startup protectors, in columns of their own. Separate storage is the point:
+        // automatic recovery-key escrow derives its targets from
+        // RecoveryProtectorIds, so a TPM or TPM+PIN id has no column from which it
+        // could ever reach that query.
+        builder.Property(v => v.TpmProtectorIds).HasMaxLength(1024);
+        builder.Property(v => v.TpmPinProtectorIds).HasMaxLength(1024);
+
         builder.Property(v => v.CollectedAt).IsRequired();
         builder.Property(v => v.CreatedAt).IsRequired();
         builder.Property(v => v.UpdatedAt).IsRequired();

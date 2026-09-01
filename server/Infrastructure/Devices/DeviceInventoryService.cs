@@ -390,7 +390,15 @@ public sealed class DeviceInventoryService(
                 volume.EncryptionMethod,
                 volume.HasRecoveryPasswordProtector,
                 JoinProtectorIds(volume.RecoveryProtectorIds),
-                now));
+                now,
+                // Startup protectors, kept in their own columns. JoinProtectorIds is
+                // shared formatting only -- the three id lists never merge, so a
+                // startup protector cannot reach the automatic-escrow target list,
+                // which reads RecoveryProtectorIds and nothing else.
+                volume.HasTpmProtector,
+                JoinProtectorIds(volume.TpmProtectorIds),
+                volume.HasTpmPinProtector,
+                JoinProtectorIds(volume.TpmPinProtectorIds)));
         }
     }
 

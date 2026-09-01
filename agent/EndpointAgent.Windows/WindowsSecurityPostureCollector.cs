@@ -293,6 +293,11 @@ public sealed class WindowsSecurityPostureCollector(
                     var (conversionStatus, percentage) = ReadConversionStatus(row);
                     var (hasRecoveryPassword, protectorIds) = ReadRecoveryProtectors(row);
 
+                    // Three independent reads, deliberately not one. See the remarks
+                    // on ReadTpmProtectors for why these are not a single call.
+                    var (hasTpm, tpmIds) = ReadTpmProtectors(row);
+                    var (hasTpmPin, tpmPinIds) = ReadTpmPinProtectors(row);
+
                     volumes.Add(new InventoryBitLockerVolume(
                         DeviceIdentifier: deviceId,
                         DriveLetter: row["DriveLetter"] as string,
@@ -303,7 +308,11 @@ public sealed class WindowsSecurityPostureCollector(
                         EncryptionPercentage: percentage,
                         EncryptionMethod: ReadEncryptionMethod(row),
                         HasRecoveryPasswordProtector: hasRecoveryPassword,
-                        RecoveryProtectorIds: protectorIds));
+                        RecoveryProtectorIds: protectorIds,
+                        HasTpmProtector: hasTpm,
+                        TpmProtectorIds: tpmIds,
+                        HasTpmPinProtector: hasTpmPin,
+                        TpmPinProtectorIds: tpmPinIds));
                 }
             }
 
@@ -425,6 +434,102 @@ public sealed class WindowsSecurityPostureCollector(
         catch (Exception ex) when (ex is ManagementException or UnauthorizedAccessException or InvalidCastException)
         {
             _logger.LogDebug(ex, "BitLocker key protectors unreadable for a volume.");
+            return (null, null);
+        }
+    }
+
+    /// <summary>
+    /// Enumerates the TPM-only startup protectors (type 1) on one volume.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A separate method with its own hard-coded type constant, rather than one
+    /// shared reader parameterised by protector type at the call site. That
+    /// duplication is deliberate and is the safety property: nowhere in this agent is
+    /// a protector type a variable chosen by a caller, so no call site can be made to
+    /// enumerate a different type by passing the wrong value.
+    /// </para>
+    /// <para>
+    /// This matters because the output of <c>ReadRecoveryProtectors</c> feeds the
+    /// automatic recovery-key escrow target list. If a TPM or TPM+PIN protector id
+    /// could reach that list, the escrow runner would try to read a recovery password
+    /// from a protector that has none -- calling the one method this agent must never
+    /// call, against the wrong protector. Keeping the three queries physically
+    /// separate, each with a literal type, makes that impossible rather than unlikely.
+    /// </para>
+    /// </remarks>
+    private (bool? HasTpm, IReadOnlyList<string>? ProtectorIds) ReadTpmProtectors(
+        ManagementBaseObject volume)
+    {
+        const int TpmProtector = 1;
+
+        return ReadStartupProtectorIds(volume, TpmProtector, "TPM");
+    }
+
+    /// <summary>
+    /// Enumerates the TPM+PIN startup protectors (type 4) on one volume.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This reports presence and identity only.</b> It calls
+    /// <c>GetKeyProtectors</c>, which returns protector identifiers. No Windows API
+    /// returns a startup PIN from a protector -- a PIN can be replaced but never read
+    /// back -- so there is nothing secret to leak here and no field on the contract
+    /// for it to leak into.
+    /// </para>
+    /// <para>
+    /// Type 4 is <c>TpmAndPin</c>, passed as a typed method parameter and never
+    /// composed into query text. It is never handed to
+    /// <c>GetKeyProtectorNumericalPassword</c>, which this file does not call at all.
+    /// </para>
+    /// </remarks>
+    private (bool? HasTpmPin, IReadOnlyList<string>? ProtectorIds) ReadTpmPinProtectors(
+        ManagementBaseObject volume)
+    {
+        const int TpmAndPinProtector = 4;
+
+        return ReadStartupProtectorIds(volume, TpmAndPinProtector, "TPM+PIN");
+    }
+
+    /// <summary>
+    /// Invokes <c>GetKeyProtectors</c> for one startup-protector type.
+    /// </summary>
+    /// <remarks>
+    /// Shared only by the two startup-protector readers above, each passing its own
+    /// literal constant. <c>ReadRecoveryProtectors</c> deliberately does <em>not</em>
+    /// route through here: the recovery-password query is left exactly as it was, so
+    /// the filter that feeds automatic escrow cannot be altered by an edit to shared
+    /// code.
+    /// </remarks>
+    private (bool? Has, IReadOnlyList<string>? ProtectorIds) ReadStartupProtectorIds(
+        ManagementBaseObject volume, int protectorType, string description)
+    {
+        try
+        {
+            var managementObject = (ManagementObject)volume;
+
+            using var parameters = managementObject.GetMethodParameters("GetKeyProtectors");
+            parameters["KeyProtectorType"] = (uint)protectorType;
+
+            using var result = managementObject.InvokeMethod("GetKeyProtectors", parameters, null);
+
+            if (result is null || ToInt(result["ReturnValue"]) != 0)
+            {
+                return (null, null);
+            }
+
+            var ids = (result["VolumeKeyProtectorID"] as string[] ?? [])
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Take(MaxProtectorIdsPerVolume)
+                .ToArray();
+
+            return (ids.Length > 0, ids);
+        }
+        catch (Exception ex) when (ex is ManagementException or UnauthorizedAccessException or InvalidCastException)
+        {
+            // Unreadable is null, never false: a volume that would not answer must not
+            // be recorded as having no protector of this type.
+            _logger.LogDebug(ex, "BitLocker {Description} key protectors unreadable for a volume.", description);
             return (null, null);
         }
     }

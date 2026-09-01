@@ -72,7 +72,11 @@ public sealed class DeviceBitLockerVolume : AuditableEntity
         int? encryptionMethod,
         bool? hasRecoveryPasswordProtector,
         string? recoveryProtectorIds,
-        DateTimeOffset collectedAt)
+        DateTimeOffset collectedAt,
+        bool? hasTpmProtector = null,
+        string? tpmProtectorIds = null,
+        bool? hasTpmPinProtector = null,
+        string? tpmPinProtectorIds = null)
     {
         DeviceId = Guard.NotEmpty(deviceId);
         DeviceIdentifier = Guard.NotNullOrWhiteSpace(deviceIdentifier, nameof(deviceIdentifier), maxLength: 256);
@@ -89,6 +93,12 @@ public sealed class DeviceBitLockerVolume : AuditableEntity
         EncryptionMethod = encryptionMethod;
         HasRecoveryPasswordProtector = hasRecoveryPasswordProtector;
         RecoveryProtectorIds = Guard.OptionalMaxLength(recoveryProtectorIds, 1024);
+
+        HasTpmProtector = hasTpmProtector;
+        TpmProtectorIds = Guard.OptionalMaxLength(tpmProtectorIds, 1024);
+        HasTpmPinProtector = hasTpmPinProtector;
+        TpmPinProtectorIds = Guard.OptionalMaxLength(tpmPinProtectorIds, 1024);
+
         CollectedAt = collectedAt;
     }
 
@@ -128,10 +138,39 @@ public sealed class DeviceBitLockerVolume : AuditableEntity
     /// </summary>
     public string? RecoveryProtectorIds { get; private set; }
 
+    /// <summary>
+    /// Whether a TPM-only startup protector exists. Null when unread.
+    /// </summary>
+    /// <remarks>
+    /// Held apart from <see cref="HasRecoveryPasswordProtector"/> in its own column
+    /// for the same reason the agent reads it with its own query: these are different
+    /// protector types answering different questions, and only the recovery-password
+    /// one has a secret behind it. Merging them would let a startup protector reach
+    /// the automatic-escrow target list, which is derived from
+    /// <see cref="RecoveryProtectorIds"/> alone.
+    /// </remarks>
+    public bool? HasTpmProtector { get; private set; }
+
+    /// <summary>Comma-separated TPM-only protector GUIDs. Identifiers, not secrets.</summary>
+    public string? TpmProtectorIds { get; private set; }
+
+    /// <summary>
+    /// Whether a TPM+PIN startup protector exists. Null when unread, and never
+    /// inferred as false from a failed read.
+    /// </summary>
+    /// <remarks>
+    /// Presence only. A BitLocker startup PIN cannot be read back from a protector by
+    /// any Windows API, so there is no column here for one and nothing to redact.
+    /// </remarks>
+    public bool? HasTpmPinProtector { get; private set; }
+
+    /// <summary>Comma-separated TPM+PIN protector GUIDs. Identifiers, not secrets.</summary>
+    public string? TpmPinProtectorIds { get; private set; }
+
     public DateTimeOffset CollectedAt { get; private set; }
 
     /// <summary>This row as the view the posture evaluator consumes.</summary>
     public BitLockerVolumeView ToView() => new(
         DeviceIdentifier, DriveLetter, VolumeType, ConversionStatus, ProtectionStatus,
-        HasRecoveryPasswordProtector);
+        HasRecoveryPasswordProtector, HasTpmProtector, HasTpmPinProtector);
 }
