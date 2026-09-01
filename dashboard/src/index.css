@@ -528,15 +528,36 @@ h1, h2, h3 { color: var(--color-text); }
    pressed against the dialog edge. Monospaced and spaced for the same reason as
    the input below: 48 digits get read aloud and copied onto paper. */
 .revealed-key {
+  /* <code> is inline by default. Left inline, a wrapped element paints its
+     border and background once per line fragment, which is what produced the
+     broken two-piece panel: padding on an inline box does not reserve space in
+     the line either, so the digits escaped it to the right. */
+  display: block;
+  box-sizing: border-box;
+  max-width: 100%;
+  margin: 0;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md, 8px);
-  padding: 14px 16px;
+  padding: 12px 14px;
   background: var(--color-elevated);
   font-family: 'Cascadia Mono', 'SF Mono', Consolas, monospace;
   font-size: 15px;
-  letter-spacing: 0.06em;
+  /* 0.06em put the 55-character key past the width of a 520px dialog. At 0.02em
+     the whole key fits one line with room to spare, and stays legible enough to
+     read aloud, which is the thing this panel exists for. */
+  letter-spacing: 0.02em;
   line-height: 1.7;
-  word-break: break-all;
+  /* The important line. `break-all` broke wherever the text happened to run
+     out of room, splitting 048697 across two lines -- a recovery key misread
+     that way does not unlock anything. With normal breaking the only wrap
+     opportunities in a run of digits are the hyphens, so a six-digit group
+     cannot be split no matter how narrow the dialog gets. */
+  word-break: normal;
+  overflow-wrap: normal;
+  hyphens: none;
+  /* Last-resort containment: the panel scrolls itself rather than pushing past
+     the dialog edge, however narrow the viewport or wide the font. */
+  overflow-x: auto;
   user-select: all;
 }
 

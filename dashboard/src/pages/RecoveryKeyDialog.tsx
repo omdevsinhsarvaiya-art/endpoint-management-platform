@@ -208,7 +208,11 @@ export function RevealKeyDialog({
 
   return (
     <div className="overlay" role="dialog" aria-modal="true" aria-labelledby="reveal-key-title">
-      <div className="dialog" style={{ maxWidth: 520 }}>
+      {/* Wider than the other dialogs because of what it has to hold: 48 digits
+          in eight groups. The cap is a maximum, not a width -- .dialog is
+          width:100% inside a padded overlay, so this shrinks with the viewport
+          instead of forcing a horizontal scroll on a phone. */}
+      <div className="dialog" style={{ maxWidth: 'min(620px, 100%)' }}>
         <div className="dialog-header">
           <h2 id="reveal-key-title">Reveal recovery key</h2>
           <div className="sub">
@@ -263,13 +267,15 @@ export function RevealKeyDialog({
         ) : (
           <>
             <div className="dialog-body">
-            <div className="warn-banner">
-              This key stays on screen until you press Done. Copying it places it on your
-              clipboard, where it will stay until something replaces it.
-            </div>
+              <div className="warn-banner">
+                This key stays on screen until you press Done. Copying it places it on your
+                clipboard, where it will stay until something replaces it.
+              </div>
 
               {/* Bordered and inset like the escrow cards, so the key reads as a
-                  panel rather than as loose text against the dialog edge. */}
+                  panel rather than as loose text against the dialog edge. The
+                  value is rendered verbatim -- the grouping is BitLocker's own,
+                  and nothing here reformats, splits or pads it. */}
               <code className="revealed-key">{session.key}</code>
             </div>
 
