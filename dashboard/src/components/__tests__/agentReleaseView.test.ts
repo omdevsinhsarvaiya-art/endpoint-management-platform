@@ -2,13 +2,20 @@ import { describe, expect, it } from 'vitest'
 import {
   deploymentWarning,
   describeReleaseGap,
+  downloadHint,
+  isDownloadable,
   newestPublished,
   newestUpdateEligible,
   newestUploaded,
   releaseGap,
   requiresUnsignedAcknowledgement,
 } from '../../pages/agentReleaseView'
-import { eligibleDevices, upgradeTargets, type DeviceUpdateCandidate } from '../../pages/agentUpdateView'
+import {
+  eligibleDevices,
+  isEligible,
+  upgradeTargets,
+  type DeviceUpdateCandidate,
+} from '../../pages/agentUpdateView'
 import type { AgentReleaseRow } from '../../api/client'
 
 /**
@@ -232,5 +239,46 @@ describe('a device already ahead of every published release', () => {
     expect(chosen).toEqual(['MSI', 'DESKTOP-PJCC143'])
     expect(chosen).not.toContain('OMDEVSINH-TECHS')
     expect(chosen).not.toContain('AWS-VERIFY-PC')
+  })
+})
+
+describe('downloading a build', () => {
+  /**
+   * The distinction the whole change rests on. Downloading is an administrator
+   * fetching an artifact to install by hand; publishing is the platform pushing it
+   * onto machines. A Draft must be downloadable without being deployable.
+   */
+  it('allows a draft to be downloaded', () => {
+    expect(isDownloadable(release({ status: 'Draft' }))).toBe(true)
+  })
+
+  it('allows a published release to be downloaded', () => {
+    expect(isDownloadable(release({ status: 'Published' }))).toBe(true)
+  })
+
+  /** Revoked is withdrawn: nothing may download or install it any more. */
+  it('refuses a revoked release', () => {
+    expect(isDownloadable(release({ status: 'Revoked' }))).toBe(false)
+  })
+
+  /** Downloadable must not mean deployable. */
+  it('a downloadable draft is still not a fleet target', () => {
+    const draft = release({ version: '1.4.1', status: 'Draft', signerSubject: null })
+
+    expect(isDownloadable(draft)).toBe(true)
+    expect(newestUpdateEligible([draft])).toBeNull()
+    expect(isEligible(
+      { deviceId: 'd', hostname: 'PC', agentVersion: '1.1.4', status: 'Active' }, draft)).toBe(false)
+  })
+
+  it('says a draft is manual-install only, and flags an unsigned one', () => {
+    expect(downloadHint(release({ status: 'Draft' })))
+      .toContain('Not offered to devices until published')
+    expect(downloadHint(release({ status: 'Draft', signerSubject: null })))
+      .toContain('unsigned')
+  })
+
+  it('has nothing to add for a published release', () => {
+    expect(downloadHint(release({ status: 'Published' }))).toBeNull()
   })
 })

@@ -275,6 +275,112 @@ public sealed class UnsignedAgentReleaseTests(AdminApiPostgresFixture fixture)
         (await db.DeviceTasks.CountAsync(t => t.DeviceId == deviceId)).ShouldBe(0);
     }
 
+    // ---- downloading, which is not deploying -------------------------------
+
+    /// <summary>
+    /// A Draft can be downloaded by an administrator.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The console reused the agent's content path for its own download button, so
+    /// a build could not be retrieved until it had been published -- which for an
+    /// unsigned build is exactly backwards, since publishing is what makes it
+    /// installable on every device. Downloading is one authenticated administrator
+    /// fetching an artifact to install by hand.
+    /// </para>
+    /// <para>
+    /// Asserts the bytes, not just the status code: the point of the endpoint is
+    /// that it returns the real MSI.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task A_draft_release_can_be_downloaded_by_an_administrator()
+    {
+        using var client = await AdminAsync();
+
+        var (releaseId, sha256) = await UploadAsync(client, "8.50.0");
+
+        await using (var db = _fixture.CreateDbContext())
+        {
+            (await db.AgentReleases.AsNoTracking().SingleAsync(r => r.Id == releaseId))
+                .Status.ShouldBe(Domain.Agents.AgentReleaseStatus.Draft, "precondition");
+        }
+
+        var response = await client.GetAsync(Release(releaseId, "download"));
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var bytes = await response.Content.ReadAsByteArrayAsync();
+        Convert.ToHexStringLower(SHA256.HashData(bytes))
+            .ShouldBe(sha256, "the download must return exactly the stored artifact");
+    }
+
+    [Fact]
+    public async Task A_published_release_can_still_be_downloaded()
+    {
+        using var client = await AdminAsync();
+
+        var (releaseId, sha256) = await UploadAsync(client, "8.51.0");
+        (await client.PostAsync(Release(releaseId, "publish"), null)).EnsureSuccessStatusCode();
+
+        var response = await client.GetAsync(Release(releaseId, "download"));
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        Convert.ToHexStringLower(SHA256.HashData(await response.Content.ReadAsByteArrayAsync()))
+            .ShouldBe(sha256);
+    }
+
+    /// <summary>
+    /// Revoked stays undownloadable. "Nothing may download or install it any more"
+    /// is the documented lifecycle rule, and widening the download path must not
+    /// have become a way around it.
+    /// </summary>
+    [Fact]
+    public async Task A_revoked_release_cannot_be_downloaded()
+    {
+        using var client = await AdminAsync();
+
+        var (releaseId, _) = await UploadAsync(client, "8.52.0");
+        (await client.PostAsync(Release(releaseId, "revoke"), null)).EnsureSuccessStatusCode();
+
+        (await client.GetAsync(Release(releaseId, "download")))
+            .StatusCode.ShouldBe(HttpStatusCode.NotFound);
+    }
+
+    /// <summary>
+    /// Downloadable must not mean deployable. The same Draft that just streamed its
+    /// bytes is still refused by the update endpoint.
+    /// </summary>
+    [Fact]
+    public async Task Downloading_a_draft_does_not_make_it_a_fleet_target()
+    {
+        using var client = await AdminAsync();
+
+        var (releaseId, _) = await UploadAsync(client, "8.53.0");
+        var deviceId = await SeedDeviceAsync("1.0.0");
+
+        (await client.GetAsync(Release(releaseId, "download")))
+            .StatusCode.ShouldBe(HttpStatusCode.OK, "the artifact is retrievable");
+
+        (await client.PostAsJsonAsync(UpdateAgent(deviceId), new { releaseId }))
+            .StatusCode.ShouldBe(HttpStatusCode.Conflict, "but it is still not deployable");
+
+        await using var db = _fixture.CreateDbContext();
+        (await db.DeviceTasks.CountAsync(t => t.DeviceId == deviceId)).ShouldBe(0);
+    }
+
+    /// <summary>Download still requires authentication.</summary>
+    [Fact]
+    public async Task An_unauthenticated_caller_cannot_download_a_draft()
+    {
+        using var owner = await AdminAsync();
+        var (releaseId, _) = await UploadAsync(owner, "8.54.0");
+
+        using var anonymous = _fixture.Factory.CreateClient();
+
+        (await anonymous.GetAsync(Release(releaseId, "download")))
+            .StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
+    }
+
     /// <summary>The listing carries the signer as reported, null included.</summary>
     [Fact]
     public async Task The_listing_reports_signed_and_unsigned_releases_distinguishably()

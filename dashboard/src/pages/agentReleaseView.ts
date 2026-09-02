@@ -127,3 +127,32 @@ export function deploymentWarning(release: AgentReleaseRow): string | null {
 export function requiresUnsignedAcknowledgement(release: AgentReleaseRow): boolean {
   return !isSigned(release)
 }
+
+/**
+ * Whether this release can be downloaded from the console.
+ *
+ * Draft counts. Downloading is an administrator fetching an artifact to install by
+ * hand; publishing is the platform pushing it onto machines by itself. Requiring
+ * the second before allowing the first is backwards for an unsigned build, where
+ * the safe way to try one is on a single machine you are standing at.
+ *
+ * Revoked does not count: a revoked release is withdrawn, and nothing may download
+ * or install it any more.
+ */
+export function isDownloadable(release: AgentReleaseRow): boolean {
+  return release.status !== 'Revoked'
+}
+
+/**
+ * What downloading this build actually gets you, said plainly next to the button.
+ *
+ * A Draft is downloadable but not deployable, and an operator should not have to
+ * infer that from a status badge two columns away.
+ */
+export function downloadHint(release: AgentReleaseRow): string | null {
+  if (release.status !== 'Draft') return null
+
+  return isSigned(release)
+    ? 'Draft: install manually. Not offered to devices until published.'
+    : 'Draft and unsigned: install manually. Not offered to devices until published.'
+}

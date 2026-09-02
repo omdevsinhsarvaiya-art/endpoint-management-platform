@@ -72,9 +72,12 @@ public sealed class AgentReleaseEndpointTests(AdminApiPostgresFixture fixture)
         var releaseId = Guid.Parse(System.Text.Json.JsonDocument.Parse(
             await create.Content.ReadAsStringAsync()).RootElement.GetProperty("releaseId").GetString()!);
 
-        // A draft is not downloadable — publishing is what offers it.
+        // A draft IS downloadable by an administrator: fetching a build to install
+        // by hand is a different act from letting the platform push it to machines.
+        // What publishing changes is device eligibility, which AgentUpdateContentTests
+        // covers on the agent's own content route.
         var draftDownload = await client.GetAsync(new Uri($"/admin/v1/agent-releases/{releaseId}/download", UriKind.Relative));
-        draftDownload.StatusCode.ShouldBe(HttpStatusCode.NotFound);
+        draftDownload.StatusCode.ShouldBe(HttpStatusCode.OK);
 
         (await client.PostAsync(new Uri($"/admin/v1/agent-releases/{releaseId}/publish", UriKind.Relative), null))
             .StatusCode.ShouldBe(HttpStatusCode.NoContent);

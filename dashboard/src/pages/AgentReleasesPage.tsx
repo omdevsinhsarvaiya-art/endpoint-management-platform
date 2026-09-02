@@ -13,6 +13,8 @@ import { ConfirmDialog } from '../components/ConfirmDialog'
 import {
   deploymentWarning,
   describeReleaseGap,
+  downloadHint,
+  isDownloadable,
   newestPublished,
   newestUpdateEligible,
   newestUploaded,
@@ -356,6 +358,7 @@ export function AgentReleasesPage() {
                     <td>
                       <div>{r.version}</div>
                       <div className="row-sub">{r.fileName}</div>
+                      {downloadHint(r) && <div className="row-sub muted">{downloadHint(r)}</div>}
                     </td>
                     <td>
                       {r.platform}/{r.architecture}
@@ -376,10 +379,14 @@ export function AgentReleasesPage() {
                     <td>{new Date(r.createdAt).toLocaleDateString()}</td>
                     <td style={{ textAlign: 'right' }}>
                       <div className="btn-row" style={{ justifyContent: 'flex-end' }}>
-                        {r.status === 'Published' && (
+                        {/* Draft included: fetching a build to install by hand is
+                            not the same as letting the platform push it to
+                            machines. Revoked stays undownloadable. */}
+                        {isDownloadable(r) && (
                           <button
                             type="button"
                             className="btn-sm"
+                            title={downloadHint(r) ?? undefined}
                             disabled={downloadingId === r.id}
                             onClick={() => onDownload(r)}
                           >

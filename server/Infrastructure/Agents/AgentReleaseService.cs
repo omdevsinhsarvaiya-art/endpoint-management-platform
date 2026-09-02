@@ -219,6 +219,45 @@ public sealed class AgentReleaseService(
             .FirstOrDefault();
     }
 
+    /// <summary>
+    /// Opens a release's MSI for an administrator to download.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Deliberately separate from <see cref="OpenPublishedContentAsync"/>, and
+    /// deliberately more permissive: it serves Draft as well as Published. These are
+    /// two different questions. Publishing decides whether the platform will push a
+    /// build onto machines by itself; downloading is an authenticated administrator
+    /// fetching an artifact they uploaded, to install by hand.
+    /// </para>
+    /// <para>
+    /// Conflating them meant a build could not be retrieved from the console until
+    /// it had been made installable fleet-wide, which is exactly backwards for an
+    /// unsigned build: the safe way to try one is on a single machine you are
+    /// standing at, not by publishing it to every device first.
+    /// </para>
+    /// <para>
+    /// Revoked stays refused. A revoked release is withdrawn -- "nothing may download
+    /// or install it any more" is the documented lifecycle rule, and this must not
+    /// become a way around it.
+    /// </para>
+    /// </remarks>
+    public async Task<(Stream? Content, AgentRelease? Release)> OpenDownloadableContentAsync(
+        Guid releaseId, CancellationToken cancellationToken = default)
+    {
+        var release = await _dbContext.AgentReleases
+            .AsNoTracking()
+            .SingleOrDefaultAsync(r => r.Id == releaseId, cancellationToken);
+
+        if (release is null || release.Status == AgentReleaseStatus.Revoked)
+        {
+            return (null, null);
+        }
+
+        var stream = await _contentStore.OpenReadAsync(release.Sha256, cancellationToken);
+        return stream is null ? (null, null) : (stream, release);
+    }
+
     /// <summary>Opens a release's MSI for streaming, refusing anything not Published.</summary>
     public async Task<(Stream? Content, AgentRelease? Release)> OpenPublishedContentAsync(
         Guid releaseId, CancellationToken cancellationToken = default)

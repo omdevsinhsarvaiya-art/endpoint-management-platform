@@ -126,7 +126,11 @@ public static class AgentReleaseEndpoints
         EndpointPlatformDbContext dbContext,
         CancellationToken cancellationToken)
     {
-        var (content, release) = await releaseService.OpenPublishedContentAsync(releaseId, cancellationToken);
+        // Draft included: an administrator downloading a build to install by hand is
+        // not the same act as the platform pushing it onto machines. The agent's own
+        // content route keeps using OpenPublishedContentAsync, so what a device will
+        // install is unchanged by this.
+        var (content, release) = await releaseService.OpenDownloadableContentAsync(releaseId, cancellationToken);
         if (content is null || release is null)
         {
             return Results.NotFound();
