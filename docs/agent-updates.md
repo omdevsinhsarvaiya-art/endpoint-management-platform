@@ -7,9 +7,9 @@ and exactly what is — and is not — guaranteed.
 
 An **agent release** is one distributable MSI build: version (three numeric
 parts), platform/architecture (`windows/x64`), filename, a SHA-256 the server
-computed over the bytes it stored, the Authenticode signer subject the server
-verified from the artifact's own signature, release notes, and a one-way
-lifecycle:
+computed over the bytes it stored, a signer subject (recorded only under the
+Public trust model, from the artifact's own signature -- null under Internal),
+release notes, and a one-way lifecycle:
 
 ```
 Draft ──publish──▶ Published ──revoke──▶ Revoked   (terminal)
@@ -18,42 +18,66 @@ Draft ──publish──▶ Published ──revoke──▶ Revoked   (terminal
 A revoked release can never be re-published; upload a fresh build instead, so
 every audit entry refers to an immutable artifact.
 
-### The publish gate
+### Release trust model
 
-Publishing is the consequential act — it is what lets the platform push a build
-onto machines as SYSTEM — so it is gated on the server, not in the console. On
-every publish the stored artifact is re-read and must satisfy all of:
+Techsara runs an **Internal** release trust model: one company, a private
+network, controlled Windows PCs, no public distribution. Configured by
+`AgentReleases:TrustMode` (`Internal`, the default, or `Public`).
 
-1. it is a Windows Installer package (an OLE2 compound file);
-2. it carries an Authenticode signature (`DigitalSignature` stream);
-3. that signature is a well-formed Authenticode `SignedData` and verifies;
-4. the signing certificate carries the Code Signing EKU;
-5. it chains to a trusted root under the server's system trust store;
-6. its subject contains `AgentReleases:ExpectedSignerSubject` — the configured
-   publisher, matched case-insensitively as a substring, exactly as the agent's
-   own pin is matched;
-7. the bytes on disk still hash to the release's recorded SHA-256.
+Under **Internal**, publishing a release requires:
 
-Any failure answers **422** with a message naming the requirement. There is no
-UI-side gate to bypass: a direct API call is refused the same way. With no
-publisher configured, nothing can be published — fail closed, never "any signer
-will do".
+1. an authenticated administrator holding `Software.Deploy`;
+2. the release exists and is a Draft;
+3. its artifact exists in the content store;
+4. the artifact is a Windows Installer package (an OLE2 compound file);
+5. the bytes on disk, re-read at that moment, still hash to the release's
+   recorded SHA-256;
+6. version and lifecycle rules hold (one release per platform/architecture/
+   version; Draft → Published → Revoked, one way);
+7. an audit entry is written, naming the actor.
 
-Two things are deliberately server-derived and never accepted from an upload.
+Any failure answers **422** naming the check, and the release stays a Draft.
+There is no UI-side gate: a direct API call is refused identically.
+
+**No CA-issued Authenticode certificate is required under Internal, and no
+signature is read.** Not "checked and ignored" — the Authenticode verifier is
+not on the Internal code path at all, and a test proves it is never called. An
+unsigned build and a signed build publish identically, and neither records a
+signer. `AgentReleases:ExpectedSignerSubject` has no effect in Internal mode and
+may be left unset.
+
+**What Internal does not mean.** An MSI published this way is trusted by *this
+platform*, for *these machines*, on the strength of its hash, its transport, and
+the administrator who published it. It is **not** thereby trusted by Windows:
+SmartScreen, AppLocker or a WDAC policy will treat it as an unsigned installer,
+because that is what it is. Public distribution would need the stronger policy
+below, which can be switched on without touching the Internal path.
+
+Under **Public**, everything above applies, and additionally the artifact must
+carry an Authenticode signature (`\005DigitalSignature` stream) that is a
+well-formed `SignedData`, verifies, chains to a trusted root under the server's
+system trust store, carries the Code Signing EKU, and whose subject contains
+`ExpectedSignerSubject`. Public mode refuses to start without a configured
+publisher. What the server does *not* reproduce even in Public mode is
+Authenticode's binding of the signature to the exact bytes under Windows
+Installer's stream-hashing rules — that, and revocation, are enforced on the
+endpoint by `WinVerifyTrust` before anything installs.
+
+Two values are server-derived in every mode and never accepted from an upload.
 The **SHA-256** is computed over the bytes the server stores; a hash sent by the
-client is only a transit cross-check (mismatch → 400). The **signer** is read
-from the artifact's signature; a signer typed into the form is discarded.
+client is only a transit cross-check (mismatch → 400). The **signer**, where a
+mode verifies one, is read from the artifact's signature; a signer typed into
+the form is discarded.
 
-What the server does *not* claim: Authenticode's binding of the signature to the
-exact file bytes uses Windows Installer's stream-hashing rules, which are not
-reproduced off-Windows. That final binding — and revocation — is enforced on the
-endpoint by `WinVerifyTrust` before anything installs. Both gates are required;
-neither substitutes for the other.
+A draft's artifact may be **replaced** (`PUT /agent-releases/{id}/artifact`):
+the hash is recomputed over the new bytes and the release must be re-verified
+to publish. A published release's artifact is frozen — changing it means a new
+draft, a new artifact, a new hash, and a new publish.
 
-A draft's artifact may be **replaced** (`PUT /agent-releases/{id}/artifact`) so
-an existing draft becomes its signed self without a second release: the hash is
-recomputed over the new bytes, because signing changes them. A published
-release's artifact is frozen. Uploading is
+The agent's side is unchanged by the mode. Every downloaded MSI is hashed and
+compared to the SHA-256 the server offered before anything is scheduled; a
+mismatch is never installed. Transport is HTTPS with full TLS validation in
+every mode. Internal deployment does not mean insecure transport. Uploading is
 `Software.Deploy`; viewing and downloading are `Software.View`. The MSI bytes
 live in the same content-addressed store as software packages, keyed by hash —
 the store recomputes the SHA-256 while writing and refuses a mismatch, so a

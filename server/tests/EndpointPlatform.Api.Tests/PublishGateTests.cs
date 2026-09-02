@@ -12,21 +12,25 @@ using Microsoft.Extensions.Options;
 namespace EndpointPlatform.Api.Tests;
 
 /// <summary>
-/// The server-side publish gate, called the way an attacker would call it: over
-/// HTTP, with no dashboard in between.
+/// The server-side publish gate under the Internal trust model, called the way an
+/// attacker would call it: over HTTP, with no dashboard in between.
 /// </summary>
 /// <remarks>
 /// <para>
-/// Three properties, each held at the API rather than in the UI. The hash is the
-/// server's, computed over the bytes it stored, and nothing the client says can
-/// change it. The signer is the server's, read from the artifact's own signature,
-/// and nothing the client types can change it. And publishing re-verifies both
-/// against the bytes on disk at that moment, so a build that was fine at upload
-/// and has since been tampered with is refused too.
+/// Internal is Techsara's deployment: one company, a private network, controlled
+/// machines. Integrity is the server-computed SHA-256 -- re-checked over the bytes
+/// on disk at publish and by the agent at install -- under authorization, audit
+/// and HTTPS. No CA-issued Authenticode signature is required, and none is read.
 /// </para>
 /// <para>
-/// Every signed artifact here is signed by the fixture's in-memory authority, which
-/// the test host alone trusts. See <see cref="AdminApiPostgresFixture.SigningAuthority"/>.
+/// So the gate has three properties, each held at the API. The hash is the
+/// server's and nothing the client says can change it. The bytes on disk must
+/// still match that hash at publish, so a build tampered with after upload is
+/// refused. And a signature, present or absent, makes no difference at all --
+/// which is asserted in both directions, because "not required" must not
+/// quietly mean "still checked". Public-mode behaviour is covered at the
+/// verifier level in <c>ReleasePublishVerifierTests</c> and
+/// <c>AuthenticodeVerifierTests</c>.
 /// </para>
 /// </remarks>
 [Collection(AdminApiPostgresCollection.Name)]
@@ -111,11 +115,16 @@ public sealed class PublishGateTests(AdminApiPostgresFixture fixture)
         (await RowAsync(id)).Sha256.ShouldBe(sha, "stored in the server's canonical lower-case form");
     }
 
-    // ---- signer is the server's ---------------------------------------------
+    // ---- signer metadata is never the client's -------------------------------
 
-    /// <summary>A signer typed into the upload form is discarded; the artifact decides.</summary>
+    /// <summary>
+    /// A signer typed into the upload form is discarded. Under Internal the
+    /// artifact's own signature is not read either, so the recorded signer is null
+    /// whether or not the build happens to be signed. Nothing about who signed a
+    /// build is ever client-controlled metadata.
+    /// </summary>
     [Fact]
-    public async Task A_typed_signer_is_ignored_in_favour_of_the_verified_one()
+    public async Task A_typed_signer_is_ignored_and_no_signer_is_recorded_under_internal()
     {
         using var client = await AdminAsync();
 
@@ -125,28 +134,43 @@ public sealed class PublishGateTests(AdminApiPostgresFixture fixture)
 
         var signed = await IdOf(await client.PostAsync(
             Releases, Form(TestArtifacts.SignedMsi(AdminApiPostgresFixture.SigningAuthority, seed: Seed("7.64.0")), "7.64.0", signer: "CN=Whoever I Say")));
-        (await RowAsync(signed)).SignerSubject.ShouldNotBeNull();
-        (await RowAsync(signed)).SignerSubject!.ShouldContain(AdminApiPostgresFixture.ExpectedSignerSubject);
-        (await RowAsync(signed)).SignerSubject!.ShouldNotContain("Whoever");
+        (await RowAsync(signed)).SignerSubject.ShouldBeNull("Internal does not read the signature, so it records no signer");
     }
 
     // ---- the gate -------------------------------------------------------------
 
+    /// <summary>The policy says what it requires, so the console does not have to guess.</summary>
     [Fact]
-    public async Task An_unsigned_artifact_cannot_be_published()
+    public async Task The_policy_endpoint_reports_internal()
+    {
+        using var client = await AdminAsync();
+
+        var body = await client.GetStringAsync(new Uri("/admin/v1/agent-releases/policy", UriKind.Relative));
+
+        JsonDocument.Parse(body).RootElement.GetProperty("trustMode").GetString().ShouldBe("Internal");
+    }
+
+    /// <summary>Acceptance criterion 1: an unsigned MSI publishes under Internal.</summary>
+    [Fact]
+    public async Task An_unsigned_artifact_publishes_under_internal()
     {
         using var client = await AdminAsync();
         var id = await IdOf(await client.PostAsync(Releases, Form(TestArtifacts.UnsignedMsi(Seed("7.65.0")), "7.65.0")));
 
         var response = await client.PostAsync(Release(id, "publish"), null);
 
-        response.StatusCode.ShouldBe(HttpStatusCode.UnprocessableEntity);
-        (await RowAsync(id)).Status.ShouldBe(AgentReleaseStatus.Draft);
+        response.StatusCode.ShouldBe(HttpStatusCode.NoContent);
+        var row = await RowAsync(id);
+        row.Status.ShouldBe(AgentReleaseStatus.Published);
+        row.SignerSubject.ShouldBeNull();
     }
 
-    /// <summary>Valid signature, trusted chain, right EKU -- wrong publisher.</summary>
+    /// <summary>
+    /// A signature -- even a wrong one -- is irrelevant under Internal. Asserted so
+    /// that "not required" can never quietly regress into "still checked".
+    /// </summary>
     [Fact]
-    public async Task An_artifact_signed_by_an_unexpected_publisher_cannot_be_published()
+    public async Task A_signature_makes_no_difference_under_internal()
     {
         using var client = await AdminAsync();
         using var impostor = TestArtifacts.IssueLeaf(AdminApiPostgresFixture.SigningAuthority, "CN=Not Techsara Ltd");
@@ -154,27 +178,23 @@ public sealed class PublishGateTests(AdminApiPostgresFixture fixture)
 
         var id = await IdOf(await client.PostAsync(Releases, Form(bytes, "7.66.0")));
 
-        // Registered fine, and the real signer is recorded -- so the operator can
-        // see exactly who did sign it -- but it will not publish.
-        (await RowAsync(id)).SignerSubject.ShouldBeNull("only a signer that passes the full check is recorded as the release's signer");
-
-        (await client.PostAsync(Release(id, "publish"), null))
-            .StatusCode.ShouldBe(HttpStatusCode.UnprocessableEntity);
-        (await RowAsync(id)).Status.ShouldBe(AgentReleaseStatus.Draft);
+        (await client.PostAsync(Release(id, "publish"), null)).StatusCode.ShouldBe(HttpStatusCode.NoContent);
+        (await RowAsync(id)).SignerSubject.ShouldBeNull();
     }
 
-    /// <summary>Right publisher, but the certificate is not a code-signing one.</summary>
+    /// <summary>Bytes that are not a Windows Installer package are refused in every mode.</summary>
     [Fact]
-    public async Task An_artifact_signed_with_a_non_code_signing_certificate_cannot_be_published()
+    public async Task An_artifact_that_is_not_an_msi_cannot_be_published()
     {
         using var client = await AdminAsync();
-        using var tls = TestArtifacts.IssueLeaf(AdminApiPostgresFixture.SigningAuthority, AdminApiPostgresFixture.ExpectedSignerSubject, codeSigningEku: false);
-        var bytes = TestArtifacts.SignedMsi(tls, AdminApiPostgresFixture.SigningAuthority.Root, Seed("7.67.0"));
+        var bytes = System.Text.Encoding.ASCII.GetBytes("MZ definitely-an-exe " + Seed("7.67.0") + new string('x', 2048));
 
         var id = await IdOf(await client.PostAsync(Releases, Form(bytes, "7.67.0")));
 
-        (await client.PostAsync(Release(id, "publish"), null))
-            .StatusCode.ShouldBe(HttpStatusCode.UnprocessableEntity);
+        var response = await client.PostAsync(Release(id, "publish"), null);
+        response.StatusCode.ShouldBe(HttpStatusCode.UnprocessableEntity);
+        (await response.Content.ReadAsStringAsync()).ShouldContain("Windows Installer");
+        (await RowAsync(id)).Status.ShouldBe(AgentReleaseStatus.Draft);
     }
 
     /// <summary>
@@ -203,20 +223,20 @@ public sealed class PublishGateTests(AdminApiPostgresFixture fixture)
         (await RowAsync(id)).Status.ShouldBe(AgentReleaseStatus.Draft);
     }
 
-    /// <summary>Everything right: signed by the expected publisher, bytes intact.</summary>
+    /// <summary>Publishing is audited, with the actor, in every mode.</summary>
     [Fact]
-    public async Task A_correctly_signed_artifact_publishes_and_records_its_signer()
+    public async Task Publishing_is_audited()
     {
         using var client = await AdminAsync();
-        var bytes = TestArtifacts.SignedMsi(AdminApiPostgresFixture.SigningAuthority, seed: Seed("7.69.0"));
-        var id = await IdOf(await client.PostAsync(Releases, Form(bytes, "7.69.0")));
+        var id = await IdOf(await client.PostAsync(Releases, Form(TestArtifacts.UnsignedMsi(Seed("7.69.0")), "7.69.0")));
 
         (await client.PostAsync(Release(id, "publish"), null)).StatusCode.ShouldBe(HttpStatusCode.NoContent);
 
-        var row = await RowAsync(id);
-        row.Status.ShouldBe(AgentReleaseStatus.Published);
-        row.SignerSubject.ShouldNotBeNull();
-        row.SignerSubject!.ShouldContain(AdminApiPostgresFixture.ExpectedSignerSubject);
+        await using var db = _fixture.CreateDbContext();
+        var entry = await db.AuditLogEntries.AsNoTracking()
+            .Where(e => e.TargetId == id.ToString() && e.Action == "agent_release.published")
+            .SingleAsync();
+        entry.ActorDisplay.ShouldBe(AdminApiPostgresFixture.ItAdminEmail);
     }
 
     /// <summary>The refusal explains itself without leaking anything about the bytes.</summary>
@@ -224,12 +244,21 @@ public sealed class PublishGateTests(AdminApiPostgresFixture fixture)
     public async Task A_refusal_names_the_requirement_not_the_bytes()
     {
         using var client = await AdminAsync();
-        var id = await IdOf(await client.PostAsync(Releases, Form(TestArtifacts.UnsignedMsi(Seed("7.70.0")), "7.70.0")));
+        var bytes = TestArtifacts.UnsignedMsi(Seed("7.70.0"));
+        var id = await IdOf(await client.PostAsync(Releases, Form(bytes, "7.70.0")));
+        var row = await RowAsync(id);
+
+        var directory = _fixture.Factory.Services.GetRequiredService<IOptions<PackageStorageOptions>>().Value.Directory;
+        var path = Path.Combine(directory, row.Sha256 + ".bin");
+        var stored = await File.ReadAllBytesAsync(path);
+        stored[^1] ^= 0x01;
+        await File.WriteAllBytesAsync(path, stored);
 
         var body = await (await client.PostAsync(Release(id, "publish"), null)).Content.ReadAsStringAsync();
 
-        body.ShouldContain("Authenticode");
         body.ShouldContain("SHA-256");
+        body.Contains("Authenticode", StringComparison.Ordinal)
+            .ShouldBeFalse("Internal refusals never mention a requirement Internal does not have");
         body.ShouldNotContain("0x");
         body.ShouldNotContain("Exception");
     }
@@ -257,9 +286,9 @@ public sealed class PublishGateTests(AdminApiPostgresFixture fixture)
         after.Id.ShouldBe(id, "same release, not a second one");
         after.Version.ShouldBe("7.71.0");
         after.Sha256.ShouldBe(Convert.ToHexStringLower(SHA256.HashData(signed)));
-        after.Sha256.ShouldNotBe(before.Sha256, "signing changes the bytes, so the hash must change with them");
+        after.Sha256.ShouldNotBe(before.Sha256, "new bytes, so the hash must follow them");
         after.ContentSizeBytes.ShouldBe(signed.LongLength);
-        after.SignerSubject.ShouldNotBeNull();
+        after.SignerSubject.ShouldBeNull("Internal reads no signature");
 
         // And now it publishes.
         (await client.PostAsync(Release(id, "publish"), null)).StatusCode.ShouldBe(HttpStatusCode.NoContent);

@@ -3,10 +3,12 @@ import {
   ApiError,
   createAgentRelease,
   downloadAgentRelease,
+  getAgentReleasePolicy,
   getAgentReleases,
   publishAgentRelease,
   revokeAgentRelease,
   type AgentReleaseRow,
+  type AgentReleaseTrustMode,
 } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import { Icon } from '../components/Icon'
@@ -21,6 +23,7 @@ import {
   newestUploaded,
   releaseGap,
   publishWillBeRefused,
+  trustModeLabel,
 } from './agentReleaseView'
 
 /**
@@ -38,6 +41,9 @@ export function AgentReleasesPage() {
   const canManage = hasPermission('software.deploy')
 
   const [releases, setReleases] = useState<AgentReleaseRow[]>([])
+  // Internal until the server says otherwise: the safe assumption is the one
+  // that promises least about signatures.
+  const [trustMode, setTrustMode] = useState<AgentReleaseTrustMode>('Internal')
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -53,7 +59,9 @@ export function AgentReleasesPage() {
 
   const load = useCallback(async () => {
     try {
-      setReleases(await getAgentReleases())
+      const [rows, policy] = await Promise.all([getAgentReleases(), getAgentReleasePolicy()])
+      setReleases(rows)
+      setTrustMode(policy.trustMode)
       setError(null)
     } catch {
       setError('Could not load agent releases.')
@@ -103,8 +111,8 @@ export function AgentReleasesPage() {
     // The server is the gate; this is only a courtesy. An unsigned build is
     // refused server-side whatever is clicked here, so the confirm exists to
     // explain that before the request rather than after it.
-    if (publishWillBeRefused(release)) {
-      window.alert(`${release.version} cannot be published.\n\n${deploymentWarning(release)}`)
+    if (publishWillBeRefused(release, trustMode)) {
+      window.alert(`${release.version} cannot be published.\n\n${deploymentWarning(release, trustMode)}`)
       return
     }
 
@@ -269,12 +277,12 @@ export function AgentReleasesPage() {
           <div className="detail-title" style={{ marginBottom: 10 }}>
             <h1 style={{ fontSize: 26, margin: 0 }}>{latest.version}</h1>
             <span className="badge neutral plain">windows / {latest.architecture}</span>
-            {latest.signerSubject ? (
-              <span className="badge info">Signed: {latest.signerSubject}</span>
-            ) : (
-              // The absence of a signature is a fact worth a badge, not a blank.
-              <span className="badge warn">Unsigned build</span>
-            )}
+            {/* What this build has been verified to be, under the platform's
+                trust model. Under Internal a signature is neither required nor
+                read, so its absence is not a warning -- it is the model. */}
+            <span className={`badge ${latest.signerSubject ? 'info' : 'ok'}`}>
+              {latest.signerSubject ? `Signed: ${latest.signerSubject}` : trustModeLabel(trustMode)}
+            </span>
             <span className="spacer" />
             <button
               type="button"

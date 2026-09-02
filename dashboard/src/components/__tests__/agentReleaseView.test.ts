@@ -9,6 +9,7 @@ import {
   newestUploaded,
   releaseGap,
   publishWillBeRefused,
+  trustModeLabel,
 } from '../../pages/agentReleaseView'
 import {
   eligibleDevices,
@@ -156,24 +157,42 @@ describe('unsigned releases', () => {
     expect(upgradeTargets(device, releases).map((r) => r.version)).not.toContain('1.4.1')
   })
 
-  it('knows the server will refuse to publish an unsigned build', () => {
-    expect(publishWillBeRefused(release({ signerSubject: null }))).toBe(true)
-    expect(publishWillBeRefused(release({ signerSubject: '   ' }))).toBe(true)
-    expect(publishWillBeRefused(release())).toBe(false)
+  /**
+   * Internal is the production model. Signatures are not read, so nothing about
+   * them is a reason to refuse, and the console must not pretend otherwise.
+   */
+  it('under Internal an unsigned draft is publishable and carries no warning', () => {
+    const draft = release({ version: '1.4.1', status: 'Draft', signerSubject: null })
+
+    expect(publishWillBeRefused(draft, 'Internal')).toBe(false)
+    expect(deploymentWarning(draft, 'Internal')).toBeNull()
   })
 
-  /** The wording states the rule the server applies, not a warning the operator can wave through. */
-  it('says an unsigned build will be refused, and what to do instead', () => {
-    const warning = deploymentWarning(release({ version: '1.4.1', status: 'Draft', signerSubject: null }))
+  it('under Public an unsigned draft is refused, with the fix named', () => {
+    const draft = release({ version: '1.4.1', status: 'Draft', signerSubject: null })
 
-    expect(warning).toContain('unsigned')
-    expect(warning).toContain('refuse')
+    expect(publishWillBeRefused(draft, 'Public')).toBe(true)
+    const warning = deploymentWarning(draft, 'Public')
+    expect(warning).toContain('Public')
     expect(warning).toContain('Authenticode-signed')
     expect(warning).not.toContain('hash verification alone')
   })
 
-  it('has nothing to warn about for a signed release', () => {
-    expect(deploymentWarning(release())).toBeNull()
+  it('has nothing to warn about for a signed release in either mode', () => {
+    expect(deploymentWarning(release(), 'Internal')).toBeNull()
+    expect(deploymentWarning(release(), 'Public')).toBeNull()
+    expect(publishWillBeRefused(release(), 'Public')).toBe(false)
+  })
+
+  /** The badge must say what the model is, and must not call an Internal build a problem. */
+  it('describes the trust model accurately', () => {
+    const internal = trustModeLabel('Internal')
+    expect(internal).toContain('Internal release')
+    expect(internal).toContain('SHA-256 verified')
+    expect(internal).toContain('not required')
+    expect(internal).not.toMatch(/warn|cannot|missing/i)
+
+    expect(trustModeLabel('Public')).toContain('Authenticode signature required')
   })
 
   /**

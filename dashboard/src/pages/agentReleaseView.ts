@@ -1,4 +1,4 @@
-import type { AgentReleaseRow } from '../api/client'
+import type { AgentReleaseRow, AgentReleaseTrustMode } from '../api/client'
 import { compareVersions, isSigned } from './agentUpdateView'
 
 /**
@@ -101,36 +101,43 @@ export function describeReleaseGap(
 }
 
 /**
+ * One line describing what a published release has been verified to be, under
+ * the platform's trust mode. Shown beside the version so nobody has to infer the
+ * model from a blank signer column.
+ */
+export function trustModeLabel(mode: AgentReleaseTrustMode): string {
+  return mode === 'Internal'
+    ? 'Internal release · SHA-256 verified · Authenticode certificate not required for company deployment'
+    : 'Public release · SHA-256 verified · Authenticode signature required'
+}
+
+/**
  * What an operator must know before trying to publish this build.
  *
- * Returns null when there is nothing to say. The server is the gate: publishing
- * re-verifies the stored artifact -- Authenticode signature, trusted chain,
- * code-signing certificate, the configured publisher, and the SHA-256 of the
- * bytes on disk -- and refuses anything that fails, whoever is asking. The
- * console does not enforce that; it says it, so the refusal is not a surprise.
- *
- * The signer shown here is the one the server verified from the artifact's own
- * signature. It is never typed in, and "unsigned" means exactly that.
+ * Returns null when there is nothing to say. The server is the gate and its
+ * answer wins; the console only repeats the rule so a refusal is not a surprise.
+ * Under Internal there is nothing to say about signatures at all: they are not
+ * read. Under Public an unsigned draft will be refused, and the fix is a signed
+ * artifact, not a different click.
  */
-export function deploymentWarning(release: AgentReleaseRow): string | null {
-  if (release.status !== 'Published' && !isSigned(release)) {
-    return 'This release is unsigned. The server will refuse to publish it: a release must '
-      + 'be Authenticode-signed by the configured publisher before devices can be offered it. '
-      + 'Replace its artifact with the signed build.'
+export function deploymentWarning(release: AgentReleaseRow, mode: AgentReleaseTrustMode): string | null {
+  if (mode === 'Public' && release.status !== 'Published' && !isSigned(release)) {
+    return 'This release is unsigned. Under the Public trust model the server will refuse to '
+      + 'publish it until its artifact is replaced with a build Authenticode-signed by the '
+      + 'configured publisher.'
   }
 
   return null
 }
 
 /**
- * Whether the server will refuse to publish this release as it stands.
- *
- * Mirrors the one server rule the console can see -- no verified signer -- so the
- * button can explain itself. The server checks more than this, and its answer
- * wins.
+ * Whether the server will refuse to publish this release as it stands, as far as
+ * the console can tell. Internal refuses nothing on grounds the console can see
+ * -- integrity is checked server-side over the stored bytes -- so the button is
+ * always offered and the server's 422, if any, is shown verbatim.
  */
-export function publishWillBeRefused(release: AgentReleaseRow): boolean {
-  return !isSigned(release)
+export function publishWillBeRefused(release: AgentReleaseRow, mode: AgentReleaseTrustMode): boolean {
+  return mode === 'Public' && !isSigned(release)
 }
 
 /**

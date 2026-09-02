@@ -37,6 +37,12 @@ public static class AgentReleaseEndpoints
             .WithName("ListAgentReleases")
             .RequirePermission(Permissions.Software.View);
 
+        // What kind of deployment this is, so the console can say what publishing
+        // requires instead of guessing from a signer column.
+        group.MapGet("/policy", PolicyAsync)
+            .WithName("GetAgentReleasePolicy")
+            .RequirePermission(Permissions.Software.View);
+
         group.MapGet("/latest", LatestAsync)
             .WithName("GetLatestAgentRelease")
             .RequirePermission(Permissions.Software.View);
@@ -72,6 +78,10 @@ public static class AgentReleaseEndpoints
 
         return endpoints;
     }
+
+    /// <summary>The trust mode releases are published under. Not a secret; not tenant-scoped.</summary>
+    private static IResult PolicyAsync(IReleasePublishVerifier verifier) =>
+        Results.Ok(new { trustMode = verifier.Mode.ToString() });
 
     private static async Task<IResult> ListAsync(
         EndpointPlatformDbContext dbContext, CancellationToken cancellationToken)
@@ -253,22 +263,21 @@ public static class AgentReleaseEndpoints
         CancellationToken cancellationToken)
     {
         var actor = AdminActor.Required(httpContext.User);
-        var result = publish
+        var outcome = publish
             ? await releaseService.PublishAsync(releaseId, actor.UserId, actor.Email, actor.OrganizationId, cancellationToken)
             : await releaseService.RevokeAsync(releaseId, actor.UserId, actor.Email, actor.OrganizationId, cancellationToken);
 
-        return result switch
+        return outcome.Result switch
         {
             AgentReleaseActionResult.Success => Results.NoContent(),
             AgentReleaseActionResult.NotFound => Results.NotFound(),
 
             // The publish gate. 422 rather than 409: the release is in a state that
             // allows publishing, but the artifact itself is not acceptable. The
-            // message names the requirement, never the bytes.
+            // reason is the verifier's own -- it names the check that failed under
+            // the configured trust mode, and never the bytes.
             AgentReleaseActionResult.NotVerified => Results.Problem(
-                "The release cannot be published: its artifact did not pass verification. "
-                + "It must be a Windows Installer package Authenticode-signed by the configured "
-                + "publisher, with stored bytes matching its recorded SHA-256.",
+                "The release cannot be published: " + (outcome.Reason ?? "its artifact did not pass verification."),
                 statusCode: StatusCodes.Status422UnprocessableEntity),
             _ => Results.Problem(
                 "The release is not in a state that allows this action.",

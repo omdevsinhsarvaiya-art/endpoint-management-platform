@@ -18,10 +18,22 @@ public enum AgentReleaseActionResult
     /// <summary>A release for this platform/architecture/version already exists.</summary>
     Duplicate,
     /// <summary>
-    /// The artifact failed verification -- unsigned, invalid, untrusted, wrong
-    /// publisher, or its bytes no longer match its hash -- and may not be published.
+    /// The artifact failed verification under the configured trust mode -- missing,
+    /// not an MSI, bytes no longer matching the recorded hash, or (Public mode
+    /// only) an unmet Authenticode requirement -- and may not be published.
     /// </summary>
     NotVerified,
+}
+
+/// <summary>A lifecycle action's result, with the reason when it was refused.</summary>
+/// <param name="Reason">
+/// For <see cref="AgentReleaseActionResult.NotVerified"/>, the verifier's own
+/// description of the failed check -- safe to show an administrator, names the
+/// requirement and never the bytes. Null otherwise.
+/// </param>
+public sealed record AgentReleaseActionOutcome(AgentReleaseActionResult Result, string? Reason)
+{
+    public static AgentReleaseActionOutcome Of(AgentReleaseActionResult result, string? reason = null) => new(result, reason);
 }
 
 /// <summary>
@@ -47,14 +59,14 @@ public enum AgentReleaseActionResult
 public sealed class AgentReleaseService(
     EndpointPlatformDbContext dbContext,
     IPackageContentStore contentStore,
-    IAuthenticodeVerifier authenticode,
+    IReleasePublishVerifier publishVerifier,
     AuditWriter auditWriter,
     TimeProvider timeProvider,
     ILogger<AgentReleaseService> logger)
 {
     private readonly EndpointPlatformDbContext _dbContext = dbContext;
     private readonly IPackageContentStore _contentStore = contentStore;
-    private readonly IAuthenticodeVerifier _authenticode = authenticode;
+    private readonly IReleasePublishVerifier _publishVerifier = publishVerifier;
     private readonly AuditWriter _auditWriter = auditWriter;
     private readonly TimeProvider _timeProvider = timeProvider;
     private readonly ILogger<AgentReleaseService> _logger = logger;
@@ -124,11 +136,12 @@ public sealed class AgentReleaseService(
             return (null, ex.Message);
         }
 
-        // Signer is a fact read from the artifact, recorded only when it verifies.
-        // An unsigned or untrusted draft is still a draft -- registering is not the
-        // consequential act; publishing is, and publishing re-verifies.
+        // The signer is a fact read from the artifact and recorded only when the
+        // trust mode verified one. In Internal mode that is never: the signature is
+        // not consulted, so nothing is recorded. Registering is not the consequential
+        // act either way; publishing is, and publishing re-verifies.
         var verification = await VerifyStoredAsync(release, cancellationToken);
-        release.RecordVerifiedSigner(verification.IsTrusted ? verification.SignerSubject : null);
+        release.RecordVerifiedSigner(verification.SignerSubject);
 
         _dbContext.AgentReleases.Add(release);
 
@@ -152,17 +165,17 @@ public sealed class AgentReleaseService(
         return (release, null);
     }
 
-    public Task<AgentReleaseActionResult> PublishAsync(
+    public Task<AgentReleaseActionOutcome> PublishAsync(
         Guid releaseId, Guid actorId, string actorDisplay, Guid actorOrganizationId,
         CancellationToken cancellationToken = default) =>
         TransitionAsync(releaseId, actorId, actorDisplay, actorOrganizationId, publish: true, cancellationToken);
 
-    public Task<AgentReleaseActionResult> RevokeAsync(
+    public Task<AgentReleaseActionOutcome> RevokeAsync(
         Guid releaseId, Guid actorId, string actorDisplay, Guid actorOrganizationId,
         CancellationToken cancellationToken = default) =>
         TransitionAsync(releaseId, actorId, actorDisplay, actorOrganizationId, publish: false, cancellationToken);
 
-    private async Task<AgentReleaseActionResult> TransitionAsync(
+    private async Task<AgentReleaseActionOutcome> TransitionAsync(
         Guid releaseId, Guid actorId, string actorDisplay, Guid actorOrganizationId, bool publish,
         CancellationToken cancellationToken)
     {
@@ -170,7 +183,7 @@ public sealed class AgentReleaseService(
             .SingleOrDefaultAsync(r => r.Id == releaseId, cancellationToken);
         if (release is null)
         {
-            return AgentReleaseActionResult.NotFound;
+            return AgentReleaseActionOutcome.Of(AgentReleaseActionResult.NotFound);
         }
 
         var before = release.Status.ToString();
@@ -179,15 +192,16 @@ public sealed class AgentReleaseService(
         if (publish && release.Status == AgentReleaseStatus.Draft)
         {
             // The gate. Re-verified now rather than trusted from upload time, because
-            // the artifact on disk, the configured publisher, and the trust store can
-            // all have changed since. What is published is what is checked.
+            // the bytes on disk can have changed since. What is published is what is
+            // checked: existence, MSI shape, and the stored-byte hash in every mode;
+            // Authenticode only where the trust mode calls for it.
             var verification = await VerifyStoredAsync(release, cancellationToken);
             if (!verification.IsTrusted)
             {
                 _logger.LogWarning(
-                    "Refusing to publish agent release {Version}: {Reason}",
-                    release.Version, verification.Describe());
-                return AgentReleaseActionResult.NotVerified;
+                    "Refusing to publish agent release {Version} ({Mode}): {Reason}",
+                    release.Version, verification.Mode, verification.Describe());
+                return AgentReleaseActionOutcome.Of(AgentReleaseActionResult.NotVerified, verification.Describe());
             }
 
             // Keep the recorded signer equal to what was just verified.
@@ -210,7 +224,7 @@ public sealed class AgentReleaseService(
         }
         catch (InvalidOperationException)
         {
-            return AgentReleaseActionResult.Conflict;
+            return AgentReleaseActionOutcome.Of(AgentReleaseActionResult.Conflict);
         }
 
         _auditWriter.Stage(
@@ -227,7 +241,7 @@ public sealed class AgentReleaseService(
         await _dbContext.SaveChangesAsync(cancellationToken);
         _logger.LogInformation(
             "Agent release {Version} {Action} by {Actor}.", release.Version, publish ? "published" : "revoked", actorDisplay);
-        return AgentReleaseActionResult.Success;
+        return AgentReleaseActionOutcome.Of(AgentReleaseActionResult.Success);
     }
 
     /// <summary>The newest published windows/x64 release, or null when none is.</summary>
@@ -258,39 +272,28 @@ public sealed class AgentReleaseService(
     }
 
     /// <summary>
-    /// Everything a release must satisfy before it may be published.
+    /// Everything a release must satisfy before it may be published, under the
+    /// configured trust mode.
     /// </summary>
     /// <remarks>
-    /// In order: the stored bytes exist and still hash to the recorded SHA-256 (a
-    /// tampered or corrupted artifact is caught here, whatever its signature says);
-    /// then the Authenticode checks, which end with the configured publisher. The
-    /// first failure is the answer.
+    /// Reads the bytes from the content store and hands them to
+    /// <see cref="IReleasePublishVerifier"/>, which owns the rules. The service
+    /// contributes only the recorded hash to compare against; it does not decide
+    /// what counts as trusted.
     /// </remarks>
-    public async Task<AuthenticodeVerification> VerifyStoredAsync(
+    public async Task<ReleaseVerification> VerifyStoredAsync(
         AgentRelease release, CancellationToken cancellationToken = default)
     {
         await using var stream = await _contentStore.OpenReadAsync(release.Sha256, cancellationToken);
         if (stream is null)
         {
-            return AuthenticodeVerification.Failed(
-                AuthenticodeFailure.NotAnMsi, "The artifact is missing from storage.");
+            return _publishVerifier.Verify(null, release.Sha256);
         }
 
         using var buffer = new MemoryStream(capacity: (int)Math.Min(release.ContentSizeBytes, int.MaxValue));
         await stream.CopyToAsync(buffer, cancellationToken);
-        var bytes = buffer.GetBuffer().AsMemory(0, (int)buffer.Length);
 
-        var actual = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(bytes.Span));
-        if (!string.Equals(actual, release.Sha256, StringComparison.Ordinal))
-        {
-            _logger.LogError(
-                "Agent release {Version} stored artifact hashes to {Actual}, not the recorded {Recorded}.",
-                release.Version, actual, release.Sha256);
-            return AuthenticodeVerification.Failed(
-                AuthenticodeFailure.InvalidSignature, "The stored artifact does not match its recorded SHA-256.");
-        }
-
-        return _authenticode.Verify(bytes);
+        return _publishVerifier.Verify(buffer.GetBuffer().AsMemory(0, (int)buffer.Length), release.Sha256);
     }
 
     /// <summary>
@@ -342,7 +345,7 @@ public sealed class AgentReleaseService(
         }
 
         var verification = await VerifyStoredAsync(release, cancellationToken);
-        release.RecordVerifiedSigner(verification.IsTrusted ? verification.SignerSubject : null);
+        release.RecordVerifiedSigner(verification.SignerSubject);
 
         _auditWriter.Stage(
             actorOrganizationId, AuditActorType.PlatformUser, actorId, actorDisplay,

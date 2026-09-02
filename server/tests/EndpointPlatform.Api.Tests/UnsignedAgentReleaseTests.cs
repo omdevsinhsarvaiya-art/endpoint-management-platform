@@ -21,13 +21,12 @@ namespace EndpointPlatform.Api.Tests;
 /// the two must stay clearly separate.
 /// </para>
 /// <para>
-/// These tests once recorded an uncomfortable fact: nothing on the server refused
-/// to publish an unsigned release, so Draft status was the only thing between an
-/// unsigned build and every device. That gap is now closed. Publishing re-verifies
-/// the stored artifact -- hash, Authenticode signature, chain, code-signing EKU and
-/// the configured publisher -- and refuses anything that fails, whoever is asking.
-/// The tests below pin both halves: registering an unsigned build stays harmless,
-/// and publishing one is impossible.
+/// Under the Internal trust model an unsigned build is the normal case: Techsara
+/// distributes to its own machines on a private network, integrity is the
+/// server-computed SHA-256 re-checked at publish and at install, and no CA-issued
+/// Authenticode signature is required or read. What stands between a build and
+/// every device is Draft status, authorization, and the stored-byte hash check --
+/// each pinned below. A signed build is treated identically.
 /// </para>
 /// </remarks>
 [Collection(AdminApiPostgresCollection.Name)]
@@ -210,38 +209,33 @@ public sealed class UnsignedAgentReleaseTests(AdminApiPostgresFixture fixture)
     // ---- where the real boundary is ---------------------------------------
 
     /// <summary>
-    /// The gate. This test previously asserted the opposite -- that an unsigned
-    /// build could be published and immediately targeted -- and was kept on purpose
-    /// as a record of the gap. It now asserts the gap is closed, and its old body
-    /// is the reason the gate exists.
+    /// The Internal flow end to end: an unsigned build is a Draft (not a target),
+    /// publishes without a signature, and only then becomes a target.
     /// </summary>
     [Fact]
-    public async Task An_unsigned_release_cannot_be_published_and_so_never_becomes_deployable()
+    public async Task An_unsigned_release_is_not_deployable_until_published_and_then_is()
     {
         using var client = await AdminAsync();
 
         var (releaseId, _) = await UploadAsync(client, "8.44.0");
         var deviceId = await SeedDeviceAsync("1.0.0");
 
-        // Registering was fine; publishing is refused, with a reason.
-        var publish = await client.PostAsync(Release(releaseId, "publish"), null);
-        publish.StatusCode.ShouldBe(HttpStatusCode.UnprocessableEntity);
-        (await publish.Content.ReadAsStringAsync()).ShouldContain("verification");
-
-        // Still a draft, still not a target.
-        await using (var db = _fixture.CreateDbContext())
-        {
-            (await db.AgentReleases.AsNoTracking().SingleAsync(r => r.Id == releaseId))
-                .Status.ShouldBe(Domain.Agents.AgentReleaseStatus.Draft);
-        }
-
+        // Draft: refused as a target.
         (await client.PostAsJsonAsync(UpdateAgent(deviceId), new { releaseId }))
             .StatusCode.ShouldBe(HttpStatusCode.Conflict);
+
+        // Publishing needs no signature under Internal.
+        (await client.PostAsync(Release(releaseId, "publish"), null))
+            .StatusCode.ShouldBe(HttpStatusCode.NoContent);
+
+        // Published: a target.
+        (await client.PostAsJsonAsync(UpdateAgent(deviceId), new { releaseId }))
+            .StatusCode.ShouldBe(HttpStatusCode.Accepted);
     }
 
-    /// <summary>A signed build by the expected publisher publishes and deploys.</summary>
+    /// <summary>A signed build is treated exactly like an unsigned one under Internal.</summary>
     [Fact]
-    public async Task A_signed_release_by_the_expected_publisher_publishes_and_becomes_deployable()
+    public async Task A_signed_release_publishes_and_becomes_deployable_the_same_way()
     {
         using var client = await AdminAsync();
 
@@ -405,12 +399,12 @@ public sealed class UnsignedAgentReleaseTests(AdminApiPostgresFixture fixture)
     }
 
     /// <summary>
-    /// The listing reports the signer the server verified. A signer typed into the
-    /// upload is ignored: an unsigned artifact stays unsigned whatever the form said,
-    /// and a signed one is attributed to its actual certificate.
+    /// The listing never carries a typed signer. Under Internal it carries no signer
+    /// at all -- the signature is not read -- so an unsigned and a signed artifact
+    /// list identically, and neither can be dressed up by the upload form.
     /// </summary>
     [Fact]
-    public async Task The_listing_reports_the_verified_signer_never_a_typed_one()
+    public async Task The_listing_never_reports_a_typed_signer()
     {
         using var client = await AdminAsync();
 
@@ -428,7 +422,6 @@ public sealed class UnsignedAgentReleaseTests(AdminApiPostgresFixture fixture)
                     : e.GetProperty("signerSubject").GetString());
 
         rows[unsignedId.ToString()].ShouldBeNull("a typed signer on an unsigned artifact is discarded");
-        rows[signedId.ToString()].ShouldNotBeNull();
-        rows[signedId.ToString()]!.ShouldContain(AdminApiPostgresFixture.ExpectedSignerSubject);
+        rows[signedId.ToString()].ShouldBeNull("Internal reads no signature, so none is reported");
     }
 }

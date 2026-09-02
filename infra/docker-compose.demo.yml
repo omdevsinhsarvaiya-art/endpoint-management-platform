@@ -124,9 +124,14 @@ services:
       ENDPOINTPLATFORM_Cors__AllowedOrigins__0: ${PUBLIC_ORIGIN:?set PUBLIC_ORIGIN in infra/.env, e.g. https://demo.example.com}
 
       ENDPOINTPLATFORM_PackageStorage__Directory: /var/lib/endpoint-platform/packages
-      # Publisher every published agent build must be Authenticode-signed by,
-      # matched as a substring of the signing certificate's subject. Leave unset
-      # and no release can be published: fail closed, never "any signer will do".
+      # Release trust model. Internal (the default) is a company deployment on a
+      # private network: integrity is the server-computed SHA-256, re-checked at
+      # publish and by the agent at install, over HTTPS, under authorization and
+      # audit -- no CA-issued Authenticode signature is required or checked.
+      # Public additionally requires an Authenticode signature by the publisher
+      # below, and refuses to start without one configured.
+      ENDPOINTPLATFORM_AgentReleases__TrustMode: ${AGENT_RELEASE_TRUST_MODE:-Internal}
+      # Public mode only: substring of the signing certificate's subject.
       ENDPOINTPLATFORM_AgentReleases__ExpectedSignerSubject: ${AGENT_RELEASE_SIGNER_SUBJECT:-}
       # Admin API only. The Agent API is deliberately not given this key.
       ENDPOINTPLATFORM_RecoveryEscrow__Key: ${RECOVERY_ESCROW_KEY:?set RECOVERY_ESCROW_KEY in infra/.env}

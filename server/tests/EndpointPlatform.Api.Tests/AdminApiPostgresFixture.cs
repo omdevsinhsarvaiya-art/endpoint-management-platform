@@ -191,21 +191,18 @@ public sealed class AdminApiPostgresFixture : IAsyncLifetime
     }
 
     /// <summary>
-    /// The publisher every published agent release must be signed by, in this host.
+    /// The subject the fixture authority signs with. Retained for tests that build
+    /// signed artifacts; under the Internal trust mode this host runs in, no test
+    /// needs a signature to publish and the signer is never read.
     /// </summary>
-    /// <remarks>
-    /// Matches the leaf subject <see cref="TestArtifacts.CreateAuthority"/> issues by
-    /// default, so a test that wants a publishable artifact signs with
-    /// <see cref="SigningAuthority"/> and nothing more; a test that wants a refused
-    /// one signs with a different subject or a different authority.
-    /// </remarks>
     public const string ExpectedSignerSubject = "CN=Techsara Test Signing";
 
     /// <summary>
-    /// One throwaway certificate authority for the whole fixture. Generated in
-    /// memory at construction, trusted only by the test host, discarded at the end.
-    /// Nothing produced with it could pass a production publish gate, which runs
-    /// under system trust.
+    /// One throwaway certificate authority for the whole fixture, generated in
+    /// memory and discarded at the end. Used only to produce signed artifacts for
+    /// tests that want to prove a signature makes no difference under Internal.
+    /// The host does not trust it -- it runs the production default, which trusts
+    /// nothing and consults no signature.
     /// </summary>
     public static TestArtifacts.Authority SigningAuthority { get; } = TestArtifacts.CreateAuthority();
 
@@ -219,17 +216,9 @@ public sealed class AdminApiPostgresFixture : IAsyncLifetime
             builder.UseSetting("Redis:InstanceName", "endpointplatform:adminapitest:");
             builder.UseSetting("Cors:AllowedOrigins:0", "http://localhost:5173");
 
-            // The publish gate needs a configured publisher and a trust anchor. The
-            // anchor is the fixture's in-memory authority, installed by replacing
-            // the chain policy -- the only seam that widens trust, and it exists
-            // nowhere in production configuration.
-            builder.UseSetting("AgentReleases:ExpectedSignerSubject", ExpectedSignerSubject);
-            builder.ConfigureTestServices(services =>
-            {
-                services.RemoveAll<IAuthenticodeChainPolicy>();
-                services.AddSingleton<IAuthenticodeChainPolicy>(
-                    new TestArtifacts.TrustingChainPolicy(SigningAuthority.Root));
-            });
+            // Deliberately no AgentReleases settings: the host runs the production
+            // default, Internal, with no publisher configured and system trust
+            // untouched. That is the configuration the gate must publish under.
 
         // Mandatory for the Admin API since recovery-key escrow shipped: the
         // options are validated on start, so without a key the host refuses to

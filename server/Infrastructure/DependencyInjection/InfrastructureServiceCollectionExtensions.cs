@@ -92,10 +92,15 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddOptions<Security.SecretProtectionOptions>()
             .Bind(configuration.GetSection(Security.SecretProtectionOptions.SectionName));
 
-        // Not validated on start on purpose: an unset publisher must not stop the
-        // host, it must stop publishing. The verifier refuses in that case.
+        // Internal (the default) needs nothing configured. Public without a
+        // publisher is a gate with nothing to compare against, and is refused at
+        // startup rather than discovered at the first publish.
         services.AddOptions<Agents.AgentReleaseOptions>()
-            .Bind(configuration.GetSection(Agents.AgentReleaseOptions.SectionName));
+            .Bind(configuration.GetSection(Agents.AgentReleaseOptions.SectionName))
+            .Validate(o => o.IsValid,
+                "AgentReleases:TrustMode is Public but AgentReleases:ExpectedSignerSubject is not set. "
+                + "Public mode requires the publisher every release must be signed by.")
+            .ValidateOnStart();
 
 
         return services;
@@ -197,6 +202,10 @@ public static class InfrastructureServiceCollectionExtensions
         // in-memory CA; nothing registers a wider policy in production.
         services.AddSingleton<Agents.IAuthenticodeChainPolicy, Agents.SystemTrustChainPolicy>();
         services.AddSingleton<Agents.IAuthenticodeVerifier, Agents.AuthenticodeVerifier>();
+
+        // The publish gate. Owns the trust mode; consults the Authenticode verifier
+        // above only in Public mode.
+        services.AddSingleton<Agents.IReleasePublishVerifier, Agents.ReleasePublishVerifier>();
         services.AddScoped<Peripherals.UsbService>();
         services.AddScoped<Peripherals.UsbReadService>();
         services.AddScoped<Identity.LocalAdminElevationService>();

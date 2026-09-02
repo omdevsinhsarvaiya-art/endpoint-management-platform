@@ -1473,6 +1473,18 @@ export function getAgentReleases(): Promise<AgentReleaseRow[]> {
   return request<AgentReleaseRow[]>('/admin/v1/agent-releases/')
 }
 
+/**
+ * The trust model releases are published under. Platform-wide, not per release.
+ * Internal: server-computed SHA-256, re-checked at publish and at install, over
+ * HTTPS, under authorization -- no Authenticode certificate required. Public:
+ * additionally an Authenticode signature by the configured publisher.
+ */
+export type AgentReleaseTrustMode = 'Internal' | 'Public'
+
+export function getAgentReleasePolicy(): Promise<{ trustMode: AgentReleaseTrustMode }> {
+  return request<{ trustMode: AgentReleaseTrustMode }>('/admin/v1/agent-releases/policy')
+}
+
 export function getLatestAgentRelease(): Promise<LatestAgentRelease> {
   return request<LatestAgentRelease>('/admin/v1/agent-releases/latest')
 }
