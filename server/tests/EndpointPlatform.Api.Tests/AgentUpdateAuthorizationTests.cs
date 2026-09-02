@@ -6,6 +6,7 @@ using EndpointPlatform.Domain.Devices;
 using EndpointPlatform.Domain.Enrollment;
 using EndpointPlatform.Domain.Identity;
 using EndpointPlatform.Infrastructure.Security;
+using EndpointPlatform.Infrastructure.Tests.Agents;
 using Microsoft.EntityFrameworkCore;
 
 namespace EndpointPlatform.Api.Tests;
@@ -117,8 +118,10 @@ public sealed class AgentUpdateAuthorizationTests(AdminApiPostgresFixture fixtur
     /// <summary>Uploads a draft release. Mirrors AgentReleaseEndpointTests exactly.</summary>
     private async Task<Guid> CreateDraftAsync(HttpClient client, string version)
     {
-        var bytes = System.Text.Encoding.UTF8.GetBytes(
-            $"fake-msi-{version}-{Guid.CreateVersion7():N}-" + new string('x', 2048));
+        // Signed by the fixture authority: most callers go on to publish, and the
+        // publish gate refuses anything else.
+        var bytes = TestArtifacts.SignedMsi(
+            AdminApiPostgresFixture.SigningAuthority, seed: $"{version}-{Guid.CreateVersion7():N}");
 
         var file = new ByteArrayContent(bytes);
         file.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");

@@ -6,6 +6,7 @@ using EndpointPlatform.Domain.Devices;
 using EndpointPlatform.Domain.Enrollment;
 using EndpointPlatform.Domain.Identity;
 using EndpointPlatform.Infrastructure.Security;
+using EndpointPlatform.Infrastructure.Tests.Agents;
 using Microsoft.EntityFrameworkCore;
 
 namespace EndpointPlatform.Api.Tests;
@@ -20,13 +21,13 @@ namespace EndpointPlatform.Api.Tests;
 /// the two must stay clearly separate.
 /// </para>
 /// <para>
-/// These tests record the platform behaviour as it actually is, including the part
-/// that is uncomfortable: <b>nothing on the server refuses to publish an unsigned
-/// release</b>, and the agent installs a published unsigned build on hash
-/// verification alone. That is a deliberate documented stance rather than an
-/// oversight, but it means Draft status is the only thing standing between an
-/// unsigned build and every device -- so these tests pin the boundary at exactly
-/// that line, rather than asserting a signing gate that does not exist.
+/// These tests once recorded an uncomfortable fact: nothing on the server refused
+/// to publish an unsigned release, so Draft status was the only thing between an
+/// unsigned build and every device. That gap is now closed. Publishing re-verifies
+/// the stored artifact -- hash, Authenticode signature, chain, code-signing EKU and
+/// the configured publisher -- and refuses anything that fails, whoever is asking.
+/// The tests below pin both halves: registering an unsigned build stays harmless,
+/// and publishing one is impossible.
 /// </para>
 /// </remarks>
 [Collection(AdminApiPostgresCollection.Name)]
@@ -74,12 +75,19 @@ public sealed class UnsignedAgentReleaseTests(AdminApiPostgresFixture fixture)
         return _fixture.CreateClientFor(token);
     }
 
-    /// <summary>Uploads a release, optionally naming a signer. Returns id and true SHA-256.</summary>
+    /// <summary>
+    /// Uploads a release. <paramref name="signed"/> selects an artifact signed by
+    /// the fixture authority; otherwise an unsigned MSI-shaped file. A typed
+    /// <paramref name="signerSubject"/> is still sent, to prove the server ignores it.
+    /// Returns id and the true SHA-256 of what was sent.
+    /// </summary>
     private static async Task<(Guid Id, string Sha256)> UploadAsync(
-        HttpClient client, string version, string? signerSubject = null)
+        HttpClient client, string version, string? signerSubject = null, bool signed = false)
     {
-        var bytes = System.Text.Encoding.UTF8.GetBytes(
-            $"fake-msi-{version}-{Guid.CreateVersion7():N}-" + new string('x', 2048));
+        var seed = $"{version}-{Guid.CreateVersion7():N}";
+        var bytes = signed
+            ? TestArtifacts.SignedMsi(AdminApiPostgresFixture.SigningAuthority, seed: seed)
+            : TestArtifacts.UnsignedMsi(seed);
 
         var sha256 = Convert.ToHexStringLower(SHA256.HashData(bytes));
 
@@ -202,43 +210,58 @@ public sealed class UnsignedAgentReleaseTests(AdminApiPostgresFixture fixture)
     // ---- where the real boundary is ---------------------------------------
 
     /// <summary>
-    /// Recorded because it is the load-bearing fact, not because it is desirable.
+    /// The gate. This test previously asserted the opposite -- that an unsigned
+    /// build could be published and immediately targeted -- and was kept on purpose
+    /// as a record of the gap. It now asserts the gap is closed, and its old body
+    /// is the reason the gate exists.
     /// </summary>
-    /// <remarks>
-    /// The server applies no signing requirement to publishing, and the agent
-    /// installs a published unsigned release after verifying its SHA-256 only,
-    /// logging a warning. So Draft status is the entire safeguard. If a signing
-    /// gate is ever added, this test should fail and be replaced -- deliberately,
-    /// rather than a console quietly implying a protection that was never there.
-    /// </remarks>
     [Fact]
-    public async Task Publishing_is_what_makes_a_release_deployable_and_signing_does_not_gate_it()
+    public async Task An_unsigned_release_cannot_be_published_and_so_never_becomes_deployable()
     {
         using var client = await AdminAsync();
 
         var (releaseId, _) = await UploadAsync(client, "8.44.0");
         var deviceId = await SeedDeviceAsync("1.0.0");
 
-        // Before publishing: refused.
+        // Registering was fine; publishing is refused, with a reason.
+        var publish = await client.PostAsync(Release(releaseId, "publish"), null);
+        publish.StatusCode.ShouldBe(HttpStatusCode.UnprocessableEntity);
+        (await publish.Content.ReadAsStringAsync()).ShouldContain("verification");
+
+        // Still a draft, still not a target.
+        await using (var db = _fixture.CreateDbContext())
+        {
+            (await db.AgentReleases.AsNoTracking().SingleAsync(r => r.Id == releaseId))
+                .Status.ShouldBe(Domain.Agents.AgentReleaseStatus.Draft);
+        }
+
         (await client.PostAsJsonAsync(UpdateAgent(deviceId), new { releaseId }))
             .StatusCode.ShouldBe(HttpStatusCode.Conflict);
+    }
 
-        // Publishing an unsigned build succeeds -- there is no signing gate.
+    /// <summary>A signed build by the expected publisher publishes and deploys.</summary>
+    [Fact]
+    public async Task A_signed_release_by_the_expected_publisher_publishes_and_becomes_deployable()
+    {
+        using var client = await AdminAsync();
+
+        var (releaseId, _) = await UploadAsync(client, "8.55.0", signed: true);
+        var deviceId = await SeedDeviceAsync("1.0.0");
+
         (await client.PostAsync(Release(releaseId, "publish"), null))
             .StatusCode.ShouldBe(HttpStatusCode.NoContent);
 
-        // ...and it immediately becomes targetable.
         (await client.PostAsJsonAsync(UpdateAgent(deviceId), new { releaseId }))
             .StatusCode.ShouldBe(HttpStatusCode.Accepted);
     }
 
     /// <summary>Revoking an unsigned release withdraws it like any other.</summary>
     [Fact]
-    public async Task A_revoked_unsigned_release_stops_being_deployable()
+    public async Task A_revoked_release_stops_being_deployable()
     {
         using var client = await AdminAsync();
 
-        var (releaseId, _) = await UploadAsync(client, "8.45.0");
+        var (releaseId, _) = await UploadAsync(client, "8.45.0", signed: true);
         (await client.PostAsync(Release(releaseId, "publish"), null)).EnsureSuccessStatusCode();
         (await client.PostAsync(Release(releaseId, "revoke"), null)).EnsureSuccessStatusCode();
 
@@ -263,7 +286,7 @@ public sealed class UnsignedAgentReleaseTests(AdminApiPostgresFixture fixture)
     {
         using var client = await AdminAsync();
 
-        var (releaseId, _) = await UploadAsync(client, "8.46.0", "CN=Example Corp");
+        var (releaseId, _) = await UploadAsync(client, "8.46.0", signed: true);
         (await client.PostAsync(Release(releaseId, "publish"), null)).EnsureSuccessStatusCode();
 
         var deviceId = await SeedDeviceAsync("8.47.0");
@@ -319,7 +342,7 @@ public sealed class UnsignedAgentReleaseTests(AdminApiPostgresFixture fixture)
     {
         using var client = await AdminAsync();
 
-        var (releaseId, sha256) = await UploadAsync(client, "8.51.0");
+        var (releaseId, sha256) = await UploadAsync(client, "8.51.0", signed: true);
         (await client.PostAsync(Release(releaseId, "publish"), null)).EnsureSuccessStatusCode();
 
         var response = await client.GetAsync(Release(releaseId, "download"));
@@ -381,14 +404,18 @@ public sealed class UnsignedAgentReleaseTests(AdminApiPostgresFixture fixture)
             .StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
     }
 
-    /// <summary>The listing carries the signer as reported, null included.</summary>
+    /// <summary>
+    /// The listing reports the signer the server verified. A signer typed into the
+    /// upload is ignored: an unsigned artifact stays unsigned whatever the form said,
+    /// and a signed one is attributed to its actual certificate.
+    /// </summary>
     [Fact]
-    public async Task The_listing_reports_signed_and_unsigned_releases_distinguishably()
+    public async Task The_listing_reports_the_verified_signer_never_a_typed_one()
     {
         using var client = await AdminAsync();
 
-        var (unsignedId, _) = await UploadAsync(client, "8.48.0");
-        var (signedId, _) = await UploadAsync(client, "8.49.0", "CN=Example Corp");
+        var (unsignedId, _) = await UploadAsync(client, "8.48.0", signerSubject: "CN=Example Corp");
+        var (signedId, _) = await UploadAsync(client, "8.49.0", signed: true);
 
         var body = await client.GetStringAsync(new Uri("/admin/v1/agent-releases/", UriKind.Relative));
         using var document = System.Text.Json.JsonDocument.Parse(body);
@@ -400,7 +427,8 @@ public sealed class UnsignedAgentReleaseTests(AdminApiPostgresFixture fixture)
                     ? null
                     : e.GetProperty("signerSubject").GetString());
 
-        rows[unsignedId.ToString()].ShouldBeNull();
-        rows[signedId.ToString()].ShouldBe("CN=Example Corp");
+        rows[unsignedId.ToString()].ShouldBeNull("a typed signer on an unsigned artifact is discarded");
+        rows[signedId.ToString()].ShouldNotBeNull();
+        rows[signedId.ToString()]!.ShouldContain(AdminApiPostgresFixture.ExpectedSignerSubject);
     }
 }

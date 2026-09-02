@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using EndpointPlatform.Domain.Devices;
 using EndpointPlatform.Domain.Enrollment;
+using EndpointPlatform.Infrastructure.Tests.Agents;
 using Microsoft.EntityFrameworkCore;
 
 namespace EndpointPlatform.Api.Tests;
@@ -21,10 +22,14 @@ public sealed class AgentReleaseEndpointTests(AdminApiPostgresFixture fixture)
 
     private static readonly Uri Releases = new("/admin/v1/agent-releases", UriKind.Relative);
 
-    /// <summary>Fake MSI bytes; content identity is the hash, not the format.</summary>
+    /// <summary>
+    /// An MSI-shaped artifact signed by the fixture authority, so it passes the
+    /// publish gate. The seed is folded into a second stream so each call yields
+    /// distinct bytes and therefore a distinct content address.
+    /// </summary>
     private static (byte[] Bytes, string Sha256) Content(string seed)
     {
-        var bytes = System.Text.Encoding.UTF8.GetBytes($"fake-msi-{seed}-" + new string('x', 2048));
+        var bytes = TestArtifacts.SignedMsi(AdminApiPostgresFixture.SigningAuthority, seed: seed);
         return (bytes, Convert.ToHexStringLower(SHA256.HashData(bytes)));
     }
 

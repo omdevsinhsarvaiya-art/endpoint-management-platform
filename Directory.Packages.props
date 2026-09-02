@@ -63,6 +63,7 @@
   <ItemGroup Label="Windows agent">
     <PackageVersion Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.11" />
     <PackageVersion Include="System.Management" Version="10.0.11" />
+    <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="10.0.11" />
     <PackageVersion Include="System.Security.Cryptography.ProtectedData" Version="10.0.11" />
     <PackageVersion Include="System.DirectoryServices.AccountManagement" Version="10.0.11" />
     <PackageVersion Include="System.ServiceProcess.ServiceController" Version="10.0.11" />

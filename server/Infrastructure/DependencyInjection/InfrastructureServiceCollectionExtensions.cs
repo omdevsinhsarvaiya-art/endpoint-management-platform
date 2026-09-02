@@ -92,6 +92,11 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddOptions<Security.SecretProtectionOptions>()
             .Bind(configuration.GetSection(Security.SecretProtectionOptions.SectionName));
 
+        // Not validated on start on purpose: an unset publisher must not stop the
+        // host, it must stop publishing. The verifier refuses in that case.
+        services.AddOptions<Agents.AgentReleaseOptions>()
+            .Bind(configuration.GetSection(Agents.AgentReleaseOptions.SectionName));
+
 
         return services;
     }
@@ -188,6 +193,10 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<Software.SoftwarePackageService>();
         services.AddScoped<Drivers.DriverPackageService>();
         services.AddScoped<Agents.AgentReleaseService>();
+        // System trust only. The chain policy is a seam for tests to trust an
+        // in-memory CA; nothing registers a wider policy in production.
+        services.AddSingleton<Agents.IAuthenticodeChainPolicy, Agents.SystemTrustChainPolicy>();
+        services.AddSingleton<Agents.IAuthenticodeVerifier, Agents.AuthenticodeVerifier>();
         services.AddScoped<Peripherals.UsbService>();
         services.AddScoped<Peripherals.UsbReadService>();
         services.AddScoped<Identity.LocalAdminElevationService>();

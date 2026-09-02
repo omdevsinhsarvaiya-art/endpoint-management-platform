@@ -1,13 +1,18 @@
 ﻿using System.Net.Http.Json;
 using EndpointPlatform.Domain.Authorization;
 using EndpointPlatform.Domain.Identity;
+using EndpointPlatform.Infrastructure.Agents;
 using EndpointPlatform.Infrastructure.Persistence;
 using EndpointPlatform.Infrastructure.Persistence.Interceptors;
 using EndpointPlatform.Infrastructure.Persistence.Seeding;
 using EndpointPlatform.Infrastructure.Security;
+using EndpointPlatform.Infrastructure.Tests.Agents;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -185,6 +190,25 @@ public sealed class AdminApiPostgresFixture : IAsyncLifetime
         return client;
     }
 
+    /// <summary>
+    /// The publisher every published agent release must be signed by, in this host.
+    /// </summary>
+    /// <remarks>
+    /// Matches the leaf subject <see cref="TestArtifacts.CreateAuthority"/> issues by
+    /// default, so a test that wants a publishable artifact signs with
+    /// <see cref="SigningAuthority"/> and nothing more; a test that wants a refused
+    /// one signs with a different subject or a different authority.
+    /// </remarks>
+    public const string ExpectedSignerSubject = "CN=Techsara Test Signing";
+
+    /// <summary>
+    /// One throwaway certificate authority for the whole fixture. Generated in
+    /// memory at construction, trusted only by the test host, discarded at the end.
+    /// Nothing produced with it could pass a production publish gate, which runs
+    /// under system trust.
+    /// </summary>
+    public static TestArtifacts.Authority SigningAuthority { get; } = TestArtifacts.CreateAuthority();
+
     private sealed class AdminApiTestFactory(string connectionString, string redisConnectionString) : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -194,6 +218,18 @@ public sealed class AdminApiPostgresFixture : IAsyncLifetime
             builder.UseSetting("Redis:ConnectionString", redisConnectionString);
             builder.UseSetting("Redis:InstanceName", "endpointplatform:adminapitest:");
             builder.UseSetting("Cors:AllowedOrigins:0", "http://localhost:5173");
+
+            // The publish gate needs a configured publisher and a trust anchor. The
+            // anchor is the fixture's in-memory authority, installed by replacing
+            // the chain policy -- the only seam that widens trust, and it exists
+            // nowhere in production configuration.
+            builder.UseSetting("AgentReleases:ExpectedSignerSubject", ExpectedSignerSubject);
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<IAuthenticodeChainPolicy>();
+                services.AddSingleton<IAuthenticodeChainPolicy>(
+                    new TestArtifacts.TrustingChainPolicy(SigningAuthority.Root));
+            });
 
         // Mandatory for the Admin API since recovery-key escrow shipped: the
         // options are validated on start, so without a key the host refuses to

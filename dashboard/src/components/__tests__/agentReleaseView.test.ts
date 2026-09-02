@@ -8,7 +8,7 @@ import {
   newestUpdateEligible,
   newestUploaded,
   releaseGap,
-  requiresUnsignedAcknowledgement,
+  publishWillBeRefused,
 } from '../../pages/agentReleaseView'
 import {
   eligibleDevices,
@@ -156,24 +156,20 @@ describe('unsigned releases', () => {
     expect(upgradeTargets(device, releases).map((r) => r.version)).not.toContain('1.4.1')
   })
 
-  it('requires an explicit acknowledgement before an unsigned build is published', () => {
-    expect(requiresUnsignedAcknowledgement(release({ signerSubject: null }))).toBe(true)
-    expect(requiresUnsignedAcknowledgement(release({ signerSubject: '   ' }))).toBe(true)
-    expect(requiresUnsignedAcknowledgement(release())).toBe(false)
+  it('knows the server will refuse to publish an unsigned build', () => {
+    expect(publishWillBeRefused(release({ signerSubject: null }))).toBe(true)
+    expect(publishWillBeRefused(release({ signerSubject: '   ' }))).toBe(true)
+    expect(publishWillBeRefused(release())).toBe(false)
   })
 
-  it('says what publishing an unsigned build would actually do', () => {
+  /** The wording states the rule the server applies, not a warning the operator can wave through. */
+  it('says an unsigned build will be refused, and what to do instead', () => {
     const warning = deploymentWarning(release({ version: '1.4.1', status: 'Draft', signerSubject: null }))
 
     expect(warning).toContain('unsigned')
-    expect(warning).toContain('hash verification alone')
-  })
-
-  it('keeps saying so once it is published', () => {
-    const warning = deploymentWarning(release({ status: 'Published', signerSubject: null }))
-
-    expect(warning).toContain('unsigned')
-    expect(warning).toContain('SHA-256')
+    expect(warning).toContain('refuse')
+    expect(warning).toContain('Authenticode-signed')
+    expect(warning).not.toContain('hash verification alone')
   })
 
   it('has nothing to warn about for a signed release', () => {
@@ -181,15 +177,15 @@ describe('unsigned releases', () => {
   })
 
   /**
-   * Deliberately not narrowed by signature. The platform will queue and install
-   * an unsigned published release; a console that hid that would imply a
-   * protection which does not exist. The signature is surfaced, not enforced here.
+   * A published release is, by construction, one the server verified. The console
+   * still computes eligibility from status alone -- the server is the gate and has
+   * already applied it -- so a Published row with no signer (which the gate no
+   * longer produces) would still be treated as the server said, not second-guessed.
    */
-  it('does not pretend an unsigned published release is undeployable', () => {
+  it('trusts the server on what is published', () => {
     const releases = [release({ version: '1.4.1', signerSubject: null })]
 
     expect(newestUpdateEligible(releases)?.version).toBe('1.4.1')
-    expect(deploymentWarning(releases[0])).not.toBeNull()
   })
 })
 

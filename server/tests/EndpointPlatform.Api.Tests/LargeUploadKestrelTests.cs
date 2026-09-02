@@ -84,9 +84,9 @@ public sealed class LargeUploadKestrelTests(AdminApiPostgresFixture fixture)
         // And the platform serves back exactly the bytes it accepted.
         var releaseId = (await create.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>())
             .GetProperty("releaseId").GetString()!;
-        (await client.PostAsync(new Uri($"/admin/v1/agent-releases/{releaseId}/publish", UriKind.Relative), null))
-            .EnsureSuccessStatusCode();
-
+        // Not published: this test is about the request-body limit and the byte
+        // round-trip, and a draft is downloadable by an administrator. Publishing
+        // would also be refused, correctly -- these bytes carry no signature.
         var downloaded = await client.GetByteArrayAsync(
             new Uri($"/admin/v1/agent-releases/{releaseId}/download", UriKind.Relative));
         Convert.ToHexStringLower(SHA256.HashData(downloaded)).ShouldBe(sha);

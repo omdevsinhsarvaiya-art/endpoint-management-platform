@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
+  ApiError,
   createAgentRelease,
   downloadAgentRelease,
   getAgentReleases,
@@ -19,7 +20,7 @@ import {
   newestUpdateEligible,
   newestUploaded,
   releaseGap,
-  requiresUnsignedAcknowledgement,
+  publishWillBeRefused,
 } from './agentReleaseView'
 
 /**
@@ -48,7 +49,6 @@ export function AgentReleasesPage() {
   const [file, setFile] = useState<File | null>(null)
   const [version, setVersion] = useState('')
   const [notes, setNotes] = useState('')
-  const [signer, setSigner] = useState('')
   const [busy, setBusy] = useState(false)
 
   const load = useCallback(async () => {
@@ -85,13 +85,11 @@ export function AgentReleasesPage() {
       await createAgentRelease(file, {
         version: version.trim(),
         releaseNotes: notes.trim() || undefined,
-        signerSubject: signer.trim() || undefined,
       })
       setNotice(`Release ${version.trim()} uploaded as a draft. Publish it to make it available.`)
       setFile(null)
       setVersion('')
       setNotes('')
-      setSigner('')
       setShowUpload(false)
       await load()
     } catch {
@@ -102,18 +100,12 @@ export function AgentReleasesPage() {
   }
 
   async function onPublish(release: AgentReleaseRow) {
-    // Publishing is what makes a build installable fleet-wide. The platform does
-    // not refuse to publish an unsigned one and the agent installs it on hash
-    // verification alone, so the only thing standing between an unsigned build
-    // and every device is this decision -- which therefore has to be a decision,
-    // not a click.
-    if (requiresUnsignedAcknowledgement(release)) {
-      const warning = deploymentWarning(release)
-      if (!window.confirm(
-        `Publish ${release.version}?\n\n${warning}\n\n`
-        + 'Devices will accept it after verifying its SHA-256 only. Continue?')) {
-        return
-      }
+    // The server is the gate; this is only a courtesy. An unsigned build is
+    // refused server-side whatever is clicked here, so the confirm exists to
+    // explain that before the request rather than after it.
+    if (publishWillBeRefused(release)) {
+      window.alert(`${release.version} cannot be published.\n\n${deploymentWarning(release)}`)
+      return
     }
 
     setError(null)
@@ -122,8 +114,10 @@ export function AgentReleasesPage() {
       await publishAgentRelease(release.id)
       setNotice(`Release ${release.version} is now published and available to devices.`)
       await load()
-    } catch {
-      setError('The release could not be published.')
+    } catch (e) {
+      // A 422 carries the server's reason; show it verbatim. It names the
+      // requirement that failed and nothing about the bytes.
+      setError(e instanceof ApiError && e.message ? e.message : 'The release could not be published.')
     }
   }
 
@@ -213,21 +207,10 @@ export function AgentReleasesPage() {
               />
               <div className="field-hint">Three numeric parts. Must match the MSI's product version.</div>
             </div>
-            <div className="field">
-              <label className="field-label" htmlFor="rel-signer">
-                Authenticode signer <span className="muted">(optional)</span>
-              </label>
-              <input
-                id="rel-signer"
-                value={signer}
-                onChange={(e) => setSigner(e.target.value)}
-                placeholder="CN=Your Company"
-              />
-              <div className="field-hint">
-                Leave blank only for an unsigned development build — agents will then install on
-                hash verification alone, and the release is marked unsigned.
-              </div>
-            </div>
+            {/* No signer field. The signer is a fact the server reads from the
+                MSI's own Authenticode signature, never something an uploader
+                declares -- the party supplying a build does not get to say who
+                is trusted to have signed it. */}
             <div className="field full">
               <label className="field-label" htmlFor="rel-notes">
                 Release notes <span className="muted">(optional)</span>

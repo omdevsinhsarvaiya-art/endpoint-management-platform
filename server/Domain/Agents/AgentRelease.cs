@@ -117,6 +117,49 @@ public sealed class AgentRelease : AuditableEntity
 
     public bool IsPublished => Status == AgentReleaseStatus.Published;
 
+    /// <summary>
+    /// Records the signer the server verified, or clears it.
+    /// </summary>
+    /// <remarks>
+    /// The only writer of <see cref="SignerSubject"/>. The value is derived from the
+    /// artifact's own Authenticode signature by the server; it is never accepted from
+    /// an upload, because the party supplying a build does not get to declare who
+    /// signed it. Draft only: a published release's identity is frozen.
+    /// </remarks>
+    public void RecordVerifiedSigner(string? signerSubject)
+    {
+        if (Status != AgentReleaseStatus.Draft)
+        {
+            throw new InvalidOperationException($"Release {Version} is {Status}; its signer is frozen.");
+        }
+
+        SignerSubject = Guard.OptionalMaxLength(signerSubject, 256);
+    }
+
+    /// <summary>
+    /// Points this draft at a different artifact -- the same build, now signed.
+    /// </summary>
+    /// <remarks>
+    /// Signing changes the bytes, so the hash must follow. This is how an existing
+    /// draft becomes its signed self without a second release row: the version,
+    /// history and audit lineage stay; only the content address and size move.
+    /// Draft only, for the same reason as <see cref="RecordVerifiedSigner"/>.
+    /// </remarks>
+    public void ReplaceArtifact(string sha256, long contentSizeBytes, string fileName)
+    {
+        if (Status != AgentReleaseStatus.Draft)
+        {
+            throw new InvalidOperationException($"Release {Version} is {Status}; its artifact is frozen.");
+        }
+
+        Sha256 = ValidateSha256(sha256);
+        ContentSizeBytes = contentSizeBytes > 0
+            ? contentSizeBytes
+            : throw new ArgumentOutOfRangeException(nameof(contentSizeBytes));
+        FileName = ValidateFileName(fileName);
+        SignerSubject = null; // unknown until the new bytes are verified
+    }
+
     /// <summary>Draft → Published. Only drafts publish; a revoked build stays revoked.</summary>
     public void Publish(DateTimeOffset now)
     {

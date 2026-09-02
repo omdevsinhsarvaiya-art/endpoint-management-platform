@@ -6,15 +6,54 @@ and exactly what is — and is not — guaranteed.
 ## The release model
 
 An **agent release** is one distributable MSI build: version (three numeric
-parts), platform/architecture (`windows/x64`), filename, SHA-256, an optional
-Authenticode signer subject, release notes, and a one-way lifecycle:
+parts), platform/architecture (`windows/x64`), filename, a SHA-256 the server
+computed over the bytes it stored, the Authenticode signer subject the server
+verified from the artifact's own signature, release notes, and a one-way
+lifecycle:
 
 ```
 Draft ──publish──▶ Published ──revoke──▶ Revoked   (terminal)
 ```
 
 A revoked release can never be re-published; upload a fresh build instead, so
-every audit entry refers to an immutable artifact. Uploading is
+every audit entry refers to an immutable artifact.
+
+### The publish gate
+
+Publishing is the consequential act — it is what lets the platform push a build
+onto machines as SYSTEM — so it is gated on the server, not in the console. On
+every publish the stored artifact is re-read and must satisfy all of:
+
+1. it is a Windows Installer package (an OLE2 compound file);
+2. it carries an Authenticode signature (`DigitalSignature` stream);
+3. that signature is a well-formed Authenticode `SignedData` and verifies;
+4. the signing certificate carries the Code Signing EKU;
+5. it chains to a trusted root under the server's system trust store;
+6. its subject contains `AgentReleases:ExpectedSignerSubject` — the configured
+   publisher, matched case-insensitively as a substring, exactly as the agent's
+   own pin is matched;
+7. the bytes on disk still hash to the release's recorded SHA-256.
+
+Any failure answers **422** with a message naming the requirement. There is no
+UI-side gate to bypass: a direct API call is refused the same way. With no
+publisher configured, nothing can be published — fail closed, never "any signer
+will do".
+
+Two things are deliberately server-derived and never accepted from an upload.
+The **SHA-256** is computed over the bytes the server stores; a hash sent by the
+client is only a transit cross-check (mismatch → 400). The **signer** is read
+from the artifact's signature; a signer typed into the form is discarded.
+
+What the server does *not* claim: Authenticode's binding of the signature to the
+exact file bytes uses Windows Installer's stream-hashing rules, which are not
+reproduced off-Windows. That final binding — and revocation — is enforced on the
+endpoint by `WinVerifyTrust` before anything installs. Both gates are required;
+neither substitutes for the other.
+
+A draft's artifact may be **replaced** (`PUT /agent-releases/{id}/artifact`) so
+an existing draft becomes its signed self without a second release: the hash is
+recomputed over the new bytes, because signing changes them. A published
+release's artifact is frozen. Uploading is
 `Software.Deploy`; viewing and downloading are `Software.View`. The MSI bytes
 live in the same content-addressed store as software packages, keyed by hash —
 the store recomputes the SHA-256 while writing and refuses a mismatch, so a
@@ -41,8 +80,8 @@ agent enforces: strictly newer version, x64, then downloads
         ↓
 SHA-256 over the actual bytes            → mismatch: DO NOT INSTALL
         ↓
-Authenticode via WinVerifyTrust + signer-subject pin (when the release
-declares a signer)                        → failure: DO NOT INSTALL
+Authenticode via WinVerifyTrust + signer-subject pin, against the signer
+the server verified at publish            → failure: DO NOT INSTALL
         ↓
 state snapshot (credential + enrollment files → update-backup/)
         ↓

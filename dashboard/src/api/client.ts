@@ -1484,7 +1484,7 @@ export function getLatestAgentRelease(): Promise<LatestAgentRelease> {
  */
 export async function createAgentRelease(
   file: File,
-  meta: { version: string; releaseNotes?: string; signerSubject?: string },
+  meta: { version: string; releaseNotes?: string },
 ): Promise<void> {
   const sha256 = await sha256Hex(file)
   const form = new FormData()
@@ -1492,7 +1492,6 @@ export async function createAgentRelease(
   form.append('version', meta.version)
   form.append('sha256', sha256)
   if (meta.releaseNotes) form.append('releaseNotes', meta.releaseNotes)
-  if (meta.signerSubject) form.append('signerSubject', meta.signerSubject)
 
   const r = await fetch('/api/admin/v1/agent-releases/', {
     method: 'POST',

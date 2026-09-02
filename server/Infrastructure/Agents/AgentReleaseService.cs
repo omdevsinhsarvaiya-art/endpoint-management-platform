@@ -17,6 +17,11 @@ public enum AgentReleaseActionResult
     Conflict,
     /// <summary>A release for this platform/architecture/version already exists.</summary>
     Duplicate,
+    /// <summary>
+    /// The artifact failed verification -- unsigned, invalid, untrusted, wrong
+    /// publisher, or its bytes no longer match its hash -- and may not be published.
+    /// </summary>
+    NotVerified,
 }
 
 /// <summary>
@@ -42,12 +47,14 @@ public enum AgentReleaseActionResult
 public sealed class AgentReleaseService(
     EndpointPlatformDbContext dbContext,
     IPackageContentStore contentStore,
+    IAuthenticodeVerifier authenticode,
     AuditWriter auditWriter,
     TimeProvider timeProvider,
     ILogger<AgentReleaseService> logger)
 {
     private readonly EndpointPlatformDbContext _dbContext = dbContext;
     private readonly IPackageContentStore _contentStore = contentStore;
+    private readonly IAuthenticodeVerifier _authenticode = authenticode;
     private readonly AuditWriter _auditWriter = auditWriter;
     private readonly TimeProvider _timeProvider = timeProvider;
     private readonly ILogger<AgentReleaseService> _logger = logger;
@@ -60,11 +67,16 @@ public sealed class AgentReleaseService(
     /// verified against the actual bytes by the content store; a lie about the
     /// hash discards the upload.
     /// </summary>
+    /// <param name="declaredSha256">
+    /// Optional. What the uploader believes the hash is. Used only as an integrity
+    /// cross-check against what the server computes -- a mismatch means the bytes
+    /// were damaged in transit and the upload is refused. It is never what gets
+    /// stored; the server's own hash is.
+    /// </param>
     public async Task<(AgentRelease? Release, string? Error)> CreateAsync(
         string version,
         string fileName,
-        string sha256,
-        string? signerSubject,
+        string? declaredSha256,
         string? releaseNotes,
         Stream content,
         Guid actorId,
@@ -90,15 +102,14 @@ public sealed class AgentReleaseService(
             return (null, $"A windows/x64 release with version {normalizedVersion} already exists.");
         }
 
-        long size;
-        try
+        // The server hashes the bytes it stores. The uploader's figure, if any, is
+        // a cross-check for transit damage and nothing more.
+        var (sha256, size) = await _contentStore.SaveComputingHashAsync(content, cancellationToken);
+
+        if (!string.IsNullOrWhiteSpace(declaredSha256)
+            && !string.Equals(declaredSha256.Trim(), sha256, StringComparison.OrdinalIgnoreCase))
         {
-            size = await _contentStore.SaveAsync(sha256, content, cancellationToken);
-        }
-        catch (InvalidOperationException ex)
-        {
-            // The bytes did not hash to what the caller claimed.
-            return (null, ex.Message);
+            return (null, "The uploaded bytes do not hash to the declared SHA-256; the upload was refused.");
         }
 
         AgentRelease release;
@@ -106,12 +117,18 @@ public sealed class AgentReleaseService(
         {
             release = new AgentRelease(
                 normalizedVersion, WindowsPlatform, X64Architecture, fileName, sha256,
-                signerSubject, releaseNotes, size, actorId, actorDisplay);
+                signerSubject: null, releaseNotes, size, actorId, actorDisplay);
         }
         catch (ArgumentException ex)
         {
             return (null, ex.Message);
         }
+
+        // Signer is a fact read from the artifact, recorded only when it verifies.
+        // An unsigned or untrusted draft is still a draft -- registering is not the
+        // consequential act; publishing is, and publishing re-verifies.
+        var verification = await VerifyStoredAsync(release, cancellationToken);
+        release.RecordVerifiedSigner(verification.IsTrusted ? verification.SignerSubject : null);
 
         _dbContext.AgentReleases.Add(release);
 
@@ -158,6 +175,27 @@ public sealed class AgentReleaseService(
 
         var before = release.Status.ToString();
         var now = _timeProvider.GetUtcNow();
+
+        if (publish && release.Status == AgentReleaseStatus.Draft)
+        {
+            // The gate. Re-verified now rather than trusted from upload time, because
+            // the artifact on disk, the configured publisher, and the trust store can
+            // all have changed since. What is published is what is checked.
+            var verification = await VerifyStoredAsync(release, cancellationToken);
+            if (!verification.IsTrusted)
+            {
+                _logger.LogWarning(
+                    "Refusing to publish agent release {Version}: {Reason}",
+                    release.Version, verification.Describe());
+                return AgentReleaseActionResult.NotVerified;
+            }
+
+            // Keep the recorded signer equal to what was just verified.
+            if (!string.Equals(release.SignerSubject, verification.SignerSubject, StringComparison.Ordinal))
+            {
+                release.RecordVerifiedSigner(verification.SignerSubject);
+            }
+        }
 
         try
         {
@@ -217,6 +255,116 @@ public sealed class AgentReleaseService(
                 return v;
             })
             .FirstOrDefault();
+    }
+
+    /// <summary>
+    /// Everything a release must satisfy before it may be published.
+    /// </summary>
+    /// <remarks>
+    /// In order: the stored bytes exist and still hash to the recorded SHA-256 (a
+    /// tampered or corrupted artifact is caught here, whatever its signature says);
+    /// then the Authenticode checks, which end with the configured publisher. The
+    /// first failure is the answer.
+    /// </remarks>
+    public async Task<AuthenticodeVerification> VerifyStoredAsync(
+        AgentRelease release, CancellationToken cancellationToken = default)
+    {
+        await using var stream = await _contentStore.OpenReadAsync(release.Sha256, cancellationToken);
+        if (stream is null)
+        {
+            return AuthenticodeVerification.Failed(
+                AuthenticodeFailure.NotAnMsi, "The artifact is missing from storage.");
+        }
+
+        using var buffer = new MemoryStream(capacity: (int)Math.Min(release.ContentSizeBytes, int.MaxValue));
+        await stream.CopyToAsync(buffer, cancellationToken);
+        var bytes = buffer.GetBuffer().AsMemory(0, (int)buffer.Length);
+
+        var actual = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(bytes.Span));
+        if (!string.Equals(actual, release.Sha256, StringComparison.Ordinal))
+        {
+            _logger.LogError(
+                "Agent release {Version} stored artifact hashes to {Actual}, not the recorded {Recorded}.",
+                release.Version, actual, release.Sha256);
+            return AuthenticodeVerification.Failed(
+                AuthenticodeFailure.InvalidSignature, "The stored artifact does not match its recorded SHA-256.");
+        }
+
+        return _authenticode.Verify(bytes);
+    }
+
+    /// <summary>
+    /// Replaces a draft's artifact with new bytes -- the same build, signed.
+    /// </summary>
+    /// <remarks>
+    /// The route by which an existing draft becomes its signed self without a
+    /// second release row. The hash is recomputed by the server over the new bytes,
+    /// because signing changes them, and the signer is re-derived from the new
+    /// signature. Draft only; the domain enforces that.
+    /// </remarks>
+    public async Task<(AgentRelease? Release, string? Error)> ReplaceArtifactAsync(
+        Guid releaseId,
+        string fileName,
+        string? declaredSha256,
+        Stream content,
+        Guid actorId,
+        string actorDisplay,
+        Guid actorOrganizationId,
+        CancellationToken cancellationToken = default)
+    {
+        var release = await _dbContext.AgentReleases.SingleOrDefaultAsync(r => r.Id == releaseId, cancellationToken);
+        if (release is null)
+        {
+            return (null, null);
+        }
+
+        if (release.Status != AgentReleaseStatus.Draft)
+        {
+            return (null, $"Release {release.Version} is {release.Status}; only a draft's artifact can be replaced.");
+        }
+
+        var (sha256, size) = await _contentStore.SaveComputingHashAsync(content, cancellationToken);
+
+        if (!string.IsNullOrWhiteSpace(declaredSha256)
+            && !string.Equals(declaredSha256.Trim(), sha256, StringComparison.OrdinalIgnoreCase))
+        {
+            return (null, "The uploaded bytes do not hash to the declared SHA-256; the upload was refused.");
+        }
+
+        var previousSha256 = release.Sha256;
+        try
+        {
+            release.ReplaceArtifact(sha256, size, fileName);
+        }
+        catch (ArgumentException ex)
+        {
+            return (null, ex.Message);
+        }
+
+        var verification = await VerifyStoredAsync(release, cancellationToken);
+        release.RecordVerifiedSigner(verification.IsTrusted ? verification.SignerSubject : null);
+
+        _auditWriter.Stage(
+            actorOrganizationId, AuditActorType.PlatformUser, actorId, actorDisplay,
+            action: "agent_release.artifact_replaced", AuditResult.Success,
+            audit => audit
+                .OnTarget("agent_release", release.Id.ToString(), $"windows/x64 {release.Version}")
+                .Requiring(Permissions.Software.Deploy)
+                .WithStateChange(
+                    System.Text.Json.JsonSerializer.Serialize(new { sha256 = previousSha256 }),
+                    System.Text.Json.JsonSerializer.Serialize(new
+                    {
+                        sha256 = release.Sha256,
+                        sizeBytes = release.ContentSizeBytes,
+                        signerSubject = release.SignerSubject,
+                        verified = verification.IsTrusted,
+                    })));
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        _logger.LogInformation(
+            "Agent release {Version} artifact replaced by {Actor}; signer {Signer}.",
+            release.Version, actorDisplay, release.SignerSubject ?? "<unsigned>");
+        return (release, null);
     }
 
     /// <summary>

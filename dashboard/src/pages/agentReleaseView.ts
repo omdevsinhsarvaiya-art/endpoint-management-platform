@@ -101,30 +101,35 @@ export function describeReleaseGap(
 }
 
 /**
- * What an operator must know before publishing this build.
+ * What an operator must know before trying to publish this build.
  *
- * Returns null when there is nothing to say. The unsigned case is the one that
- * matters: this platform does not refuse to publish an unsigned release, and the
- * agent installs one on hash verification alone while logging a warning. That is
- * a deliberate, documented development stance -- but it means "unsigned" is a
- * property the operator has to weigh, not one the system will weigh for them.
+ * Returns null when there is nothing to say. The server is the gate: publishing
+ * re-verifies the stored artifact -- Authenticode signature, trusted chain,
+ * code-signing certificate, the configured publisher, and the SHA-256 of the
+ * bytes on disk -- and refuses anything that fails, whoever is asking. The
+ * console does not enforce that; it says it, so the refusal is not a surprise.
+ *
+ * The signer shown here is the one the server verified from the artifact's own
+ * signature. It is never typed in, and "unsigned" means exactly that.
  */
 export function deploymentWarning(release: AgentReleaseRow): string | null {
   if (release.status !== 'Published' && !isSigned(release)) {
-    return 'This release is unsigned. Publishing it makes it installable fleet-wide on '
-      + 'hash verification alone, with no signature check.'
-  }
-
-  if (release.status === 'Published' && !isSigned(release)) {
-    return 'This published release is unsigned. Devices will install it after verifying '
-      + 'its SHA-256 only.'
+    return 'This release is unsigned. The server will refuse to publish it: a release must '
+      + 'be Authenticode-signed by the configured publisher before devices can be offered it. '
+      + 'Replace its artifact with the signed build.'
   }
 
   return null
 }
 
-/** Whether publishing this release needs an explicit acknowledgement first. */
-export function requiresUnsignedAcknowledgement(release: AgentReleaseRow): boolean {
+/**
+ * Whether the server will refuse to publish this release as it stands.
+ *
+ * Mirrors the one server rule the console can see -- no verified signer -- so the
+ * button can explain itself. The server checks more than this, and its answer
+ * wins.
+ */
+export function publishWillBeRefused(release: AgentReleaseRow): boolean {
   return !isSigned(release)
 }
 

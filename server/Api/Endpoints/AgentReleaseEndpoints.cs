@@ -50,6 +50,12 @@ public static class AgentReleaseEndpoints
             .RequirePermission(Permissions.Software.Deploy)
             .DisableAntiforgery(); // multipart upload; CSRF is covered by the X-Requested-With gate.
 
+        // The same build, signed. Draft only, hash recomputed by the server.
+        group.MapPut("/{releaseId:guid}/artifact", ReplaceArtifactAsync)
+            .WithName("ReplaceAgentReleaseArtifact")
+            .RequirePermission(Permissions.Software.Deploy)
+            .DisableAntiforgery(); // multipart upload; CSRF is covered by the X-Requested-With gate.
+
         group.MapPost("/{releaseId:guid}/publish", (Guid releaseId, HttpContext ctx, AgentReleaseService svc, CancellationToken ct)
                 => TransitionAsync(releaseId, ctx, svc, publish: true, ct))
             .WithName("PublishAgentRelease")
@@ -174,22 +180,72 @@ public static class AgentReleaseEndpoints
         string? Field(string key) => form.TryGetValue(key, out var v) ? v.ToString() : null;
 
         var version = Field("version");
-        var sha256 = Field("sha256");
-        if (string.IsNullOrWhiteSpace(version) || string.IsNullOrWhiteSpace(sha256))
+
+        // Optional and advisory. The server hashes the bytes it stores; a declared
+        // hash only lets a damaged upload be refused rather than recorded.
+        var declaredSha256 = Field("sha256");
+        if (string.IsNullOrWhiteSpace(version))
         {
-            return Results.Problem("version and sha256 are required.", statusCode: StatusCodes.Status400BadRequest);
+            return Results.Problem("version is required.", statusCode: StatusCodes.Status400BadRequest);
         }
 
         var actor = AdminActor.Required(httpContext.User);
         await using var content = file.OpenReadStream();
 
         var (release, error) = await releaseService.CreateAsync(
-            version!, file.FileName, sha256!, Field("signerSubject"), Field("releaseNotes"),
+            version!, file.FileName, declaredSha256, Field("releaseNotes"),
             content, actor.UserId, actor.Email, actor.OrganizationId, cancellationToken);
 
         return release is null
             ? Results.Problem(error ?? "The release could not be created.", statusCode: StatusCodes.Status400BadRequest)
             : Results.Created($"/admin/v1/agent-releases/{release.Id}", new { releaseId = release.Id, release.Version });
+    }
+
+
+    /// <summary>Replaces a draft's MSI with its signed counterpart.</summary>
+    private static async Task<IResult> ReplaceArtifactAsync(
+        Guid releaseId,
+        HttpContext httpContext,
+        AgentReleaseService releaseService,
+        CancellationToken cancellationToken)
+    {
+        if (!httpContext.Request.HasFormContentType)
+        {
+            return Results.Problem("Expected a multipart form upload.", statusCode: StatusCodes.Status415UnsupportedMediaType);
+        }
+
+        var form = await httpContext.Request.ReadFormAsync(cancellationToken);
+        var file = form.Files.GetFile("file");
+        if (file is null || file.Length == 0)
+        {
+            return Results.Problem("A file is required.", statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        string? Field(string key) => form.TryGetValue(key, out var v) ? v.ToString() : null;
+        var actor = AdminActor.Required(httpContext.User);
+
+        await using var content = file.OpenReadStream();
+        var (release, error) = await releaseService.ReplaceArtifactAsync(
+            releaseId, file.FileName, Field("sha256"), content,
+            actor.UserId, actor.Email, actor.OrganizationId, cancellationToken);
+
+        if (release is null && error is null)
+        {
+            return Results.NotFound();
+        }
+
+        if (release is null)
+        {
+            return Results.Problem(error, statusCode: StatusCodes.Status409Conflict);
+        }
+
+        return Results.Ok(new
+        {
+            releaseId = release.Id,
+            sha256 = release.Sha256,
+            sizeBytes = release.ContentSizeBytes,
+            signerSubject = release.SignerSubject,
+        });
     }
 
     private static async Task<IResult> TransitionAsync(
@@ -205,6 +261,15 @@ public static class AgentReleaseEndpoints
         {
             AgentReleaseActionResult.Success => Results.NoContent(),
             AgentReleaseActionResult.NotFound => Results.NotFound(),
+
+            // The publish gate. 422 rather than 409: the release is in a state that
+            // allows publishing, but the artifact itself is not acceptable. The
+            // message names the requirement, never the bytes.
+            AgentReleaseActionResult.NotVerified => Results.Problem(
+                "The release cannot be published: its artifact did not pass verification. "
+                + "It must be a Windows Installer package Authenticode-signed by the configured "
+                + "publisher, with stored bytes matching its recorded SHA-256.",
+                statusCode: StatusCodes.Status422UnprocessableEntity),
             _ => Results.Problem(
                 "The release is not in a state that allows this action.",
                 statusCode: StatusCodes.Status409Conflict),

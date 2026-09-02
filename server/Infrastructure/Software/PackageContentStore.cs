@@ -32,6 +32,17 @@ public interface IPackageContentStore
     /// </summary>
     Task<long> SaveAsync(string expectedSha256, Stream content, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Streams <paramref name="content"/> to storage and returns the SHA-256 the
+    /// store computed over the bytes it actually wrote, with the size.
+    /// </summary>
+    /// <remarks>
+    /// The authoritative form of <see cref="SaveAsync"/>. Nothing about the hash is
+    /// taken from the caller; the value returned is the only one that should ever be
+    /// recorded against the artifact.
+    /// </remarks>
+    Task<(string Sha256, long SizeBytes)> SaveComputingHashAsync(Stream content, CancellationToken cancellationToken = default);
+
     /// <summary>Opens the stored content for reading, or null if absent.</summary>
     Task<Stream?> OpenReadAsync(string sha256, CancellationToken cancellationToken = default);
 
@@ -48,6 +59,59 @@ public sealed class FileSystemPackageContentStore : IPackageContentStore
         ArgumentNullException.ThrowIfNull(options);
         _directory = options.Value.Directory;
         System.IO.Directory.CreateDirectory(_directory);
+    }
+
+    public async Task<(string Sha256, long SizeBytes)> SaveComputingHashAsync(
+        Stream content, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(content);
+
+        // Hash while writing to a temp file, then place it at its content address.
+        // The caller learns the hash only after the bytes are durable under it.
+        var tempPath = Path.Combine(_directory, "incoming-" + Guid.CreateVersion7().ToString("N") + ".tmp");
+        string computed;
+        long written;
+
+        try
+        {
+            await using (var destination = new FileStream(
+                tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1 << 16, useAsync: true))
+            using (var sha = SHA256.Create())
+            {
+                var buffer = new byte[1 << 16];
+                int read;
+                while ((read = await content.ReadAsync(buffer, cancellationToken)) > 0)
+                {
+                    sha.TransformBlock(buffer, 0, read, null, 0);
+                    await destination.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+                }
+
+                sha.TransformFinalBlock([], 0, 0);
+                written = destination.Length;
+                computed = Convert.ToHexStringLower(sha.Hash!);
+            }
+
+            var finalPath = PathFor(computed);
+            if (File.Exists(finalPath))
+            {
+                File.Delete(tempPath);
+            }
+            else
+            {
+                File.Move(tempPath, finalPath);
+            }
+
+            return (computed, written);
+        }
+        catch
+        {
+            if (File.Exists(tempPath))
+            {
+                File.Delete(tempPath);
+            }
+
+            throw;
+        }
     }
 
     public async Task<long> SaveAsync(
