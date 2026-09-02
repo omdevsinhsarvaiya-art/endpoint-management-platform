@@ -215,12 +215,12 @@ export function DeviceDetailPage() {
     try {
       await offboardDevice(deviceId)
       setActionMsg(
-        'Device removed from active management: credentials revoked, device retired. '
+        'Device retired: credentials revoked and it is no longer under active management. '
         + 'Its record and history remain under the Retired view.',
       )
       await load()
     } catch {
-      setActionMsg('Could not remove the device.')
+      setActionMsg('Could not retire the device.')
     }
   }
 
@@ -975,12 +975,13 @@ export function DeviceDetailPage() {
 
           {hasPermission('device.retire') && (
             <div className="action-group destructive">
-              <h3>Remove Device</h3>
+              <h3>Retire Device</h3>
               <p className="group-note">
-                Removes this machine from active management: its credentials are revoked and it can
-                no longer check in, receive tasks, or re-enroll. The device record and its full
-                audit history are kept under the Retired view — nothing is wiped on the machine
-                itself. Reversible via reactivation, after which the machine must re-enroll.
+                Retires this machine from active management: its credentials are revoked and it can
+                no longer check in, receive tasks, or take agent updates. The device record and its
+                full history are kept under the Retired view — nothing is wiped on the machine
+                itself, and this is not the same as uninstalling the agent. Reinstalling the agent
+                later produces a new pending enrollment and, once approved, a separate new device.
               </p>
               {device.status === 'Retired' ? (
                 <button type="button" onClick={() => void onReactivate()}>
@@ -989,7 +990,7 @@ export function DeviceDetailPage() {
               ) : (
                 <button type="button" className="btn-danger" onClick={() => setConfirmRemoval(true)}>
                   <Icon name="trash" size={14} />
-                  Remove Device
+                  Retire device
                 </button>
               )}
             </div>
@@ -997,17 +998,28 @@ export function DeviceDetailPage() {
 
           {confirmRemoval && (
             <ConfirmDialog
-              title={`Remove ${deviceName(device)} from management?`}
-              confirmLabel="Yes, remove device"
+              title={`Retire ${deviceName(device)}?`}
+              confirmLabel="Yes, retire device"
               onCancel={() => setConfirmRemoval(false)}
               onConfirm={() => void onRemoveDevice()}
             >
               <>
-                <strong className="secondary">{deviceName(device)}</strong> will be removed from
-                active management. Its credentials are revoked immediately, it stops appearing in
-                the Active devices view, and it cannot check in or re-enroll unless an
-                administrator reactivates it. The device record and audit history are preserved;
-                nothing on the machine is wiped. This action is audited.
+                <strong className="secondary">{deviceName(device)}</strong>
+                {device.hostname && device.hostname !== deviceName(device)
+                  ? ` (${device.hostname})`
+                  : ''}{' '}
+                will be retired from active management. Its credentials are revoked immediately and
+                it stops appearing in the Active devices view, though its record, inventory, tasks,
+                audit history and any escrowed recovery keys are all kept and stay readable under
+                the Retired view. It will no longer be eligible for management actions or agent
+                updates.{' '}
+                <strong className="secondary">
+                  This is not the same as uninstalling the Windows agent
+                </strong>
+                {' '}— nothing on the machine is changed or wiped. If the agent is later
+                reinstalled there, it will appear as a new pending enrollment and must be approved
+                in the normal way, which creates a separate new device record rather than reviving
+                this one. This action is audited.
               </>
             </ConfirmDialog>
           )}

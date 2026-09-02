@@ -55,10 +55,21 @@ internal sealed class DeviceConfiguration : IEntityTypeConfiguration<Device>
             // The token must outlive the devices it admitted - audit lineage.
             .OnDelete(DeleteBehavior.Restrict);
 
-        // One device row per physical machine per organization. This is what turns
-        // re-running the installer into re-enrollment instead of a duplicate.
+        // One ACTIVE device row per physical machine per organization. This is what
+        // turns re-running the installer into re-enrollment instead of a duplicate.
+        //
+        // Filtered to Active on purpose. Retiring a device closes that record; the
+        // machine may then enrol again and get a new row with its own id and its own
+        // history, which is only possible if a retired row does not hold the machine
+        // identifier hostage. Two active rows for one machine remain impossible,
+        // which is the invariant that actually matters.
+        //
+        // The enrolment lookup in AgentEnrollmentService is scoped identically, so
+        // the query and the constraint cannot disagree about what "already enrolled"
+        // means.
         builder.HasIndex(d => new { d.OrganizationId, d.MachineIdentifier })
             .IsUnique()
+            .HasFilter("status = 'Active'")
             .HasDatabaseName("ix_devices_organization_id_machine_identifier");
 
         // Device list is sorted by recency; online/offline derives from last_seen.

@@ -6,6 +6,7 @@ using EndpointPlatform.Domain.Tasks;
 using EndpointPlatform.Infrastructure.Devices;
 using EndpointPlatform.Infrastructure.Tasks;
 using EndpointPlatform.Infrastructure.Persistence;
+using EndpointPlatform.Infrastructure.Security;
 using Microsoft.EntityFrameworkCore;
 
 namespace EndpointPlatform.Api.Endpoints;
@@ -92,19 +93,52 @@ public static class DeviceEndpoints
         return endpoints;
     }
 
+    /// <summary>Retires a device: it stops being a manageable endpoint.</summary>
+    /// <remarks>
+    /// <para>
+    /// Device scope is checked first and on its own, before the lifecycle service is
+    /// asked anything. Retiring is the most consequential thing that can be done to a
+    /// device short of deleting it -- it revokes every credential and takes the
+    /// machine out of management -- so it must not be reachable by an administrator
+    /// scoped to a different group merely because the device shares their
+    /// organization.
+    /// </para>
+    /// <para>
+    /// Answered 404 rather than 403, matching every other device-scoped route: a
+    /// caller who may not act on a device is not told whether it exists.
+    /// </para>
+    /// </remarks>
     private static async Task<IResult> OffboardAsync(
-        Guid deviceId, DeviceLifecycleService lifecycleService, HttpContext httpContext, CancellationToken cancellationToken)
+        Guid deviceId, DeviceLifecycleService lifecycleService, DeviceScopeAuthorizer scope,
+        HttpContext httpContext, CancellationToken cancellationToken)
     {
         var actor = AdminActor.Required(httpContext.User);
+
+        if (!await scope.CanActOnDeviceAsync(actor.UserId, actor.OrganizationId, deviceId, cancellationToken))
+        {
+            return Results.NotFound();
+        }
+
         var result = await lifecycleService.OffboardAsync(
             actor.OrganizationId, deviceId, actor.UserId, actor.Email, cancellationToken);
         return result == DeviceLifecycleResult.NotFound ? Results.NotFound() : Results.NoContent();
     }
 
+    /// <summary>
+    /// Returns a retired device to service. Scoped identically to retiring it --
+    /// undoing a retirement is as consequential as making one.
+    /// </summary>
     private static async Task<IResult> ReactivateAsync(
-        Guid deviceId, DeviceLifecycleService lifecycleService, HttpContext httpContext, CancellationToken cancellationToken)
+        Guid deviceId, DeviceLifecycleService lifecycleService, DeviceScopeAuthorizer scope,
+        HttpContext httpContext, CancellationToken cancellationToken)
     {
         var actor = AdminActor.Required(httpContext.User);
+
+        if (!await scope.CanActOnDeviceAsync(actor.UserId, actor.OrganizationId, deviceId, cancellationToken))
+        {
+            return Results.NotFound();
+        }
+
         var result = await lifecycleService.ReactivateAsync(
             actor.OrganizationId, deviceId, actor.UserId, actor.Email, cancellationToken);
         return result == DeviceLifecycleResult.NotFound ? Results.NotFound() : Results.NoContent();

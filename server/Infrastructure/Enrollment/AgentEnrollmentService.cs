@@ -77,9 +77,26 @@ public sealed class AgentEnrollmentService(
         // From here the token use is committed atomically with the device and
         // credential rows. The token row carries xmin optimistic concurrency, so
         // two agents racing for the last use cannot both commit.
+        // Deliberately scoped to Active. A retired device is a closed record, not a
+        // slot to be reoccupied: re-running the installer on a machine that was
+        // retired must produce a NEW device with its own id and its own history,
+        // leaving the retired row exactly as the administrator left it.
+        //
+        // Matching retired rows here would mean one of two bad outcomes -- either
+        // the retirement is silently undone by whoever next runs the installer, or
+        // (as this code did until now) the machine is refused enrolment outright and
+        // can never come back without an administrator reactivating it by hand.
+        // Neither is what retiring a device is supposed to mean.
+        //
+        // Safe because the uniqueness constraint is scoped the same way: the partial
+        // unique index on (organization_id, machine_identifier) covers Active rows
+        // only, so a retired row and a new active one can share a machine identifier
+        // while two active ones still cannot.
         var existingDevice = await _dbContext.Devices
             .SingleOrDefaultAsync(
-                d => d.OrganizationId == token.OrganizationId && d.MachineIdentifier == machineIdentifier,
+                d => d.OrganizationId == token.OrganizationId
+                     && d.MachineIdentifier == machineIdentifier
+                     && d.Status == DeviceStatus.Active,
                 cancellationToken);
 
         Device device;
@@ -95,19 +112,10 @@ public sealed class AgentEnrollmentService(
         }
         else
         {
-            if (existingDevice.IsRetired)
-            {
-                await AuditRefusalAsync(
-                    token.OrganizationId,
-                    hostname,
-                    "Machine matches a retired device; re-enrollment requires administrator reactivation.",
-                    cancellationToken,
-                    token,
-                    existingDevice);
-
-                return EnrollmentOutcome.Refused();
-            }
-
+            // Only an Active device reaches here, by construction of the query above.
+            // The retired-device refusal that used to live at this point is gone: a
+            // retired machine no longer matches at all, so it takes the branch above
+            // and enrols as a new device rather than being turned away.
             existingDevice.ReEnroll(hostname, agentVersion, operatingSystem, token.Id, now);
             device = existingDevice;
             reEnrolled = true;

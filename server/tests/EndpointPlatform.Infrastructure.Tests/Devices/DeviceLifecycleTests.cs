@@ -67,7 +67,19 @@ public sealed class DeviceLifecycleTests(PostgresFixture fixture)
     }
 
     [Fact]
-    public async Task A_retired_device_cannot_re_enroll_until_reactivated()
+    /// <summary>
+    /// A retired machine enrolling again gets a new device, not its old one back.
+    /// </summary>
+    /// <remarks>
+    /// This test previously asserted that the machine was refused outright until an
+    /// administrator reactivated the retired record by hand. That made retirement a
+    /// trap: a reissued laptop could never be enrolled again without someone first
+    /// undoing the very thing that had been done deliberately. The invariant that
+    /// actually matters is narrower -- the retired record is never revived -- and it
+    /// is preserved here by asserting the successor has a different id and the
+    /// original is still Retired.
+    /// </remarks>
+    public async Task A_retired_device_enrolls_again_as_a_new_device()
     {
         await using var db = _fixture.CreateDbContext();
         var (org, _) = await SeedOrgAndTokenAsync(db);
@@ -79,16 +91,60 @@ public sealed class DeviceLifecycleTests(PostgresFixture fixture)
         var service = new DeviceLifecycleService(db, Audit(db), TimeProvider.System);
         await service.OffboardAsync(org.Id, first.DeviceId, Guid.CreateVersion7(), "admin");
 
-        // Same machine, fresh token: re-enrollment is refused while retired.
-        var refused = await Enrollment(db).EnrollAsync(await IssueTokenSecretAsync(db, org.Id), "RE-PC", machineId, "1.0", null);
-        refused.Success.ShouldBeFalse("a retired device must not re-enroll until an admin reactivates it");
+        // Same machine, fresh token: it enrolls, as a successor record.
+        var successor = await Enrollment(db).EnrollAsync(
+            await IssueTokenSecretAsync(db, org.Id), "RE-PC", machineId, "1.0", null);
 
-        // Reactivate, then re-enrollment succeeds and re-issues a credential.
+        successor.Success.ShouldBeTrue("a retired machine may enroll again");
+        successor.DeviceId.ShouldNotBe(first.DeviceId, "as a new device, not the retired one");
+        successor.ReEnrolled.ShouldBeFalse("this is a first enrollment for the new record");
+
+        await using var verify = _fixture.CreateDbContext();
+
+        // The retired record is untouched, and its credentials stay revoked.
+        (await verify.Devices.SingleAsync(d => d.Id == first.DeviceId)).Status
+            .ShouldBe(DeviceStatus.Retired);
+        (await verify.AgentCredentials.CountAsync(c => c.DeviceId == first.DeviceId && c.RevokedAt == null))
+            .ShouldBe(0, "retiring revoked them and enrolling elsewhere must not restore them");
+
+        // The successor is active and holds exactly one live credential.
+        (await verify.Devices.SingleAsync(d => d.Id == successor.DeviceId)).Status
+            .ShouldBe(DeviceStatus.Active);
+        (await verify.AgentCredentials.CountAsync(c => c.DeviceId == successor.DeviceId && c.RevokedAt == null))
+            .ShouldBe(1, "the new device gets exactly one fresh active credential");
+
+        // Exactly one active row for the machine, which is the real constraint.
+        (await verify.Devices.CountAsync(
+            d => d.MachineIdentifier == machineId && d.Status == DeviceStatus.Active))
+            .ShouldBe(1);
+    }
+
+    /// <summary>
+    /// Reactivation still works, and still requires a fresh enrollment for a
+    /// credential. Kept because it is a separate administrative path from the
+    /// successor flow above, and undoing a retirement must remain possible.
+    /// </summary>
+    [Fact]
+    public async Task A_reactivated_device_re_enrolls_in_place()
+    {
+        await using var db = _fixture.CreateDbContext();
+        var (org, _) = await SeedOrgAndTokenAsync(db);
+        var machineId = "m-" + Guid.CreateVersion7().ToString("N");
+
+        var first = await Enrollment(db).EnrollAsync(await IssueTokenSecretAsync(db, org.Id), "RA-PC", machineId, "1.0", null);
+        first.Success.ShouldBeTrue();
+
+        var service = new DeviceLifecycleService(db, Audit(db), TimeProvider.System);
+        await service.OffboardAsync(org.Id, first.DeviceId, Guid.CreateVersion7(), "admin");
+
         (await service.ReactivateAsync(org.Id, first.DeviceId, Guid.CreateVersion7(), "admin"))
             .ShouldBe(DeviceLifecycleResult.Success);
 
-        var reenrolled = await Enrollment(db).EnrollAsync(await IssueTokenSecretAsync(db, org.Id), "RE-PC", machineId, "1.0", null);
+        var reenrolled = await Enrollment(db).EnrollAsync(
+            await IssueTokenSecretAsync(db, org.Id), "RA-PC", machineId, "1.0", null);
+
         reenrolled.Success.ShouldBeTrue("a reactivated device may re-enroll");
+        reenrolled.DeviceId.ShouldBe(first.DeviceId, "reactivation keeps the original record");
 
         await using var verify = _fixture.CreateDbContext();
         (await verify.AgentCredentials.CountAsync(c => c.DeviceId == first.DeviceId && c.RevokedAt == null))

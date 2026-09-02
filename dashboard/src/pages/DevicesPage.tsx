@@ -10,6 +10,12 @@ import {
   type DevicePage,
 } from '../api/client'
 import { ConfirmDialog } from '../components/ConfirmDialog'
+import {
+  defaultDeviceListView,
+  deviceListViews,
+  statusFilterFor,
+  type DeviceListView,
+} from './deviceListView'
 import { Icon } from '../components/Icon'
 import {
   describeIneligibility,
@@ -44,7 +50,7 @@ export function DevicesPage() {
   const [search, setSearch] = useState('')
   // Active is the working view; removed devices keep their history under
   // Retired instead of padding the day-to-day estate list.
-  const [view, setView] = useState<'Active' | 'Retired' | 'All'>('Active')
+  const [view, setView] = useState<DeviceListView>(defaultDeviceListView)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -64,7 +70,7 @@ export function DevicesPage() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      setData(await getDevices(page, PAGE_SIZE, search, view === 'All' ? undefined : view))
+      setData(await getDevices(page, PAGE_SIZE, search, statusFilterFor(view)))
       setError(null)
     } catch {
       setError('Could not load devices from the Admin API.')
@@ -186,12 +192,14 @@ export function DevicesPage() {
             value={view}
             onChange={(e) => {
               setPage(1)
-              setView(e.target.value as 'Active' | 'Retired' | 'All')
+              setView(e.target.value as DeviceListView)
             }}
           >
-            <option value="Active">Active</option>
-            <option value="Retired">Retired</option>
-            <option value="All">All</option>
+            {deviceListViews.map((v) => (
+              <option key={v} value={v}>
+                {v}
+              </option>
+            ))}
           </select>
           <div className="spacer" />
           <button type="button" onClick={() => void load()} disabled={loading}>

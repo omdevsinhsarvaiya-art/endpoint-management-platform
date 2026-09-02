@@ -176,8 +176,18 @@ public sealed class DeviceRemovalEndpointTests(AdminApiPostgresFixture fixture)
 
     // ----------------------------------------------------------- no duplicate
 
+    /// <summary>
+    /// A retired device is never revived in place.
+    /// </summary>
+    /// <remarks>
+    /// The invariant is that retirement is final for <em>that record</em>: nothing
+    /// turns the retired row back into an active one except an administrator
+    /// explicitly reactivating it. The domain enforces this directly -- ReEnroll
+    /// refuses outright -- so a lost or replayed enrollment cannot quietly undo an
+    /// offboarding.
+    /// </remarks>
     [Fact]
-    public async Task A_removed_machine_cannot_silently_become_an_active_duplicate()
+    public async Task A_retired_device_record_is_never_revived_in_place()
     {
         var (deviceId, _) = await SeedDeviceAsync("REMOVE-NODUP");
         using var client = await ClientAsync(AdminApiPostgresFixture.ItAdminEmail);
@@ -185,20 +195,82 @@ public sealed class DeviceRemovalEndpointTests(AdminApiPostgresFixture fixture)
 
         var retired = await ReloadAsync(deviceId);
 
-        // The domain refuses re-enrollment of a retired device outright, and the
-        // unique (organization, machine identifier) index makes a second row for
-        // the same machine unrepresentable — together: no path back to Active
-        // except an administrator's explicit reactivation.
         await using var db = _fixture.CreateDbContext();
         var tracked = await db.Devices.SingleAsync(d => d.Id == deviceId);
+
         Should.Throw<InvalidOperationException>(() => tracked.ReEnroll(
             retired.Hostname, "1.1.0", "Windows 11 Pro", Guid.CreateVersion7(), DateTimeOffset.UtcNow));
 
+        (await ReloadAsync(deviceId)).Status.ShouldBe(DeviceStatus.Retired);
+    }
+
+    /// <summary>
+    /// Two <em>active</em> rows for one machine remain impossible.
+    /// </summary>
+    /// <remarks>
+    /// This is what the uniqueness constraint is actually for, and narrowing it to
+    /// Active rows must not have weakened it. Asserted separately from the
+    /// retired-plus-new case below so a regression in either direction is
+    /// attributable to one test rather than two behaviours sharing an assertion.
+    /// </remarks>
+    [Fact]
+    public async Task Two_active_devices_cannot_share_a_machine_identifier()
+    {
+        var (deviceId, _) = await SeedDeviceAsync("REMOVE-DUPACTIVE");
+        var active = await ReloadAsync(deviceId);
+
+        await using var db = _fixture.CreateDbContext();
+
         var duplicate = Device.Enroll(
-            retired.OrganizationId, retired.Hostname, retired.MachineIdentifier, "1.1.0",
-            "Windows 11 Pro", retired.EnrolledWithTokenId, DateTimeOffset.UtcNow);
+            active.OrganizationId, active.Hostname, active.MachineIdentifier, "1.1.0",
+            "Windows 11 Pro", active.EnrolledWithTokenId, DateTimeOffset.UtcNow);
+
         db.Devices.Add(duplicate);
+
         await Should.ThrowAsync<DbUpdateException>(() => db.SaveChangesAsync());
+    }
+
+    /// <summary>
+    /// A retired device does not hold its machine identifier hostage.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The point of the whole lifecycle. Retiring a machine and reinstalling the
+    /// agent on it must produce a <em>new</em> device with its own id and its own
+    /// history -- otherwise retirement would either be silently undone by whoever
+    /// next ran the installer, or the machine could never come back at all without
+    /// an administrator reactivating it by hand.
+    /// </para>
+    /// <para>
+    /// The retired row is asserted to survive untouched, because the new device is
+    /// supposed to be a successor, not a replacement.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task A_retired_device_frees_its_machine_identifier_for_a_new_record()
+    {
+        var (deviceId, _) = await SeedDeviceAsync("REMOVE-SUCCESSOR");
+        using var client = await ClientAsync(AdminApiPostgresFixture.ItAdminEmail);
+        await client.PostAsync(OffboardOf(deviceId), null);
+
+        var retired = await ReloadAsync(deviceId);
+
+        await using var db = _fixture.CreateDbContext();
+
+        var successor = Device.Enroll(
+            retired.OrganizationId, retired.Hostname, retired.MachineIdentifier, "1.4.1",
+            "Windows 11 Pro", retired.EnrolledWithTokenId, DateTimeOffset.UtcNow);
+
+        db.Devices.Add(successor);
+        await db.SaveChangesAsync();
+
+        successor.Id.ShouldNotBe(deviceId, "the machine gets a new identity, not the old one back");
+        successor.Status.ShouldBe(DeviceStatus.Active);
+
+        // The retired record is preserved exactly as the administrator left it.
+        var stillRetired = await ReloadAsync(deviceId);
+        stillRetired.Status.ShouldBe(DeviceStatus.Retired);
+        stillRetired.MachineIdentifier.ShouldBe(retired.MachineIdentifier);
     }
 
     // ------------------------------------------------------------------ rbac
