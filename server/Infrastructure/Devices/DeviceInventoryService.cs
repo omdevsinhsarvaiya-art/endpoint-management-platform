@@ -609,7 +609,10 @@ public sealed class DeviceInventoryService(
                 Truncate(app.InstallDate, 32),
                 Truncate(app.InstallLocation, 512),
                 Truncate(app.Architecture, 16),
-                now));
+                now,
+                Truncate(app.InstallationScope, 16),
+                Truncate(app.InstalledForUser, 256),
+                Truncate(app.ProductCode, 64)));
         }
     }
 

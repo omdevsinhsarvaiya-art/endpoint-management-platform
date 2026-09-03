@@ -1,13 +1,25 @@
 import { useCallback, useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { PackagesPanel } from './PackagesPanel'
 import {
+  getSoftwareInstallations,
   getSoftwarePublishers,
   getSoftwareTitles,
+  type SoftwareInstallationPage,
+  type SoftwareTitle,
   type SoftwareTitlePage,
 } from '../api/client'
 import { Icon } from '../components/Icon'
+import {
+  installationSummary,
+  isSameTitle,
+  registryViewLabel,
+  scopeLabel,
+  titleKey,
+} from './softwareView'
 
 const PAGE_SIZE = 30
+const DEVICE_PAGE_SIZE = 50
 
 export function SoftwarePage() {
   const [data, setData] = useState<SoftwareTitlePage | null>(null)
@@ -17,6 +29,12 @@ export function SoftwarePage() {
   const [publisher, setPublisher] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+
+  // The title whose devices are being shown. Null closes the drill-down.
+  const [selected, setSelected] = useState<SoftwareTitle | null>(null)
+  const [installs, setInstalls] = useState<SoftwareInstallationPage | null>(null)
+  const [installsError, setInstallsError] = useState<string | null>(null)
+  const [installsLoading, setInstallsLoading] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -39,6 +57,36 @@ export function SoftwarePage() {
       .then(setPublishers)
       .catch(() => setPublishers([]))
   }, [])
+
+  // Fetched on demand, not with the table: the device list for every title on a
+  // page would be a request per row and most are never opened.
+  useEffect(() => {
+    if (selected === null) {
+      setInstalls(null)
+      setInstallsError(null)
+      return
+    }
+
+    let cancelled = false
+    setInstallsLoading(true)
+    setInstallsError(null)
+
+    getSoftwareInstallations(selected.name, selected.version, selected.publisher, 1, DEVICE_PAGE_SIZE)
+      .then((result) => {
+        // A slower earlier request must not overwrite a newer selection.
+        if (!cancelled) setInstalls(result)
+      })
+      .catch(() => {
+        if (!cancelled) setInstallsError('Could not load the devices for this application.')
+      })
+      .finally(() => {
+        if (!cancelled) setInstallsLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [selected])
 
   const totalPages = data ? Math.max(1, Math.ceil(data.totalCount / PAGE_SIZE)) : 1
 
@@ -114,8 +162,23 @@ export function SoftwarePage() {
                 </thead>
                 <tbody>
                   {data.items.map((t) => (
-                    <tr key={`${t.name}|${t.version}|${t.publisher}`}>
-                      <td>{t.name}</td>
+                    <tr
+                      key={titleKey(t)}
+                      className={isSameTitle(selected, t) ? 'row-selected' : undefined}
+                    >
+                      <td>
+                        {/* A button, not a click handler on the row: the drill-down
+                            has to be reachable from the keyboard like every other
+                            control on this page. */}
+                        <button
+                          type="button"
+                          className="link-button"
+                          aria-expanded={isSameTitle(selected, t)}
+                          onClick={() => setSelected(isSameTitle(selected, t) ? null : t)}
+                        >
+                          {t.name}
+                        </button>
+                      </td>
                       <td>{t.version ?? '—'}</td>
                       <td>{t.publisher ?? '—'}</td>
                       <td>
@@ -157,6 +220,98 @@ export function SoftwarePage() {
           </>
         )}
       </div>
+
+      {selected && (
+        <div className="card">
+          <div className="card-header">
+            <h2>{selected.name}</h2>
+            <button type="button" className="btn-sm" onClick={() => setSelected(null)}>
+              Close
+            </button>
+          </div>
+
+          <dl className="detail-grid">
+            <div>
+              <dt>Version</dt>
+              <dd>{selected.version ?? 'Not reported'}</dd>
+            </div>
+            <div>
+              <dt>Publisher</dt>
+              <dd>{selected.publisher ?? 'Not reported'}</dd>
+            </div>
+            <div>
+              <dt>Installations</dt>
+              <dd>{installs ? installationSummary(installs.items, installs.totalCount) : '—'}</dd>
+            </div>
+          </dl>
+
+          {installsError && (
+            <div className="error-banner" role="alert">
+              <Icon name="alert" size={15} />
+              <span>{installsError}</span>
+            </div>
+          )}
+
+          {installsLoading && !installs && <div className="loading">Loading devices…</div>}
+
+          {installs && installs.items.length === 0 && !installsError && (
+            <div className="empty-state">
+              <Icon name="devices" size={40} strokeWidth={1.25} className="icon" />
+              <div className="title">No devices in scope</div>
+              <div>
+                This application is not installed on any device you have access to.
+              </div>
+            </div>
+          )}
+
+          {installs && installs.items.length > 0 && (
+            <>
+              <div className="table-wrap">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Device</th>
+                      <th>Status</th>
+                      <th>Installed for</th>
+                      <th>Found in</th>
+                      <th>Reported</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {installs.items.map((i) => (
+                      // Keyed by device AND user: one device legitimately appears
+                      // once per user who has the application installed.
+                      <tr key={`${i.deviceId}|${i.installedForUser ?? ''}`}>
+                        <td>
+                          <Link to={`/devices/${i.deviceId}`}>{i.displayName ?? i.hostname}</Link>
+                        </td>
+                        <td>
+                          <span
+                            className={`badge ${i.deviceStatus === 'Active' ? 'ok' : 'neutral'}`}
+                          >
+                            {i.deviceStatus}
+                          </span>
+                        </td>
+                        <td>{scopeLabel(i)}</td>
+                        <td>{registryViewLabel(i.architecture)}</td>
+                        <td>{new Date(i.collectedAt).toLocaleString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {installs.totalCount > installs.items.length && (
+                <div className="pagination">
+                  <span>
+                    Showing the first {installs.items.length} of {installs.totalCount} installations
+                  </span>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
     </>
   )
 }

@@ -19,6 +19,9 @@ internal sealed class DeviceSoftwareConfiguration : IEntityTypeConfiguration<Dev
         builder.Property(s => s.InstallDate).HasMaxLength(32);
         builder.Property(s => s.InstallLocation).HasMaxLength(512);
         builder.Property(s => s.Architecture).HasMaxLength(16);
+        builder.Property(s => s.InstallationScope).HasMaxLength(16);
+        builder.Property(s => s.InstalledForUser).HasMaxLength(256);
+        builder.Property(s => s.ProductCode).HasMaxLength(64);
         builder.Property(s => s.CollectedAt).IsRequired();
         builder.Property(s => s.CreatedAt).IsRequired();
         builder.Property(s => s.UpdatedAt).IsRequired();
@@ -37,5 +40,10 @@ internal sealed class DeviceSoftwareConfiguration : IEntityTypeConfiguration<Dev
 
         builder.HasIndex(s => s.Publisher)
             .HasDatabaseName("ix_device_software_publisher");
+
+        // Relating an installed application to an approved managed package by
+        // MsiProductCode. Sparse - only MSI-installed products have one.
+        builder.HasIndex(s => s.ProductCode)
+            .HasDatabaseName("ix_device_software_product_code");
     }
 }

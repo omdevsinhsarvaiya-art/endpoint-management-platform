@@ -177,7 +177,57 @@ are reverted automatically.
 - **Phase 7 (software inventory): complete.** Installed apps read from the
   Windows uninstall registry (read-only), ingested with the inventory snapshot,
   device Software tab plus a fleet-wide Software page (search, publisher filter,
-  per-title install counts). Verified live with this laptop's 26 real titles.
+  per-title install counts, and a drill-down naming the devices a title is on).
+- **Milestone 1.5.0 (complete software discovery): complete.** Three sources are
+  read, all read-only and all registry: the 64-bit and 32-bit (WOW6432Node)
+  machine uninstall keys, and the uninstall key of every **loaded user profile
+  hive** under HKEY_USERS.
+
+  The third is the substance. The agent runs as LocalSystem, so the previous
+  `RegistryHive.CurrentUser` read resolved to SYSTEM's own profile — which holds
+  no installed software at all. It contributed **zero rows across the entire
+  fleet** while appearing to cover per-user installs, so every application that
+  installs into a user profile by default was invisible: Zoom, Teams, Discord,
+  OneDrive, Docker Desktop, VS Code's user installer, and most Electron apps.
+  Reading HKEY_USERS instead recovered 7 such applications on the first machine
+  tested, Zoom Workplace among them.
+
+  **What it still does not see:** users who are fully signed out have no loaded
+  hive. Reading those would mean `RegLoadKey` on a profile the agent does not
+  own, which can fail on a locked or roaming profile and, if a hive were left
+  mounted, block that user's next logon. Under-reporting a signed-out user is the
+  safer failure and is a deliberate choice, not an oversight.
+
+  Each entry now carries its **installation scope** (`Machine`/`User`), the
+  **account** a per-user install belongs to, and the **MSI product code** where
+  one exists — the last being the join between an installed application and an
+  approved managed package. Normalization and de-duplication live in
+  `SoftwareInventoryNormalizer`, a pure class in `EndpointAgent.Core` so the
+  rules are tested with fixtures rather than against whatever a CI machine
+  happens to have installed. An installation's identity is
+  (name, version, publisher, scope, user): the same product installed for two
+  people is two installations, because uninstalling one leaves the other running.
+
+  Consequently **fleet install counts are over DISTINCT devices**, not rows — a
+  machine where three people have the same application is one device, and
+  counting rows would overstate the coverage an administrator decides on.
+
+  `Architecture` is **not** the binary's architecture and is not presented as
+  such: it records which uninstall registry view the entry was found in, and
+  64-bit products routinely register under WOW6432Node (Chrome, Edge and Brave
+  all report `x86`). The console labels it "Found in / registry view".
+
+- **Application execution control (enable/disable): NOT implemented, by
+  decision.** The fleet runs Windows 11 Pro. AppLocker enforcement requires
+  Enterprise/Education, so it is unavailable by edition. WDAC/App Control is
+  available on Pro but cannot be applied under ADR-0005: the supported refresh is
+  `CiTool.exe` (a process launch), policy compilation is a PowerShell cmdlet, and
+  a malformed CI policy can prevent a machine booting. SRP is deprecated and
+  trivially bypassed; IFEO debugger hijacking is a hostile technique. Real
+  execution blocking therefore requires a dedicated application-control
+  subsystem, and **catalogue withdrawal (`IsWithdrawn`) is not it** — withdrawing
+  a package stops new deployments and does nothing to software already installed.
+  The console must never imply otherwise.
 - **Phase 4 (local user/group management) — COMPLETE (read + write).** Windows
   local accounts are now fully manageable, not just observable. Nine typed tasks
   (create/delete/enable/disable/reset-password/force-password-change/change-type/

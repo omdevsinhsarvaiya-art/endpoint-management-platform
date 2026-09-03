@@ -824,7 +824,10 @@ public static class AgentEndpoints
         {
             if (string.IsNullOrWhiteSpace(app.Name) || app.Name.Length > 384
                 || app.Version is { Length: > 128 } || app.Publisher is { Length: > 256 }
-                || app.InstallLocation is { Length: > 512 })
+                || app.InstallLocation is { Length: > 512 }
+                || app.InstallationScope is { Length: > 16 }
+                || app.InstalledForUser is { Length: > 256 }
+                || app.ProductCode is { Length: > 64 })
             {
                 return "A software entry is malformed.";
             }

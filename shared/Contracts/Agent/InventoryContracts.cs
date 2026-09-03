@@ -182,13 +182,45 @@ public sealed record InventorySecurityPosture(
 /// <param name="InstallDate">Install date as reported (yyyymmdd or free text), when present.</param>
 /// <param name="InstallLocation">Install path, when present.</param>
 /// <param name="Architecture">"x64", "x86" or null.</param>
+/// <summary>One installed application, as discovered on the endpoint.</summary>
+/// <param name="Architecture">
+/// Which uninstall registry view the entry was found in -- <c>x64</c>, <c>x86</c>,
+/// or null for a per-user entry. Deliberately NOT the binary's architecture:
+/// Chrome, Edge and Brave are 64-bit yet register under WOW6432Node, so this
+/// reports where Windows recorded the product, not what the product is. The
+/// console labels it accordingly rather than claiming more than it knows.
+/// </param>
+/// <param name="InstallationScope">
+/// <c>Machine</c> for an all-users install, <c>User</c> for a per-user one. Null
+/// from agents older than 1.5.0, which had no notion of scope.
+/// </param>
+/// <param name="InstalledForUser">
+/// For a per-user install, the account it belongs to (<c>DOMAIN\name</c>, or the
+/// SID when the name cannot be resolved). Null for machine-wide installs, and
+/// null from agents older than 1.5.0. The same product installed for two users is
+/// two real installations and is reported as two entries.
+/// </param>
+/// <param name="ProductCode">
+/// The Windows Installer product code (<c>{GUID}</c>) when the entry has one.
+/// Null for non-MSI installers. Lets an installed application be matched against
+/// a managed package's MsiProductCode.
+/// </param>
+/// <remarks>
+/// The trailing parameters carry defaults so that an agent predating them
+/// deserializes unchanged: System.Text.Json binds records by constructor
+/// parameter name, and a payload that omits them simply leaves them null. Adding
+/// fields here is therefore safe; reordering or renaming the existing six is not.
+/// </remarks>
 public sealed record InventorySoftware(
     string Name,
     string? Version,
     string? Publisher,
     string? InstallDate,
     string? InstallLocation,
-    string? Architecture);
+    string? Architecture,
+    string? InstallationScope = null,
+    string? InstalledForUser = null,
+    string? ProductCode = null);
 
 /// <summary>Windows local accounts snapshot.</summary>
 public sealed record InventoryLocalAccounts(

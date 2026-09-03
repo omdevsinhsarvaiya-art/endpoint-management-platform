@@ -7,6 +7,14 @@ namespace EndpointAgent.Windows.Tests;
 /// Windows integration test against this machine's real uninstall registry.
 /// Read-only; asserts invariants any real machine satisfies.
 /// </summary>
+/// <remarks>
+/// Deliberately asserts no particular application by name. Which products a CI
+/// agent or a developer laptop happens to have installed is not a property of
+/// this code, and a test that depended on it would fail for the wrong reason.
+/// The shape of what is collected is asserted here; the rules that decide what
+/// counts as one application are proven with fixtures in
+/// <c>SoftwareInventoryNormalizerTests</c>.
+/// </remarks>
 public sealed class WindowsSoftwareCollectorTests
 {
     private static WindowsSoftwareCollector Create() =>
@@ -30,12 +38,79 @@ public sealed class WindowsSoftwareCollectorTests
     }
 
     [Fact]
-    public async Task Entries_are_deduplicated_by_name_and_version()
+    public async Task Entries_are_deduplicated_by_installation_identity()
     {
         var software = await Create().CollectAsync(CancellationToken.None);
 
-        var keys = software.Select(s => $"{s.Name}|{s.Version}").ToList();
-        keys.Distinct().Count().ShouldBe(keys.Count);
+        var keys = software
+            .Select(s => $"{s.Name}|{s.Version}|{s.Publisher}|{s.InstallationScope}|{s.InstalledForUser}")
+            .ToList();
+
+        keys.Distinct(StringComparer.OrdinalIgnoreCase).Count().ShouldBe(keys.Count);
+    }
+
+    /// <summary>
+    /// Every entry declares whether it is an all-users or a per-user install.
+    /// Before 1.5.0 there was no such distinction and per-user software was not
+    /// collected at all, because the agent read HKCU while running as LocalSystem.
+    /// </summary>
+    [Fact]
+    public async Task Every_entry_declares_its_installation_scope()
+    {
+        var software = await Create().CollectAsync(CancellationToken.None);
+
+        software.ShouldAllBe(s => s.InstallationScope == "Machine" || s.InstallationScope == "User");
+    }
+
+    /// <summary>
+    /// Attribution is exactly as good as the scope claims: a per-user install
+    /// names the account it belongs to, and a machine-wide one names nobody,
+    /// because an all-users install genuinely belongs to no single account.
+    /// </summary>
+    [Fact]
+    public async Task User_attribution_matches_the_declared_scope()
+    {
+        var software = await Create().CollectAsync(CancellationToken.None);
+
+        software.Where(s => s.InstallationScope == "Machine")
+            .ShouldAllBe(s => s.InstalledForUser == null);
+
+        software.Where(s => s.InstallationScope == "User")
+            .ShouldAllBe(s => !string.IsNullOrWhiteSpace(s.InstalledForUser));
+    }
+
+    /// <summary>
+    /// A product code, where present, is a real GUID in registry form - it is the
+    /// join between an installed application and an approved managed package, so
+    /// a malformed one would silently fail to match rather than error.
+    /// </summary>
+    [Fact]
+    public async Task Any_product_code_collected_is_a_well_formed_guid()
+    {
+        var software = await Create().CollectAsync(CancellationToken.None);
+
+        foreach (var code in software.Select(s => s.ProductCode).Where(c => c is not null))
+        {
+            code!.ShouldStartWith("{");
+            code.ShouldEndWith("}");
+            Guid.TryParse(code, out _).ShouldBeTrue($"'{code}' is not a product code");
+        }
+    }
+
+    /// <summary>
+    /// The whole report is rejected by the Agent API if any field is over length,
+    /// so the collector must never emit one - see SoftwareInventoryNormalizer.
+    /// </summary>
+    [Fact]
+    public async Task No_entry_exceeds_the_wire_limits()
+    {
+        var software = await Create().CollectAsync(CancellationToken.None);
+
+        software.Count.ShouldBeLessThan(8192);
+        software.ShouldAllBe(s => s.Name.Length <= 384);
+        software.ShouldAllBe(s => s.Version == null || s.Version.Length <= 128);
+        software.ShouldAllBe(s => s.Publisher == null || s.Publisher.Length <= 256);
+        software.ShouldAllBe(s => s.InstallLocation == null || s.InstallLocation.Length <= 512);
     }
 
     [Fact]

@@ -69,6 +69,156 @@ public sealed class InventoryEndpointTests(AgentApiPostgresFixture fixture)
         return message;
     }
 
+    /// <summary>
+    /// An authenticated device, without going through enrollment.
+    /// </summary>
+    /// <remarks>
+    /// Enrollment is rate limited and that budget is shared by every test in this
+    /// assembly, so classes that enroll once per test start pushing others into
+    /// 429 as the suite grows. The software tests below need an authenticated
+    /// device and nothing more, so they seed one rather than spending enrollment
+    /// budget that the enrollment tests actually need.
+    /// </remarks>
+    private async Task<(Guid DeviceId, string Credential)> SeedDeviceCredentialAsync()
+    {
+        await using var db = _fixture.CreateDbContext();
+        var org = await db.Organizations.OrderBy(o => o.CreatedAt).FirstAsync();
+
+        var token = new EnrollmentToken(
+            org.Id, $"sw-{Guid.CreateVersion7():N}",
+            SecretGenerator.HashSecret(SecretGenerator.GenerateSecret()),
+            Guid.CreateVersion7(), "software-inventory-tests", DateTimeOffset.UtcNow.AddHours(1), 1);
+        db.EnrollmentTokens.Add(token);
+
+        var device = Domain.Devices.Device.Enroll(
+            org.Id, "SW-PC", $"machine-{Guid.CreateVersion7()}", "1.5.0",
+            "Microsoft Windows 11 Pro", token.Id, DateTimeOffset.UtcNow);
+        db.Devices.Add(device);
+
+        var secret = SecretGenerator.GenerateSecret();
+        db.AgentCredentials.Add(new AgentCredential(
+            device.Id, SecretGenerator.GenerateKeyId(), SecretGenerator.HashSecret(secret),
+            DateTimeOffset.UtcNow));
+
+        await db.SaveChangesAsync();
+
+        var credential = await db.AgentCredentials.AsNoTracking()
+            .SingleAsync(c => c.DeviceId == device.Id);
+
+        return (device.Id, $"{credential.KeyId}.{secret}");
+    }
+
+    /// <summary>
+    /// Per-user software is persisted with the account it belongs to.
+    /// </summary>
+    /// <remarks>
+    /// The 1.5.0 discovery fix exists because per-user installs were invisible:
+    /// the agent read HKCU while running as LocalSystem, which is SYSTEM's own
+    /// profile and holds nothing. These fields are what make such an install
+    /// distinguishable from a machine-wide one once it is finally collected.
+    /// </remarks>
+    [Fact]
+    public async Task Software_scope_user_attribution_and_product_code_are_persisted()
+    {
+        var (deviceId, credential) = await SeedDeviceCredentialAsync();
+        using var client = _fixture.Factory.CreateClient();
+
+        var report = MakeReport() with
+        {
+            Software =
+            [
+                new InventorySoftware(
+                    "Zoom Workplace", "7.1.5", "Zoom Communications, Inc.", null, null, null,
+                    InstallationScope: "User", InstalledForUser: @"CORP\jsmith", ProductCode: null),
+                new InventorySoftware(
+                    "7-Zip", "24.09", "Igor Pavlov", null, @"C:\Program Files\7-Zip", "x64",
+                    InstallationScope: "Machine", InstalledForUser: null,
+                    ProductCode: "{23170F69-40C1-2702-2409-000001000000}"),
+            ],
+        };
+
+        var response = await client.SendAsync(
+            NewRequest(AgentProtocol.Routes.Inventory, report, credential));
+
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        await using var dbContext = _fixture.CreateDbContext();
+        var software = await dbContext.DeviceSoftware
+            .Where(s => s.DeviceId == deviceId)
+            .ToListAsync();
+
+        var zoom = software.Single(s => s.Name == "Zoom Workplace");
+        zoom.InstallationScope.ShouldBe("User");
+        zoom.InstalledForUser.ShouldBe(@"CORP\jsmith");
+        zoom.ProductCode.ShouldBeNull();
+
+        var sevenZip = software.Single(s => s.Name == "7-Zip");
+        sevenZip.InstallationScope.ShouldBe("Machine");
+        // A machine-wide install belongs to no single account; saying otherwise
+        // would be an attribution the platform cannot support.
+        sevenZip.InstalledForUser.ShouldBeNull();
+        sevenZip.ProductCode.ShouldBe("{23170F69-40C1-2702-2409-000001000000}");
+    }
+
+    /// <summary>
+    /// An agent predating 1.5.0 keeps working: the fields it never sends are
+    /// simply absent, not a rejected payload.
+    /// </summary>
+    /// <remarks>
+    /// Most of the fleet runs 1.1.x. If adding these fields had broken their
+    /// uploads, the platform would have lost inventory for nearly every device.
+    /// </remarks>
+    [Fact]
+    public async Task An_older_agent_that_omits_the_new_software_fields_is_still_accepted()
+    {
+        var (deviceId, credential) = await SeedDeviceCredentialAsync();
+        using var client = _fixture.Factory.CreateClient();
+
+        var report = MakeReport() with
+        {
+            Software = [new InventorySoftware("Legacy App", "1.0", "Contoso", null, null, "x64")],
+        };
+
+        var response = await client.SendAsync(
+            NewRequest(AgentProtocol.Routes.Inventory, report, credential));
+
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        await using var dbContext = _fixture.CreateDbContext();
+        var app = await dbContext.DeviceSoftware.SingleAsync(s => s.DeviceId == deviceId);
+
+        app.Name.ShouldBe("Legacy App");
+        app.InstallationScope.ShouldBeNull();
+        app.InstalledForUser.ShouldBeNull();
+        app.ProductCode.ShouldBeNull();
+    }
+
+    /// <summary>
+    /// An over-length new field is refused like any other, rather than reaching
+    /// the database and failing there.
+    /// </summary>
+    [Fact]
+    public async Task An_over_length_software_field_is_rejected()
+    {
+        var (_, credential) = await SeedDeviceCredentialAsync();
+        using var client = _fixture.Factory.CreateClient();
+
+        var report = MakeReport() with
+        {
+            Software =
+            [
+                new InventorySoftware(
+                    "App", "1.0", "Contoso", null, null, "x64",
+                    InstalledForUser: new string('u', 257)),
+            ],
+        };
+
+        var response = await client.SendAsync(
+            NewRequest(AgentProtocol.Routes.Inventory, report, credential));
+
+        response.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+    }
+
     [Fact]
     public async Task An_authenticated_inventory_upload_persists_hardware_and_network()
     {

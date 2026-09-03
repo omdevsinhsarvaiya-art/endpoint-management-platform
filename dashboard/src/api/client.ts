@@ -496,6 +496,55 @@ export function getSoftwarePublishers(): Promise<string[]> {
   return request<string[]>('/admin/v1/software/publishers')
 }
 
+/**
+ * One installation of a title on one device.
+ *
+ * `deviceId` is the identity: hostnames repeat across a fleet and change, so
+ * nothing addresses a device by one. `installedForUser` is set only for a
+ * per-user install, so a device can legitimately appear more than once here --
+ * that is two real installations, not a duplicate row.
+ */
+export interface SoftwareInstallation {
+  deviceId: string
+  hostname: string
+  displayName: string | null
+  deviceStatus: string
+  lastSeenAt: string | null
+  installationScope: string | null
+  installedForUser: string | null
+  architecture: string | null
+  installLocation: string | null
+  productCode: string | null
+  collectedAt: string
+}
+
+export interface SoftwareInstallationPage {
+  items: SoftwareInstallation[]
+  totalCount: number
+  page: number
+  pageSize: number
+}
+
+/**
+ * The devices one title is installed on.
+ *
+ * Version and publisher are part of the title's identity, including when absent:
+ * a title with no recorded version is a distinct title, not a wildcard, so the
+ * absent case is sent explicitly rather than omitted.
+ */
+export function getSoftwareInstallations(
+  name: string,
+  version: string | null,
+  publisher: string | null,
+  page: number,
+  pageSize: number,
+): Promise<SoftwareInstallationPage> {
+  const params = new URLSearchParams({ name, page: String(page), pageSize: String(pageSize) })
+  if (version !== null) params.set('version', version)
+  if (publisher !== null) params.set('publisher', publisher)
+  return request<SoftwareInstallationPage>(`/admin/v1/software/installations?${params}`)
+}
+
 export interface SecurityPosture {
   defenderAntivirusEnabled: boolean | null
   defenderRealtimeProtectionEnabled: boolean | null
