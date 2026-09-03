@@ -104,8 +104,12 @@ agent enforces: strictly newer version, x64, then downloads
         ↓
 SHA-256 over the actual bytes            → mismatch: DO NOT INSTALL
         ↓
-Authenticode via WinVerifyTrust + signer-subject pin, against the signer
-the server verified at publish            → failure: DO NOT INSTALL
+release declares a signer (Public mode): Authenticode via WinVerifyTrust
++ signer-subject pin, against the signer the server verified at publish
+                                         → failure: DO NOT INSTALL
+        ↓
+release declares none (Internal mode): there is no signature to check; the
+agent logs that it is installing on hash verification alone, and continues
         ↓
 state snapshot (credential + enrollment files → update-backup/)
         ↓
@@ -142,8 +146,9 @@ the agent itself just verified.
 | Failure | Outcome |
 |---|---|
 | download interrupted | partial file deleted; current install untouched |
-| hash mismatch | refused before signature check; file discarded |
-| signature/pin failure | refused; file discarded |
+| hash mismatch | refused before anything else is considered; file discarded |
+| signature/pin failure *(only where the release declares a signer, i.e. Public mode)* | refused; file discarded |
+| no signer declared *(Internal mode)* | **not a failure**: no signature is read, the agent logs it and installs on hash verification alone |
 | downgrade / same version | refused before any download |
 | wrong architecture | refused before any download |
 | task vs server mismatch | refused before any download |
@@ -226,14 +231,24 @@ server recomputes while storing the bytes.
 
 ## Signing
 
-The platform verifies more than it currently signs:
+Signing is a property of the **trust mode**, not a missing feature. Under
+Internal — the default, and what this deployment runs — no Authenticode
+certificate is required, no signature is read at publish, and every published
+release records a null signer. Under Public a signature by the configured
+publisher is required at publish and re-verified by the agent before install.
+Both paths are built and tested; which one runs is configuration.
 
-- **Verification is fully built**: WinVerifyTrust plus a signer-subject pin,
-  enforced by the agent whenever a release declares a signer.
-- **Signing is not**: there is no code-signing certificate in this
-  environment, so current builds are published with a null signer — which the
-  dashboard displays as an explicit **Unsigned build** badge, and the agent
-  logs loudly before installing on hash verification alone.
+- **Verification is fully built, and runs wherever a signature exists**:
+  WinVerifyTrust plus a signer-subject pin, enforced by the agent whenever a
+  release declares a signer. A release that declares none — every Internal
+  release — has no signature to check: the agent logs that it is installing on
+  hash verification alone and proceeds. It does not pretend to check a signature
+  that is not there, and the console says the same rather than promising a
+  refusal that will not happen.
+- **Integrity does not depend on signing in either mode.** The SHA-256 is the
+  server's, computed over the bytes it stored, re-checked over those bytes at
+  publish and re-checked by the agent over the downloaded bytes before anything
+  is scheduled. A mismatch is never installed.
 - **The CI signing step already exists and is wired**, in
   `build-agent-msi.yml`. It activates only when both
   `AGENT_SIGNING_CERT_PFX_BASE64` and `AGENT_SIGNING_CERT_PASSWORD` repository
@@ -243,8 +258,19 @@ The platform verifies more than it currently signs:
 - With no certificate configured the build still succeeds and the artifact is
   named `…-UNSIGNED`, with the run summary saying so — a silent skip that
   produced an artifact indistinguishable from a signed one would be the
-  dangerous outcome.
-- To go live: obtain an Authenticode certificate, add those two secrets, and
-  set the signer subject when publishing the release. From that point the
-  agent's existing signer pin enforces publisher identity on every install. No
-  self-signed certificate is used as a stand-in for real trust.
+  dangerous outcome. Such a build is publishable under Internal, and is what the
+  estate runs today.
+- **To move to Public distribution**: obtain an Authenticode certificate, add
+  those two secrets so CI signs the MSI, then set
+  `AgentReleases:TrustMode=Public` and `AgentReleases:ExpectedSignerSubject` on
+  the server. From that point publishing refuses an unsigned artifact, the
+  server records the signer it read from the signature itself, and the agent's
+  existing pin enforces publisher identity on every install. There is
+  deliberately **no signer field in the upload form** and none is planned: the
+  signer is a fact read from the artifact, never a value the party supplying the
+  build declares. No self-signed certificate is used as a stand-in for real
+  trust.
+- **What signing does not change.** An Internal build is trusted by this
+  platform for these machines, never by Windows: SmartScreen, AppLocker and WDAC
+  treat an unsigned MSI as unsigned whatever mode this platform is in. See
+  [threat-model.md](threat-model.md) (T10).

@@ -159,12 +159,14 @@ export function isDownloadable(release: AgentReleaseRow): boolean {
  * What downloading this build actually gets you, said plainly next to the button.
  *
  * A Draft is downloadable but not deployable, and an operator should not have to
- * infer that from a status badge two columns away.
+ * infer that from a status badge two columns away. Status is the whole answer:
+ * the signature used to be mentioned here too, but "and unsigned" is not a
+ * qualifier under Internal -- it is true of every release -- and where it does
+ * change an outcome, an unsigned draft under Public, {@link deploymentWarning}
+ * says so with the mode in hand and names the fix.
  */
 export function downloadHint(release: AgentReleaseRow): string | null {
   if (release.status !== 'Draft') return null
 
-  return isSigned(release)
-    ? 'Draft: install manually. Not offered to devices until published.'
-    : 'Draft and unsigned: install manually. Not offered to devices until published.'
+  return 'Draft: install manually. Not offered to devices until published.'
 }

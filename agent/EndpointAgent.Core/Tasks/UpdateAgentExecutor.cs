@@ -1,8 +1,10 @@
 using System.Security.Cryptography;
 using System.Text.Json;
 using EndpointAgent.Core.Abstractions;
+using EndpointAgent.Core.Configuration;
 using EndpointPlatform.Contracts.Agent;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace EndpointAgent.Core.Tasks;
 
@@ -38,8 +40,25 @@ public sealed class UpdateAgentExecutor(
     IAgentApiClient apiClient,
     IDeviceCredentialStore credentialStore,
     IAgentUpdateLauncher launcher,
+    IOptions<AgentOptions> options,
     ILogger<UpdateAgentExecutor> logger) : ITaskExecutor
 {
+    /// <summary>
+    /// Where the download is staged, resolved the way every other state-owning
+    /// component resolves it.
+    /// </summary>
+    /// <remarks>
+    /// In production the option is unset and this is <see cref="AgentPaths.StateDirectory"/>
+    /// exactly as before -- byte-identical behaviour. It exists because the
+    /// executor previously reached for that static path directly while its five
+    /// siblings honoured the option, which made the download gate untestable
+    /// anywhere <c>ProgramData\EndpointPlatformAgent</c> exists but is not
+    /// writable by the test process: the write failed before the hash and
+    /// signature gates these tests exist to prove, so they failed for a reason
+    /// that had nothing to do with what they assert.
+    /// </remarks>
+    private readonly string _stateDirectory = options.Value.StateDirectory ?? AgentPaths.StateDirectory;
+
     public string TaskType => "UpdateAgent";
 
     public const string BackupDirectoryName = AgentStateRestore.BackupDirectoryName;
@@ -109,7 +128,7 @@ public sealed class UpdateAgentExecutor(
         }
 
         // ---- Gate 4: download + hash over the actual bytes -----------------
-        var stateDir = AgentPaths.StateDirectory;
+        var stateDir = _stateDirectory;
 
         // The installer creates this directory, so in production it is always
         // there -- which is exactly why its absence went unnoticed until a clean
@@ -174,6 +193,13 @@ public sealed class UpdateAgentExecutor(
         // ---- Preserve identity, then hand over -----------------------------
         SnapshotStateFiles(stateDir);
 
+        // Deliberately the machine-wide log directory, NOT the state directory
+        // resolved above. Nothing on the update path creates this folder: the
+        // installer's AgentLogFolder component and Serilog's file sink do, and
+        // both are bound to the static path. msiexec /l*v against a directory
+        // nobody created fails 1622 and installs nothing, so honouring an
+        // override here would turn a working update into a failed one. It is
+        // also where an administrator looks when an upgrade goes wrong.
         var logPath = Path.Combine(AgentPaths.LogDirectory, $"agent-update-{info.Version}.msi.log");
         await launcher.ScheduleInstallAsync(msiPath, logPath, cancellationToken);
 

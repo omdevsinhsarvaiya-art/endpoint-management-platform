@@ -928,7 +928,8 @@ export function DeviceDetailPage() {
               <h3>Agent</h3>
               <p className="group-note">
                 This device runs agent <code>{device.agentVersion}</code>. The agent downloads the
-                MSI itself, verifies its hash and signature, and restarts into the new version —
+                MSI itself, verifies its SHA-256 against the hash the server recorded — and its
+                signature when the release carries one — then restarts into the new version;
                 identity, enrollment and credential are preserved.
               </p>
 
@@ -945,9 +946,12 @@ export function DeviceDetailPage() {
                     </option>
                   ))}
                 </select>
-                {/* Surfaced, not enforced here: the agent verifies the signature
-                    itself and refuses an unsigned build. Showing it makes that
-                    refusal predictable rather than a failed task. */}
+                {/* Reported, not enforced here. The agent always re-checks the
+                    SHA-256 over the bytes it downloaded; it checks a signature
+                    only when the release declares a signer. Saying exactly that
+                    beats implying a refusal that will not happen -- under the
+                    Internal trust model no release declares a signer, and the
+                    endpoint installs on hash verification alone. */}
                 <span className="muted">{signingLabel(chosen)}</span>
               </div>
 

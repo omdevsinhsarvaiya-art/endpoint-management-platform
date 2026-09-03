@@ -243,9 +243,14 @@ public static class Program
             // Before anything touches enrollment or credentials: if an update's
             // installer removed the live state files, put identity back from the
             // pre-update snapshot so this start is a reconnect, not a re-enrol.
+            // The state directory is passed, not assumed: the update executor
+            // resolves it the same way, and a snapshot written to one folder and
+            // sought in another would break identity preservation without a
+            // sound.
             EndpointAgent.Core.AgentStateRestore.RestoreIfNeeded(
                 host.Services.GetRequiredService<Microsoft.Extensions.Logging.ILoggerFactory>()
-                    .CreateLogger("EndpointAgent.StateRestore"));
+                    .CreateLogger("EndpointAgent.StateRestore"),
+                host.Services.GetRequiredService<IOptions<AgentOptions>>().Value.StateDirectory);
 
             await host.RunAsync();
             return 0;

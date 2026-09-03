@@ -26,9 +26,21 @@ public static class AgentStateRestore
 {
     public const string BackupDirectoryName = "update-backup";
 
-    public static void RestoreIfNeeded(ILogger logger)
+    /// <param name="stateDirectory">
+    /// Where to look, defaulting to <see cref="AgentPaths.StateDirectory"/>.
+    /// </param>
+    /// <remarks>
+    /// The parameter exists so this stays in step with the update executor,
+    /// which resolves the same directory from <c>AgentOptions.StateDirectory</c>.
+    /// If the two ever disagreed, the executor would write its snapshot to one
+    /// folder and this would look in another, and identity preservation would
+    /// fail <em>silently</em> -- the update would appear to succeed and the
+    /// device would come back as a stranger. Null in production, so this is the
+    /// same ProgramData path it has always been.
+    /// </remarks>
+    public static void RestoreIfNeeded(ILogger logger, string? stateDirectory = null)
     {
-        var stateDir = AgentPaths.StateDirectory;
+        var stateDir = stateDirectory ?? AgentPaths.StateDirectory;
         var backupDir = Path.Combine(stateDir, BackupDirectoryName);
 
         try

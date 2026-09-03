@@ -33,8 +33,9 @@ import {
  * The page never claims more than the platform knows. "Latest" is deliberately
  * three separate answers -- newest held, newest offered, newest a fleet update
  * would install -- because they can differ and the difference is the useful
- * part. Per-device installed versions live on the Devices page, and an unsigned
- * release says so in the open rather than hiding the absence of a signature.
+ * part. Per-device installed versions live on the Devices page, and the trust
+ * model a published build was verified under is named in the open rather than
+ * left to be inferred from a blank signer column.
  */
 export function AgentReleasesPage() {
   const { hasPermission } = useAuth()
@@ -108,9 +109,12 @@ export function AgentReleasesPage() {
   }
 
   async function onPublish(release: AgentReleaseRow) {
-    // The server is the gate; this is only a courtesy. An unsigned build is
-    // refused server-side whatever is clicked here, so the confirm exists to
-    // explain that before the request rather than after it.
+    // The server is the gate; this is only a courtesy. Under the Public trust
+    // model an unsigned build is refused server-side whatever is clicked here,
+    // so the confirm explains that before the request rather than after it.
+    // Under Internal nothing is refused on signature grounds -- no signature is
+    // read at all -- so this is a no-op and Publish is simply offered.
+    // publishWillBeRefused is the mode-aware answer, not a guess.
     if (publishWillBeRefused(release, trustMode)) {
       window.alert(`${release.version} cannot be published.\n\n${deploymentWarning(release, trustMode)}`)
       return
@@ -173,8 +177,8 @@ export function AgentReleasesPage() {
       <div className="page-header">
         <div className="lede">
           The Windows agent installer, versioned. Devices report the version they run; a published
-          release here is what they can be updated to — after the agent itself has verified the
-          download's hash and signature.
+          release here is what they can be updated to — after the agent itself has re-verified the
+          download's SHA-256, and its signature when the release carries one.
         </div>
         {canManage && (
           <button

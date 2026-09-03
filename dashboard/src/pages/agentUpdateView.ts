@@ -154,21 +154,41 @@ export function describeSelection(
 }
 
 /**
- * Whether a release carries an Authenticode signature.
+ * Whether this release row declares an Authenticode signer.
  *
- * Surfaced rather than enforced here: the agent verifies the signature itself
- * before installing, and that check is not something the console can or should
- * relax. Showing it means an operator can see why an unsigned development build
- * will be refused on the endpoint, instead of discovering it as a failed task.
+ * A fact about the row, not a verdict on the build. A signer is recorded only
+ * where a mode verifies one -- the server reads it from the artifact's own
+ * signature under the Public trust model -- so under Internal it is null for
+ * every release by construction, and that is the model rather than a defect.
+ * Nothing here gates on it: see `publishWillBeRefused` in agentReleaseView for
+ * the one place the answer changes an outcome.
  */
 export function isSigned(release: AgentReleaseRow): boolean {
   return release.signerSubject !== null && release.signerSubject.trim().length > 0
 }
 
+/**
+ * What the agent will actually verify about this build before installing it.
+ *
+ * Reported, never enforced here -- and what is reported has to be what happens.
+ * The agent always re-computes the SHA-256 over the bytes it downloaded and
+ * refuses a mismatch. It checks a signature only when the release declares a
+ * signer; told there is none, it says so in its log and installs on hash
+ * verification alone. Under Internal -- the default, and what this deployment
+ * runs -- no release declares one, so the label this replaced ("the agent will
+ * refuse to install this") promised a protection that does not exist.
+ *
+ * Deliberately mode-blind, and correct in both modes because install-time
+ * behaviour follows the release row rather than the server's current mode: the
+ * endpoint is handed `info.SignerSubject` from the release metadata, so a
+ * release published with a null signer keeps installing on hash alone even
+ * after the platform is switched to Public. The mode itself is named on the
+ * Agent releases page, which is the page that fetches the policy.
+ */
 export function signingLabel(release: AgentReleaseRow): string {
   return isSigned(release)
     ? `Signed by ${release.signerSubject}`
-    : 'Unsigned — the agent will refuse to install this'
+    : 'Unsigned — the agent installs it after verifying the SHA-256; no signature is checked'
 }
 
 /**

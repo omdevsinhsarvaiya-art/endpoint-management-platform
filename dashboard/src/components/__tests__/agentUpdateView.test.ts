@@ -205,27 +205,64 @@ describe('upgrade targets for one device', () => {
 
 describe('release signing', () => {
   /**
-   * Surfaced, never enforced here. The agent verifies the Authenticode signature
-   * itself before installing, and the console must not imply it can relax that.
-   * Showing it means an unsigned development build is visibly unusable rather
-   * than discovered as a failed task on the endpoint.
+   * Reported, never enforced here -- and what is reported has to be what
+   * happens. The agent re-computes the SHA-256 over the bytes it downloaded and
+   * refuses a mismatch; it checks an Authenticode signature only when the
+   * release declares a signer, which only the Public trust model produces.
+   * Under Internal -- the default, and what production runs -- no release
+   * declares one: the launcher returns "no error" for a null signer and the
+   * executor installs on hash verification alone.
    */
   it('reports a signed release with its signer', () => {
     expect(isSigned(release())).toBe(true)
     expect(signingLabel(release())).toContain('CN=Example Corp')
   })
 
-  it('warns that an unsigned release will be refused by the agent', () => {
+  it('says an unsigned release is installed after a hash check, and no signature is checked', () => {
     for (const unsigned of [release({ signerSubject: null }), release({ signerSubject: '  ' })]) {
       expect(isSigned(unsigned)).toBe(false)
-      expect(signingLabel(unsigned)).toContain('refuse')
+
+      const label = signingLabel(unsigned)
+
+      expect(label).toContain('SHA-256')
+      expect(label).toMatch(/no signature is checked/i)
     }
   })
 
   /**
+   * The regression test this correction exists for. The label used to say "the
+   * agent will refuse to install this", which was false for every release the
+   * Internal gate publishes. Any future wording that re-promises a refusal fails
+   * here rather than reaching an operator.
+   */
+  it('never claims a refusal the endpoint will not perform', () => {
+    for (const r of [
+      release(),
+      release({ signerSubject: null }),
+      release({ signerSubject: '  ' }),
+      release({ signerSubject: null, status: 'Draft' }),
+    ]) {
+      expect(signingLabel(r)).not.toMatch(/refuse|reject|block|will not install|cannot install/i)
+    }
+  })
+
+  /**
+   * The module boundary this correction rests on. signingLabel describes what
+   * the endpoint does, and the endpoint acts on the release row's declared
+   * signer -- not on the server's current trust mode. So the label takes one
+   * argument and must stay that way: a mode-aware label would print Public copy
+   * beside a release published with a null signer, which still installs on hash
+   * alone after a switch to Public.
+   */
+  it('depends on the release row alone', () => {
+    expect(signingLabel).toHaveLength(1)
+  })
+
+  /**
    * Signing is deliberately NOT an eligibility rule. A release can be published
-   * and selectable while unsigned; the endpoint is what refuses it. Making the
-   * console hide it would move a security decision to the wrong layer.
+   * and selectable while unsigned -- under Internal that is every release -- and
+   * nothing downstream refuses it. Making the console hide such a release would
+   * move a security decision to the wrong layer and hide the actual model.
    */
   it('does not silently exclude unsigned releases from targeting', () => {
     expect(isEligible(device(), release({ signerSubject: null }))).toBe(true)

@@ -198,10 +198,12 @@ describe('unsigned releases', () => {
   /**
    * A published release is, by construction, one the server verified. The console
    * still computes eligibility from status alone -- the server is the gate and has
-   * already applied it -- so a Published row with no signer (which the gate no
-   * longer produces) would still be treated as the server said, not second-guessed.
+   * already applied it -- so a Published row with no signer is treated as the
+   * server said, not second-guessed. Under Internal that row is not an oddity to
+   * tolerate: it is what every publish produces, because no signature is ever
+   * read and none is recorded.
    */
-  it('trusts the server on what is published', () => {
+  it('treats a published release with no signer as deployable, because Internal publishes exactly that', () => {
     const releases = [release({ version: '1.4.1', signerSubject: null })]
 
     expect(newestUpdateEligible(releases)?.version).toBe('1.4.1')
@@ -286,11 +288,19 @@ describe('downloading a build', () => {
       { deviceId: 'd', hostname: 'PC', agentVersion: '1.1.4', status: 'Active' }, draft)).toBe(false)
   })
 
-  it('says a draft is manual-install only, and flags an unsigned one', () => {
+  /**
+   * Status is the whole hint. It used to add "and unsigned" for a null signer,
+   * which under Internal is true of every build and so tells an operator
+   * nothing; where the signature does change an outcome -- an unsigned draft
+   * under Public -- deploymentWarning is the mode-aware place that says so.
+   */
+  it('says a draft is manual-install only, whatever it is signed with', () => {
     expect(downloadHint(release({ status: 'Draft' })))
       .toContain('Not offered to devices until published')
     expect(downloadHint(release({ status: 'Draft', signerSubject: null })))
-      .toContain('unsigned')
+      .toBe(downloadHint(release({ status: 'Draft' })))
+    expect(downloadHint(release({ status: 'Draft', signerSubject: null })))
+      .not.toMatch(/unsigned/i)
   })
 
   it('has nothing to add for a published release', () => {

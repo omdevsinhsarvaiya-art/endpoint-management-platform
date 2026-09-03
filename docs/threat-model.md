@@ -14,6 +14,7 @@ does not paint itself into a corner.
 | Asset | Why it matters |
 |---|---|
 | Agent fleet | Runs as LocalSystem on every managed computer |
+| Agent release channel | A published MSI is installed as SYSTEM on every enrolled machine |
 | Device credentials | Each proves an endpoint's identity to the platform |
 | Admin credentials/sessions | Grant control over devices via the platform |
 | Audit trail | The evidence record for every privileged action |
@@ -124,6 +125,62 @@ privileged boundary:
 - The agent refuses to disable TLS certificate validation outside Debug builds
   (enforced in options validation, not convention).
 
+### T10. A hostile or altered agent release
+
+*Whoever can put bytes in the release channel owns the estate: an agent MSI is
+installed by Windows Installer as SYSTEM on every machine it reaches.*
+
+The gate is a **trust mode**, not a switch (`AgentReleases:TrustMode`) — a
+`RequireCertificate = false` flag would be a global that quietly turns a control
+off, whereas a mode is a statement about the deployment, and every check that
+depends on it is written against the mode by name.
+
+- **Internal** (the default, and what this deployment runs). Publishing requires
+  an authenticated administrator holding `Software.Deploy`; a Draft release; the
+  artifact present in the content-addressed store; the bytes being a Windows
+  Installer package; and those bytes, re-read from disk at that moment, still
+  hashing to the SHA-256 **the server computed** over what it stored. A hash
+  supplied by the client is a transit cross-check only (mismatch → 400). The
+  agent re-computes the SHA-256 over the bytes it downloaded and refuses a
+  mismatch before anything is scheduled. Transport is HTTPS with full TLS
+  validation; publish, revoke and every queued update are audited. There is no
+  UI-side gate — a direct API call is refused identically.
+- **Public.** Everything Internal requires, plus a valid Authenticode signature
+  that chains to a trusted root, carries the Code Signing EKU, and whose subject
+  contains the configured publisher. The API refuses to start in this mode with
+  no publisher configured. The signer is read from the artifact and never
+  accepted from an upload. The agent then re-verifies that signature on the
+  endpoint (`WinVerifyTrust` plus a signer-subject pin) before installing.
+
+**What Internal does not guarantee.** No CA-issued Authenticode signature is
+required and **none is read** — the Authenticode verifier is not on the Internal
+code path at all, and a test asserts it is never called. Every Internal publish
+therefore records a null signer, and the agent, told there is no signer,
+performs **no signature check**: it logs that it is installing on hash
+verification alone, and installs. Consequently:
+
+- **Integrity, not provenance.** The SHA-256 proves the bytes installed are the
+  bytes the server stored. It says nothing about who built them. The
+  authenticity claim rests entirely on the administrator who uploaded them, the
+  authorization that permitted it, and the audit entry naming them.
+- **Absence of Authenticode does not mean Windows trusts the MSI.** SmartScreen,
+  AppLocker and a WDAC policy will treat it as an unsigned installer, because
+  that is what it is. An Internal release is trusted by *this platform, for
+  these machines* — never by the operating system. Nothing here weakens or
+  should be worked around in any Windows setting.
+- **A stolen `Software.Deploy` session publishes a hostile build in either
+  mode.** Public raises the bar to also holding the publisher's signing key.
+  That is precisely why the mode exists and why reaching it is configuration
+  rather than a code change.
+- **Not addressed by either mode:** a compromised build pipeline handing a
+  malicious artifact to a legitimate administrator. The hash then matches,
+  because it is computed over exactly those bytes. See T8.
+
+Unaffected by the mode in either direction: the **software package** install
+path keeps its *mandatory* Authenticode signer pin (ADR-0005 amendment), as does
+driver installation. The trust mode governs agent releases only. See
+[ADR-0012](adr/0012-agent-release-trust-model.md).
+
 ## Known limitations (accepted at this phase)
 
 | Limitation | Risk | Planned remedy |
@@ -133,6 +190,7 @@ privileged boundary:
 | Development runs plain HTTP on localhost | Local traffic unencrypted | TLS termination is a deployment concern; HSTS+redirect already active outside Development |
 | Login rate limiting is in-memory, per instance | Resets on restart; not shared across replicas | Phase 15: Redis-backed limiter (account lockout already covers the account dimension) |
 | Single-node PostgreSQL/Redis | Availability, not security | Phase 15 |
+| Agent releases are published without Authenticode under the Internal trust mode | Provenance rests on administrator authorization and audit, not a signature; Windows itself treats the installer as unsigned | Switch `AgentReleases:TrustMode` to `Public` once a code-signing certificate exists — configuration, not code (T10) |
 
 ## Standing rules (all phases)
 
@@ -436,4 +494,8 @@ problem code is not a fault, whatever version it runs.
 The 1.3.0 agent MSI is **unsigned**: no code-signing certificate exists, and the
 build refuses to fabricate a self-signed stand-in that would look like trust
 without being it. It was installed on one endpoint for acceptance under explicit
-authorisation and has not been published as an agent release.
+authorisation. That is a statement about *Windows-level* trust, not about
+publishability — under the Internal release trust mode (T10) an unsigned build
+is publishable, and every release the publish gate produces records a null
+signer. What an unsigned MSI costs is SmartScreen/AppLocker/WDAC standing, not a
+place in the release channel.

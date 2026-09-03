@@ -204,8 +204,23 @@ contract as local development, plus the demo host name.
   sc.exe create EndpointPlatformAgent binPath= "C:\Program Files\EndpointPlatformAgent\EndpointAgent.Service.exe" start= auto obj= LocalSystem
   sc.exe start EndpointPlatformAgent
   ```
-- Signed binaries and the self-update channel are Phase 15 / agent-update
-  work; do not distribute unsigned builds beyond a lab.
+- Agent releases and remote self-update are shipped, not future work: upload the
+  built MSI on the dashboard's Agent page, publish it, and queue `UpdateAgent`
+  per device. See [agent-updates.md](agent-updates.md).
+- **Release trust mode** — `ENDPOINTPLATFORM_AgentReleases__TrustMode`:
+  `Internal` (the default, and what this deployment runs) or `Public`. Internal
+  requires no Authenticode certificate and reads no signature; integrity is the
+  server-computed SHA-256, re-verified over the stored bytes at publish and
+  again by the agent over the downloaded bytes before install, over HTTPS, under
+  authorization and audit. `Public` additionally requires an Authenticode
+  signature whose subject matches
+  `ENDPOINTPLATFORM_AgentReleases__ExpectedSignerSubject`, and the API refuses
+  to start in that mode without one configured.
+- An Internal build is trusted by *this platform, for these machines* — not by
+  Windows. SmartScreen, AppLocker and WDAC will treat the MSI as an unsigned
+  installer, because it is one. That, not publishability, is what a code-signing
+  certificate buys; distributing beyond the managed estate is the case that
+  needs `Public`, which is a configuration change rather than a code change.
 
 ## Backup / restore
 
