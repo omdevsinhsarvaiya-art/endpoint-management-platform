@@ -1,7 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
-  deployPackageToDevice,
-  getDevices,
   getPackages,
   uploadPackage,
   restorePackage,
@@ -10,11 +8,13 @@ import {
 } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import { Icon } from '../components/Icon'
+import { DeployPackageDialog } from './DeployPackageDialog'
 
 /** Software packages: register signed MSIs and deploy them to devices (software.deploy). */
-export function PackagesPanel() {
+export function PackagesPanel({ onDeployed }: { onDeployed?: (deploymentId: string) => void } = {}) {
   const { hasPermission } = useAuth()
   const canDeploy = hasPermission('software.deploy')
+  const [deploying, setDeploying] = useState<PackageRow | null>(null)
   const [packages, setPackages] = useState<PackageRow[]>([])
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -66,23 +66,10 @@ export function PackagesPanel() {
     }
   }
 
-  async function onDeploy(pkg: PackageRow) {
-    const hostname = window.prompt(`Deploy "${pkg.name} ${pkg.version}" to which device hostname?`)
-    if (!hostname) return
-    try {
-      const page = await getDevices(1, 50, hostname)
-      const device = page.items.find((d) => d.hostname.toLowerCase() === hostname.toLowerCase())
-      if (!device) {
-        setError(`No device named "${hostname}".`)
-        return
-      }
-      await deployPackageToDevice(pkg.id, device.id)
-      setError(null)
-      window.alert(`Queued install of "${pkg.name}" on ${device.hostname}. The agent installs it on its next check-in.`)
-    } catch {
-      setError('Could not queue the deployment.')
-    }
-  }
+  // Deployment moved out of a window.prompt that asked for a hostname. Hostnames
+  // repeat across a fleet and change; the dialog selects DeviceIds and GroupIds,
+  // which is what the server authorizes against, and shows what will actually be
+  // installed before anything is queued.
 
   async function onWithdraw(pkg: PackageRow) {
     // Says what it does and, as importantly, what it does not: nothing is
@@ -290,7 +277,7 @@ export function PackagesPanel() {
                           <button
                             type="button"
                             className="btn-sm"
-                            onClick={() => void onDeploy(p)}
+                            onClick={() => setDeploying(p)}
                           >
                             Deploy
                           </button>
@@ -313,6 +300,18 @@ export function PackagesPanel() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {deploying && (
+        <DeployPackageDialog
+          packageId={deploying.id}
+          packageLabel={`${deploying.name} ${deploying.version}`}
+          onCancel={() => setDeploying(null)}
+          onDeployed={(deploymentId) => {
+            setDeploying(null)
+            onDeployed?.(deploymentId)
+          }}
+        />
       )}
     </div>
   )

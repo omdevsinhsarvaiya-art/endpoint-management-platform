@@ -496,6 +496,124 @@ export function getSoftwarePublishers(): Promise<string[]> {
   return request<string[]>('/admin/v1/software/publishers')
 }
 
+/** How a deployment's targets were chosen. */
+export type DeploymentTargetType = 'Devices' | 'Groups' | 'Mixed'
+
+/**
+ * What deploying would do, before anything is created.
+ *
+ * The counts are the server's own resolution and eligibility decision — the same
+ * code the real deployment runs — so the dialog cannot promise something the
+ * deployment then declines to do.
+ */
+export interface DeploymentPlan {
+  packageId: string
+  packageName: string
+  packageVersion: string
+  targeted: number
+  needsInstall: number
+  alreadyInstalled: number
+  newerInstalled: number
+  retired: number
+  notComparable: number
+}
+
+export interface DeploymentTally {
+  total: number
+  pending: number
+  installing: number
+  succeeded: number
+  failed: number
+  expired: number
+  skipped: number
+}
+
+export interface DeploymentSummary {
+  id: string
+  packageId: string
+  packageName: string
+  packageVersion: string
+  targetType: DeploymentTargetType
+  createdByDisplay: string
+  createdAt: string
+  tally: DeploymentTally
+}
+
+export interface DeploymentSummaryPage {
+  items: DeploymentSummary[]
+  totalCount: number
+  page: number
+  pageSize: number
+}
+
+/** One device's outcome. `status` is derived from the task, never stored. */
+export interface DeploymentDeviceResult {
+  deviceId: string
+  hostname: string
+  displayName: string | null
+  deviceStatus: string
+  lastSeenAt: string | null
+  status: string
+  reason: string
+  observedVersion: string | null
+  taskId: string | null
+  resultMessage: string | null
+  completedAt: string | null
+}
+
+export interface DeploymentDetail {
+  id: string
+  packageId: string
+  packageName: string
+  packageVersion: string
+  targetType: DeploymentTargetType
+  createdByDisplay: string
+  createdAt: string
+  tally: DeploymentTally
+  targets: DeploymentDeviceResult[]
+}
+
+export interface DeploymentCreated {
+  deploymentId: string
+  targeted: number
+  queued: number
+  skipped: number
+}
+
+/**
+ * Both targeting lists go in one request.
+ *
+ * Deliberately bulk: a request per device would be 350 round trips for one
+ * operator action, and would leave no single record of what was intended. The
+ * server resolves and authorizes every id.
+ */
+export function previewDeployment(
+  packageId: string, deviceIds: string[], groupIds: string[],
+): Promise<DeploymentPlan> {
+  return request<DeploymentPlan>('/admin/v1/deployments/preview', {
+    method: 'POST',
+    body: JSON.stringify({ packageId, deviceIds, groupIds }),
+  })
+}
+
+export function createDeployment(
+  packageId: string, deviceIds: string[], groupIds: string[],
+): Promise<DeploymentCreated> {
+  return request<DeploymentCreated>('/admin/v1/deployments', {
+    method: 'POST',
+    body: JSON.stringify({ packageId, deviceIds, groupIds }),
+  })
+}
+
+export function getDeployments(page: number, pageSize: number): Promise<DeploymentSummaryPage> {
+  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) })
+  return request<DeploymentSummaryPage>(`/admin/v1/deployments?${params}`)
+}
+
+export function getDeployment(deploymentId: string): Promise<DeploymentDetail> {
+  return request<DeploymentDetail>(`/admin/v1/deployments/${deploymentId}`)
+}
+
 /**
  * One installation of a title on one device.
  *

@@ -217,6 +217,44 @@ are reverted automatically.
   64-bit products routinely register under WOW6432Node (Chrome, Edge and Brave
   all report `x86`). The console labels it "Found in / registry view".
 
+- **Milestone 1.5.0 (software deployment): complete.** A deployment is a durable
+  record (`software_deployments` + `software_deployment_targets`) of an
+  administrator's intent, targeting any mix of devices and groups in **one**
+  request — the server resolves and authorizes every id rather than the console
+  issuing a request per device.
+
+  **Eligibility decides what is actually sent.** `SoftwareEligibilityEvaluator`
+  compares the package against observed inventory per device: not present →
+  install; older → update; same version → **no task**; newer → **never
+  downgraded**; version unreadable → skipped and reported rather than guessed.
+  Matching prefers the MSI product code (it survives a renamed display name) and
+  falls back to name + publisher, because barely half of real installed entries
+  have a product code. Every targeted device is recorded, skipped ones included —
+  "nothing was sent to this machine, and here is why" is the answer to most
+  questions asked after a deployment.
+
+  `SoftwareVersion` is deliberately separate from `AgentVersionNumber`: the agent
+  scheme insists on exactly three numeric parts, while real software reports
+  `7.1.5 (43453)`, `152.0.7977.65` and `24.09`. It parses up to four leading
+  components, ignores a trailing build tag, and returns *not comparable* rather
+  than a guess.
+
+  **Status is derived, never stored.** A target row holds the decision and the
+  task id; progress comes from joining the task, so the console cannot show a
+  stored status that has drifted from the tasks it claims to summarise.
+
+  Tasks are queued through the existing `DeviceTaskService.QueueAsync`, which is
+  what enforces retired-device exclusion, `MinimumAgentVersion` and the catalog
+  definition. Nothing writes a task row directly. The agent path is unchanged:
+  download, SHA-256, Authenticode signer pin, `msiexec`.
+
+  Measured fan-out (single request, integration tests against real Postgres —
+  developer machine, not a production benchmark): 10 devices 50 ms, 50 devices
+  178 ms, 200 devices ~2.1 s, 350 devices ~3.9 s; reading a 200-device
+  deployment ~110 ms. Resolution is a fixed number of queries regardless of fleet
+  size; the residual per-device cost is `QueueAsync`'s own lookup and insert,
+  kept deliberately rather than bypassed.
+
 - **Application execution control (enable/disable): NOT implemented, by
   decision.** The fleet runs Windows 11 Pro. AppLocker enforcement requires
   Enterprise/Education, so it is unavailable by edition. WDAC/App Control is

@@ -218,6 +218,7 @@ public sealed class Program
             app.MapBitLockerEscrowEndpoints();
             app.MapSoftwareEndpoints();
             app.MapPackageEndpoints();
+            app.MapDeploymentEndpoints();
             app.MapSecurityEndpoints();
             app.MapUpdateEndpoints();
             app.MapReportEndpoints();

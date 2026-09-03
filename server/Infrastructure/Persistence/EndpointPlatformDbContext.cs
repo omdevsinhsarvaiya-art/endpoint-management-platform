@@ -92,6 +92,10 @@ public sealed class EndpointPlatformDbContext(DbContextOptions<EndpointPlatformD
 
     public DbSet<SoftwarePackage> SoftwarePackages => Set<SoftwarePackage>();
 
+    public DbSet<SoftwareDeployment> SoftwareDeployments => Set<SoftwareDeployment>();
+
+    public DbSet<SoftwareDeploymentTarget> SoftwareDeploymentTargets => Set<SoftwareDeploymentTarget>();
+
     public DbSet<Domain.Drivers.DriverPackage> DriverPackages => Set<Domain.Drivers.DriverPackage>();
 
     public DbSet<Domain.Agents.AgentRelease> AgentReleases => Set<Domain.Agents.AgentRelease>();

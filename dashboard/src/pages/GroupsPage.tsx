@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from 'react'
 import {
   addGroupMember,
   createGroup,
-  getDevices,
   getGroupMembers,
   getGroups,
   type GroupMember,
@@ -10,12 +9,14 @@ import {
 } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import { Icon } from '../components/Icon'
+import { DevicePickerDialog } from './DevicePickerDialog'
 
 export function GroupsPage() {
   const { hasPermission } = useAuth()
   const [groups, setGroups] = useState<GroupRow[]>([])
   const [selected, setSelected] = useState<GroupRow | null>(null)
   const [members, setMembers] = useState<GroupMember[]>([])
+  const [picking, setPicking] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [name, setName] = useState('')
   const [creating, setCreating] = useState(false)
@@ -50,23 +51,25 @@ export function GroupsPage() {
     }
   }
 
-  async function onAddMember() {
+  /**
+   * Adds the picked devices by id.
+   *
+   * Replaces a prompt that required an exact hostname typed from memory, which
+   * does not survive a few hundred machines. Members are added one request each
+   * because the group API takes a single device; the picker at least means the
+   * operator chooses them in one pass.
+   */
+  async function onAddMembers(deviceIds: string[]) {
     if (!selected) return
-    const hostname = window.prompt('Device hostname to add (exact match):')
-    if (!hostname) return
-    try {
-      const page = await getDevices(1, 50, hostname)
-      const device = page.items.find((d) => d.hostname.toLowerCase() === hostname.toLowerCase())
-      if (!device) {
-        setError(`No device named "${hostname}".`)
-        return
-      }
-      await addGroupMember(selected.id, device.id)
-      setMembers(await getGroupMembers(selected.id))
-      await load()
-    } catch {
-      setError('Could not add the member.')
+
+    for (const deviceId of deviceIds) {
+      await addGroupMember(selected.id, deviceId)
     }
+
+    setMembers(await getGroupMembers(selected.id))
+    setPicking(false)
+    setError(null)
+    await load()
   }
 
   const canManage = hasPermission('group.manage')
@@ -162,7 +165,7 @@ export function GroupsPage() {
               <div className="card-header">
                 <h2>{selected.name} — members</h2>
                 {canManage && (
-                  <button type="button" className="btn-sm" onClick={() => void onAddMember()}>
+                  <button type="button" className="btn-sm" onClick={() => setPicking(true)}>
                     <Icon name="plus" size={14} />
                     Add member
                   </button>
@@ -202,6 +205,16 @@ export function GroupsPage() {
           )}
         </div>
       </div>
+
+      {picking && selected && (
+        <DevicePickerDialog
+          title={`Add devices to ${selected.name}`}
+          confirmLabel="Add"
+          excludeDeviceIds={members.map((m) => m.id)}
+          onCancel={() => setPicking(false)}
+          onConfirm={onAddMembers}
+        />
+      )}
     </>
   )
 }

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { PackagesPanel } from './PackagesPanel'
+import { DeploymentsPanel } from './DeploymentsPanel'
 import {
   getSoftwareInstallations,
   getSoftwarePublishers,
@@ -21,7 +22,17 @@ import {
 const PAGE_SIZE = 30
 const DEVICE_PAGE_SIZE = 50
 
+type Section = 'installed' | 'packages' | 'deployments'
+
+const SECTIONS: { key: Section; label: string }[] = [
+  { key: 'installed', label: 'Installed apps' },
+  { key: 'packages', label: 'Managed packages' },
+  { key: 'deployments', label: 'Deployments' },
+]
+
 export function SoftwarePage() {
+  const [section, setSection] = useState<Section>('installed')
+  const [focusDeployment, setFocusDeployment] = useState<string | null>(null)
   const [data, setData] = useState<SoftwareTitlePage | null>(null)
   const [publishers, setPublishers] = useState<string[]>([])
   const [page, setPage] = useState(1)
@@ -99,9 +110,36 @@ export function SoftwarePage() {
         </div>
       )}
 
-      <PackagesPanel />
+      {/* Three distinct things, kept visibly distinct: what is installed, what
+          may be deployed, and what was deployed. Collapsing them is how a
+          catalogue entry starts being mistaken for endpoint state. */}
+      <div className="segmented" role="tablist" aria-label="Software sections">
+        {SECTIONS.map((s) => (
+          <button
+            key={s.key}
+            type="button"
+            role="tab"
+            aria-selected={section === s.key}
+            className={section === s.key ? 'active' : undefined}
+            onClick={() => setSection(s.key)}
+          >
+            {s.label}
+          </button>
+        ))}
+      </div>
 
-      <div className="card">
+      {section === 'packages' && (
+        <PackagesPanel
+          onDeployed={(deploymentId) => {
+            setFocusDeployment(deploymentId)
+            setSection('deployments')
+          }}
+        />
+      )}
+
+      {section === 'deployments' && <DeploymentsPanel focusDeploymentId={focusDeployment} />}
+
+      <div className="card" hidden={section !== 'installed'}>
         <h2>Installed software</h2>
         <div className="toolbar">
           <div className="input-search">
@@ -221,7 +259,7 @@ export function SoftwarePage() {
         )}
       </div>
 
-      {selected && (
+      {selected && section === 'installed' && (
         <div className="card">
           <div className="card-header">
             <h2>{selected.name}</h2>
