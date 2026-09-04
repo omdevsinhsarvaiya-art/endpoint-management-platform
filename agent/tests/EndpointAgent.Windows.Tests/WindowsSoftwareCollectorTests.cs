@@ -18,7 +18,9 @@ namespace EndpointAgent.Windows.Tests;
 public sealed class WindowsSoftwareCollectorTests
 {
     private static WindowsSoftwareCollector Create() =>
-        new(NullLogger<WindowsSoftwareCollector>.Instance);
+        new(
+            NullLogger<WindowsSoftwareCollector>.Instance,
+            new WindowsInstallLocationResolver(NullLogger<WindowsInstallLocationResolver>.Instance));
 
     [Fact]
     public async Task Collects_installed_software_without_throwing()
@@ -111,6 +113,55 @@ public sealed class WindowsSoftwareCollectorTests
         software.ShouldAllBe(s => s.Version == null || s.Version.Length <= 128);
         software.ShouldAllBe(s => s.Publisher == null || s.Publisher.Length <= 256);
         software.ShouldAllBe(s => s.InstallLocation == null || s.InstallLocation.Length <= 512);
+    }
+
+    /// <summary>
+    /// Any install location reported is one Force Stop could actually act on.
+    /// </summary>
+    /// <remarks>
+    /// From 1.7.0 the collector recovers a location for applications whose
+    /// uninstall key omits one. The value it publishes becomes the root the
+    /// endpoint terminates processes under, so the invariant that matters is not
+    /// how many are recovered -- that is a property of the machine -- but that
+    /// nothing unusable is ever published. A location the matcher would refuse
+    /// would show in the console as resolved while every Force Stop against it
+    /// failed.
+    /// </remarks>
+    [Fact]
+    public async Task Every_reported_install_location_is_one_the_matcher_accepts()
+    {
+        var software = await Create().CollectAsync(CancellationToken.None);
+
+        var unusable = software
+            .Where(s => s.InstallLocation is not null)
+            .Where(s => !EndpointAgent.Core.Inventory.ApplicationProcessMatcher.CanResolve(s.InstallLocation))
+            .Select(s => $"{s.Name} -> {s.InstallLocation}")
+            .ToList();
+
+        unusable.ShouldBeEmpty();
+    }
+
+    /// <remarks>
+    /// The agent resolves like any other installed application, and its product
+    /// code genuinely maps to its own directory. Publishing that would offer an
+    /// operator a Force Stop on the agent itself.
+    /// <para>
+    /// Weak where it runs: under a test host "self" is the test output directory,
+    /// which no product installs into, so this passes without exercising much. It
+    /// is the production invariant stated in the place it applies -- the guard
+    /// itself is proven against a fixed directory, and by mutation, in
+    /// <c>WindowsInstallLocationResolverTests</c>.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task Never_reports_the_agents_own_directory_as_an_install_location()
+    {
+        var software = await Create().CollectAsync(CancellationToken.None);
+        var self = AppContext.BaseDirectory.TrimEnd('\\');
+
+        software
+            .Where(s => s.InstallLocation is not null)
+            .ShouldAllBe(s => !self.StartsWith(s.InstallLocation!.TrimEnd('\\') + "\\", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]

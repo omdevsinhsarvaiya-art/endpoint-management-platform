@@ -177,3 +177,106 @@ public sealed class ApplicationProcessMatcherTests
         ApplicationProcessMatcher.Match(@"C:\Program Files\Contoso", processes).Count.ShouldBe(1);
     }
 }
+
+/// <summary>
+/// The agent must never be able to terminate itself.
+/// </summary>
+/// <remarks>
+/// Recovering an endpoint whose agent has been stopped needs someone physically
+/// at the machine, so this is not an ordinary application failure. The guard has
+/// to hold for the honest case (the agent is genuinely an installed application
+/// and resolves like one) and for a hostile or merely broken install location
+/// that resolves onto the agent's directory from either direction.
+/// </remarks>
+public sealed class ApplicationProcessMatcherSelfProtectionTests
+{
+    private const string AgentDir = @"C:\Program Files\EndpointPlatform\Agent";
+
+    private static readonly RunningProcess[] Running =
+    [
+        new(1000, "EndpointAgent.Service.exe", @"C:\Program Files\EndpointPlatform\Agent\EndpointAgent.Service.exe"),
+        new(1001, "helper.exe", @"C:\Program Files\EndpointPlatform\Agent\plugins\helper.exe"),
+        new(1002, "other.exe", @"C:\Program Files\Contoso\other.exe"),
+    ];
+
+    [Fact]
+    public void Refuses_the_agents_own_install_directory()
+    {
+        var matches = ApplicationProcessMatcher.Match(AgentDir, Running, protectedDirectory: AgentDir);
+
+        Assert.Empty(matches);
+    }
+
+    /// <remarks>
+    /// The case that separates the two guards. Filtering agent processes out of
+    /// the result would also satisfy "the agent does not stop itself", but it
+    /// would still terminate <c>neighbour.exe</c> on the strength of a root that
+    /// was never a single application's install directory. An install location
+    /// broad enough to contain the agent is not trustworthy for anything under
+    /// it, so the whole request is refused rather than trimmed.
+    /// </remarks>
+    [Fact]
+    public void Refuses_a_parent_of_the_agent_directory_entirely()
+    {
+        var neighbour = new RunningProcess(
+            1004, "neighbour.exe", @"C:\Program Files\EndpointPlatform\Other\neighbour.exe");
+
+        var matches = ApplicationProcessMatcher.Match(
+            @"C:\Program Files\EndpointPlatform",
+            [.. Running, neighbour],
+            protectedDirectory: AgentDir);
+
+        Assert.Empty(matches);
+    }
+
+    [Fact]
+    public void Refuses_a_subdirectory_of_the_agent_directory()
+    {
+        var matches = ApplicationProcessMatcher.Match(
+            AgentDir + @"\plugins", Running, protectedDirectory: AgentDir);
+
+        Assert.Empty(matches);
+    }
+
+    [Fact]
+    public void Refuses_regardless_of_trailing_separator_or_casing()
+    {
+        var matches = ApplicationProcessMatcher.Match(
+            @"c:\program files\endpointplatform\agent\", Running, protectedDirectory: AgentDir + "\\");
+
+        Assert.Empty(matches);
+    }
+
+    [Fact]
+    public void Still_matches_an_unrelated_application()
+    {
+        var matches = ApplicationProcessMatcher.Match(
+            @"C:\Program Files\Contoso", Running, protectedDirectory: AgentDir);
+
+        Assert.Equal([1002], matches.Select(m => m.ProcessId));
+    }
+
+    [Fact]
+    public void Never_returns_a_process_running_from_the_agent_directory()
+    {
+        // Defence in depth. Given the containment check above this is currently
+        // unreachable -- a process can only be under both the requested root and
+        // the agent directory if one contains the other, which is already
+        // refused -- and the paths it sees are canonical, since they come from
+        // the Win32 module list. It is asserted as a property rather than
+        // removed: it is what keeps a future change to either check from
+        // silently making the agent stoppable.
+        var matches = ApplicationProcessMatcher.Match(
+            @"C:\Program Files", Running, protectedDirectory: AgentDir);
+
+        Assert.DoesNotContain(matches, m => m.ProcessId is 1000 or 1001);
+    }
+
+    [Fact]
+    public void Behaves_as_before_when_no_directory_is_protected()
+    {
+        var matches = ApplicationProcessMatcher.Match(@"C:\Program Files\Contoso", Running);
+
+        Assert.Equal([1002], matches.Select(m => m.ProcessId));
+    }
+}

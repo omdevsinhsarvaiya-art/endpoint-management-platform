@@ -134,6 +134,7 @@ public static class Program
             // so the agent resumes its request instead of orphaning one.
             builder.Services.AddSingleton<IEnrollmentStateStore, DpapiEnrollmentStateStore>();
             builder.Services.AddSingleton<ILocalAccountsCollector, WindowsLocalAccountsCollector>();
+            builder.Services.AddSingleton<WindowsInstallLocationResolver>();
             builder.Services.AddSingleton<ISoftwareCollector, WindowsSoftwareCollector>();
             builder.Services.AddSingleton<WindowsSecurityPostureCollector>();
             builder.Services.AddSingleton<ISecurityPostureCollector>(

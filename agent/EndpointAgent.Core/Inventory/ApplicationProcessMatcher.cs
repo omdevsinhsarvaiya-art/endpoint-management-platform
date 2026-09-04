@@ -62,13 +62,30 @@ public static class ApplicationProcessMatcher
     /// The application's install directory as inventory reported it. Null or
     /// unusable means no mapping, which is a supported answer.
     /// </param>
+    /// <param name="protectedDirectory">
+    /// A directory whose processes may never be matched — in practice the agent's
+    /// own.
+    /// </param>
     public static IReadOnlyList<MatchedProcess> Match(
-        string? installLocation, IEnumerable<RunningProcess> running)
+        string? installLocation,
+        IEnumerable<RunningProcess> running,
+        string? protectedDirectory = null)
     {
         ArgumentNullException.ThrowIfNull(running);
 
         var root = NormalizeRoot(installLocation);
         if (root is null)
+        {
+            return [];
+        }
+
+        // The agent must not be able to stop itself, or be tricked into it by an
+        // install location that resolves onto its own directory. Losing the agent
+        // is not like losing an application: the endpoint stops being manageable,
+        // and recovering it needs someone physically at the machine. Checked in
+        // both directions because either containment is fatal.
+        var self = NormalizeRoot(protectedDirectory);
+        if (self is not null && (IsUnder(self + "\\x", root) || IsUnder(root + "\\x", self)))
         {
             return [];
         }
@@ -86,6 +103,14 @@ public static class ApplicationProcessMatcher
             }
 
             if (!IsUnder(process.ExecutablePath, root))
+            {
+                continue;
+            }
+
+            // Belt and braces: even if the directory check above were somehow
+            // satisfied, a process running out of the agent's own folder is never
+            // terminated.
+            if (self is not null && IsUnder(process.ExecutablePath, self))
             {
                 continue;
             }

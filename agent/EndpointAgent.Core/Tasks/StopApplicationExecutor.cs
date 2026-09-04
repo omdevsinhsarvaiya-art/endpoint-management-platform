@@ -87,7 +87,8 @@ public sealed class StopApplicationExecutor(
 
         var matches = ApplicationProcessMatcher.Match(
             installLocation,
-            running.Select(p => new RunningProcess(p.ProcessId, p.Name, p.ExecutablePath)));
+            running.Select(p => new RunningProcess(p.ProcessId, p.Name, p.ExecutablePath)),
+            protectedDirectory: AppContext.BaseDirectory);
 
         if (matches.Count == 0)
         {

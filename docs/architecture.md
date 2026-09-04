@@ -304,7 +304,9 @@ are reverted automatically.
   reused, and the endpoint guard would then correctly refuse. That made Force Stop
   fail on applications that were running perfectly well. `StopApplication`
   requires **agent 1.6.0**; below that the console reports NotEligible rather than
-  acting on stale data.
+  acting on stale data. 1.6.0 was built but never published — 1.7.0 is the first
+  release in the fleet that carries it, and the catalog keeps 1.6.0 because that
+  is the true minimum capability, not because such a build is deployed.
 
   **Resolution is by install path, not by name.** `ApplicationProcessMatcher`
   matches a process whose executable lives under the application's reported
@@ -316,6 +318,40 @@ are reverted automatically.
   refused outright, so one badly-registered application cannot become a request
   to terminate the operating system. Where there is no usable path the console
   says Force Stop is unavailable rather than guessing.
+
+  **Recovering a missing install location (1.7.0).** Most uninstall keys do not
+  carry `InstallLocation` — 19 of 33 on the reference machine — so most
+  applications were unresolvable for a reason that had nothing to do with them.
+  Two deterministic mechanisms recover one, and only these two. Windows Installer
+  is asked which files it recorded for the product (`MsiEnumComponents` /
+  `MsiEnumClients` / `MsiGetComponentPath`) and their common directory is used;
+  failing that, a `DisplayIcon` is accepted when it points at an executable that
+  exists and is not in an installer cache. Both are statements about what is on
+  the machine. Neither infers anything from a name or a publisher, and no
+  name-to-process table exists anywhere in the system. This took the reference
+  machine from 14 to 25 of 33.
+
+  Two things are deliberately *not* recovered. `MsiGetProductInfo(InstallLocation)`
+  was empty for every product measured, and `InstallSource` names the media the
+  installer ran from (`…\Downloads`, `…\Temp`) — acting on it would target
+  whatever else was running from a downloads folder. And a `DisplayIcon` pointing
+  into `Package Cache`, `Windows\Installer`, `Downloads` or `Temp` is rejected:
+  four of the six that existed on the reference machine pointed at the *installer*
+  rather than the application.
+
+  The remainder stay unavailable, correctly — runtimes whose files go to
+  System32, SDKs, a compatibility fix database. They have no single directory
+  because they are not applications with one.
+
+  **The agent will not stop itself.** The agent is an installed application and
+  resolves like one, so both halves refuse it: the collector never reports the
+  agent's own directory as an install location, and the matcher refuses any
+  location that contains or is contained by it. The first keeps the console from
+  offering a button that cannot work; the second means it could not work even if
+  something else produced that path. An install location broad enough to contain
+  the agent is refused entirely rather than merely filtered, because a root that
+  wide was never one application's directory. Recovering a stopped agent needs
+  someone physically at the endpoint, which is why this is guarded twice.
 
   Outcomes are reported apart — queued, not installed, not running, unresolvable,
   not eligible — because "not running" and "cannot ever be resolved" look

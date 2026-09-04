@@ -45,10 +45,15 @@ namespace EndpointAgent.Windows;
 /// </para>
 /// </remarks>
 [SupportedOSPlatform("windows")]
-public sealed class WindowsSoftwareCollector(ILogger<WindowsSoftwareCollector> logger) : ISoftwareCollector
+public sealed class WindowsSoftwareCollector(
+    ILogger<WindowsSoftwareCollector> logger,
+    WindowsInstallLocationResolver installLocationResolver) : ISoftwareCollector
 {
     private readonly ILogger<WindowsSoftwareCollector> _logger = logger
         ?? throw new ArgumentNullException(nameof(logger));
+
+    private readonly WindowsInstallLocationResolver _installLocationResolver = installLocationResolver
+        ?? throw new ArgumentNullException(nameof(installLocationResolver));
 
     private const string UninstallPath = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall";
     private const string UninstallPathWow = @"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall";
@@ -222,19 +227,33 @@ public sealed class WindowsSoftwareCollector(ILogger<WindowsSoftwareCollector> l
                     continue; // An update tied to a parent product.
                 }
 
+                var productCode = ProductCodeOrNull(subKeyName);
+
+                // Most uninstall keys omit InstallLocation -- 22 of 36 on the
+                // machine this was measured on -- and without it an application
+                // cannot be linked to its processes. Recovered from what Windows
+                // Installer recorded, or from a DisplayIcon that genuinely points
+                // at the application, and left null when neither does.
+                var installLocation = (entry.GetValue("InstallLocation") as string)?.Trim();
+                if (string.IsNullOrWhiteSpace(installLocation))
+                {
+                    installLocation = _installLocationResolver.Resolve(
+                        productCode, entry.GetValue("DisplayIcon") as string);
+                }
+
                 accumulator.Add(new DiscoveredSoftware(
                     name,
                     (entry.GetValue("DisplayVersion") as string)?.Trim(),
                     (entry.GetValue("Publisher") as string)?.Trim(),
                     (entry.GetValue("InstallDate") as string)?.Trim(),
-                    (entry.GetValue("InstallLocation") as string)?.Trim(),
+                    installLocation,
                     registryView,
                     scope,
                     account,
                     // An MSI product's uninstall key is named for its product
                     // code, which is what a managed package records too - so this
                     // is the join between "installed" and "approved".
-                    ProductCodeOrNull(subKeyName)));
+                    productCode));
             }
             catch (Exception ex) when (ex is System.Security.SecurityException or UnauthorizedAccessException)
             {

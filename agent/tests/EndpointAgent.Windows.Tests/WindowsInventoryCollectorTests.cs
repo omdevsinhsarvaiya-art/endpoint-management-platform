@@ -22,7 +22,9 @@ public sealed class WindowsInventoryCollectorTests
         return new WindowsInventoryCollector(
             new WindowsSystemInfoProvider(NullLogger<WindowsSystemInfoProvider>.Instance),
             new WindowsLocalAccountsCollector(NullLogger<WindowsLocalAccountsCollector>.Instance),
-            new WindowsSoftwareCollector(NullLogger<WindowsSoftwareCollector>.Instance),
+            new WindowsSoftwareCollector(
+                NullLogger<WindowsSoftwareCollector>.Instance,
+                new WindowsInstallLocationResolver(NullLogger<WindowsInstallLocationResolver>.Instance)),
             posture,
             new WindowsServiceProcessProvider(NullLogger<WindowsServiceProcessProvider>.Instance),
             new WindowsUpdateCollector(NullLogger<WindowsUpdateCollector>.Instance),
