@@ -483,7 +483,16 @@ export interface DeviceSoftwareItem {
   version: string | null
   publisher: string | null
   installDate: string | null
+  /** The registry view the entry was found in, not the binary's architecture. */
   architecture: string | null
+  /**
+   * `Machine`, `User`, or null when reported by an agent older than 1.5.0 —
+   * which could not tell, because it read HKCU as LocalSystem and so saw no
+   * per-user software at all.
+   */
+  installationScope: string | null
+  installedForUser: string | null
+  productCode: string | null
 }
 
 export function getSoftwareTitles(page: number, pageSize: number, search: string, publisher: string): Promise<SoftwareTitlePage> {

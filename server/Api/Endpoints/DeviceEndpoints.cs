@@ -407,7 +407,20 @@ public static class DeviceEndpoints
             .AsNoTracking()
             .Where(sw => sw.DeviceId == deviceId)
             .OrderBy(sw => sw.Name)
-            .Select(sw => new { sw.Name, sw.Version, sw.Publisher, sw.InstallDate, sw.Architecture })
+            // Scope, user and product code are part of the row and belong here:
+            // without them the device page cannot say that two rows for one
+            // application are two users' installs rather than a duplicate.
+            .Select(sw => new
+            {
+                sw.Name,
+                sw.Version,
+                sw.Publisher,
+                sw.InstallDate,
+                sw.Architecture,
+                sw.InstallationScope,
+                sw.InstalledForUser,
+                sw.ProductCode,
+            })
             .ToListAsync(cancellationToken);
 
         var posture = await dbContext.DeviceSecurityPosture

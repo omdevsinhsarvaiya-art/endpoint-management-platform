@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { signingLabel, upgradeTargets } from './agentUpdateView'
+import { registryViewLabel, scopeLabel } from './softwareView'
 import { useAuth } from '../auth/AuthContext'
 import { DeviceUsersPanel } from './DeviceUsersPanel'
 import { DeviceGroupsPanel } from './DeviceGroupsPanel'
@@ -656,16 +657,24 @@ export function DeviceDetailPage() {
                       <th>Application</th>
                       <th>Version</th>
                       <th>Publisher</th>
-                      <th>Arch</th>
+                      <th>Installed for</th>
+                      <th>Found in</th>
                     </tr>
                   </thead>
                   <tbody>
                     {device.software.map((sw) => (
-                      <tr key={`${sw.name}|${sw.version}`}>
+                      // Keyed by user as well as name and version: one machine
+                      // legitimately holds the same application once per user,
+                      // and keying without the user collides on exactly those
+                      // rows.
+                      <tr key={`${sw.name}|${sw.version}|${sw.installedForUser ?? ''}`}>
                         <td>{sw.name}</td>
                         <td>{sw.version ?? '—'}</td>
                         <td>{sw.publisher ?? '—'}</td>
-                        <td>{sw.architecture ?? '—'}</td>
+                        <td>{scopeLabel(sw)}</td>
+                        {/* Not the binary's architecture: 64-bit products
+                            routinely register under WOW6432Node. */}
+                        <td>{registryViewLabel(sw.architecture)}</td>
                       </tr>
                     ))}
                   </tbody>
