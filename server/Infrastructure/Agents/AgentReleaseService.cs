@@ -19,8 +19,10 @@ public enum AgentReleaseActionResult
     Duplicate,
     /// <summary>
     /// The artifact failed verification under the configured trust mode -- missing,
-    /// not an MSI, bytes no longer matching the recorded hash, or (Public mode
-    /// only) an unmet Authenticode requirement -- and may not be published.
+    /// not an MSI, bytes no longer matching the recorded hash, a ProductVersion
+    /// that cannot be read or is not the declared version, bytes already recorded
+    /// as another release's artifact, or (Public mode only) an unmet Authenticode
+    /// requirement -- and may not be published.
     /// </summary>
     NotVerified,
 }
@@ -124,6 +126,20 @@ public sealed class AgentReleaseService(
             return (null, "The uploaded bytes do not hash to the declared SHA-256; the upload was refused.");
         }
 
+        // One build is one release. The same bytes already recorded against any
+        // other version means one of the two rows is not what it says it is --
+        // which is exactly how a "1.5.1" that was really the 1.5.0 package came to
+        // exist. Refused before a row is created, and refused again at publish.
+        var owner = await OwnerOfArtifactAsync(sha256, exceptReleaseId: null, cancellationToken);
+        if (owner is not null)
+        {
+            var duplicate = DuplicateOf(owner);
+            await AuditRefusedAsync(
+                "agent_release.created", releaseId: null, normalizedVersion, duplicate,
+                actorId, actorDisplay, actorOrganizationId, cancellationToken);
+            return (null, duplicate.Describe());
+        }
+
         AgentRelease release;
         try
         {
@@ -136,11 +152,27 @@ public sealed class AgentReleaseService(
             return (null, ex.Message);
         }
 
+        // Registering is the first gate, not the only one: everything here runs
+        // again at publish over the bytes as they are then. But a package that is
+        // not what the row claims -- not an MSI, or one whose own ProductVersion
+        // disagrees with the declared version -- is refused now, so no draft can
+        // exist that says one thing and holds another. The one requirement left
+        // to publish is the trust mode's own: under Public an unsigned draft may
+        // be registered and have its artifact replaced with the signed build.
+        var verification = await VerifyStoredAsync(release, cancellationToken);
+        if (!verification.IsTrusted && verification.Failure != ReleaseVerificationFailure.SignatureRequired)
+        {
+            _logger.LogWarning(
+                "Refusing to register agent release {Version}: {Reason}", release.Version, verification.Describe());
+            await AuditRefusedAsync(
+                "agent_release.created", releaseId: null, release.Version, verification,
+                actorId, actorDisplay, actorOrganizationId, cancellationToken);
+            return (null, verification.Describe());
+        }
+
         // The signer is a fact read from the artifact and recorded only when the
         // trust mode verified one. In Internal mode that is never: the signature is
-        // not consulted, so nothing is recorded. Registering is not the consequential
-        // act either way; publishing is, and publishing re-verifies.
-        var verification = await VerifyStoredAsync(release, cancellationToken);
+        // not consulted, so nothing is recorded.
         release.RecordVerifiedSigner(verification.SignerSubject);
 
         _dbContext.AgentReleases.Add(release);
@@ -193,14 +225,31 @@ public sealed class AgentReleaseService(
         {
             // The gate. Re-verified now rather than trusted from upload time, because
             // the bytes on disk can have changed since. What is published is what is
-            // checked: existence, MSI shape, and the stored-byte hash in every mode;
-            // Authenticode only where the trust mode calls for it.
+            // checked: existence, MSI shape, the stored-byte hash, the ProductVersion
+            // inside the package against the declared version, and that no other
+            // release already owns these bytes -- in every mode; Authenticode only
+            // where the trust mode calls for it.
             var verification = await VerifyStoredAsync(release, cancellationToken);
+            if (verification.IsTrusted)
+            {
+                var owner = await OwnerOfArtifactAsync(release.Sha256, release.Id, cancellationToken);
+                if (owner is not null)
+                {
+                    verification = DuplicateOf(owner);
+                }
+            }
+
             if (!verification.IsTrusted)
             {
                 _logger.LogWarning(
                     "Refusing to publish agent release {Version} ({Mode}): {Reason}",
                     release.Version, verification.Mode, verification.Describe());
+
+                // Refused, and recorded as refused. The row has not been touched, so
+                // the only thing written here is the audit entry saying why.
+                await AuditRefusedAsync(
+                    "agent_release.published", release.Id, release.Version, verification,
+                    actorId, actorDisplay, actorOrganizationId, cancellationToken);
                 return AgentReleaseActionOutcome.Of(AgentReleaseActionResult.NotVerified, verification.Describe());
             }
 
@@ -278,22 +327,82 @@ public sealed class AgentReleaseService(
     /// <remarks>
     /// Reads the bytes from the content store and hands them to
     /// <see cref="IReleasePublishVerifier"/>, which owns the rules. The service
-    /// contributes only the recorded hash to compare against; it does not decide
-    /// what counts as trusted.
+    /// contributes only the recorded hash and the declared version to compare
+    /// against; it does not decide what counts as trusted.
     /// </remarks>
+    public Task<ReleaseVerification> VerifyStoredAsync(
+        AgentRelease release, CancellationToken cancellationToken = default) =>
+        VerifyStoredAsync(release.Sha256, release.ContentSizeBytes, release.Version, cancellationToken);
+
+    /// <summary>
+    /// The same verification against bytes not yet recorded on a row -- what a
+    /// replacement artifact must pass before the draft is pointed at it.
+    /// </summary>
     public async Task<ReleaseVerification> VerifyStoredAsync(
-        AgentRelease release, CancellationToken cancellationToken = default)
+        string sha256, long contentSizeBytes, string declaredVersion, CancellationToken cancellationToken = default)
     {
-        await using var stream = await _contentStore.OpenReadAsync(release.Sha256, cancellationToken);
+        await using var stream = await _contentStore.OpenReadAsync(sha256, cancellationToken);
         if (stream is null)
         {
-            return _publishVerifier.Verify(null, release.Sha256);
+            return _publishVerifier.Verify(null, sha256, declaredVersion);
         }
 
-        using var buffer = new MemoryStream(capacity: (int)Math.Min(release.ContentSizeBytes, int.MaxValue));
+        using var buffer = new MemoryStream(capacity: (int)Math.Min(contentSizeBytes, int.MaxValue));
         await stream.CopyToAsync(buffer, cancellationToken);
 
-        return _publishVerifier.Verify(buffer.GetBuffer().AsMemory(0, (int)buffer.Length), release.Sha256);
+        return _publishVerifier.Verify(buffer.GetBuffer().AsMemory(0, (int)buffer.Length), sha256, declaredVersion);
+    }
+
+    /// <summary>
+    /// The release that already records these bytes as its artifact, if any.
+    /// </summary>
+    /// <remarks>
+    /// Every status counts, Revoked included. A revoked release is history, and
+    /// history is exactly what this protects: the bytes of a build that was once
+    /// published as 1.5.0 cannot later be registered as anything else, whatever
+    /// became of the rows in between.
+    /// </remarks>
+    private Task<AgentRelease?> OwnerOfArtifactAsync(
+        string sha256, Guid? exceptReleaseId, CancellationToken cancellationToken) =>
+        _dbContext.AgentReleases
+            .AsNoTracking()
+            .Where(r => r.Sha256 == sha256 && (exceptReleaseId == null || r.Id != exceptReleaseId))
+            .OrderBy(r => r.CreatedAt)
+            .FirstOrDefaultAsync(cancellationToken);
+
+    private ReleaseVerification DuplicateOf(AgentRelease owner) =>
+        ReleaseVerification.Failed(
+            ReleaseVerificationFailure.DuplicateArtifact, _publishVerifier.Mode,
+            $"Release {owner.Version} ({owner.Status}) already uses this artifact.");
+
+    /// <summary>
+    /// Records a refusal in the same trail as the successes, so "who tried to
+    /// register or publish what, and why it was not allowed" is one query.
+    /// </summary>
+    /// <remarks>
+    /// The failure reason is the verifier's category followed by its
+    /// administrator-facing text -- searchable by the first, readable by the
+    /// second. Nothing about the bytes or the filesystem is written.
+    /// </remarks>
+    private async Task AuditRefusedAsync(
+        string action,
+        Guid? releaseId,
+        string version,
+        ReleaseVerification verification,
+        Guid actorId,
+        string actorDisplay,
+        Guid actorOrganizationId,
+        CancellationToken cancellationToken)
+    {
+        _auditWriter.Stage(
+            actorOrganizationId, AuditActorType.PlatformUser, actorId, actorDisplay,
+            action, AuditResult.Failure,
+            audit => audit
+                .OnTarget("agent_release", releaseId?.ToString(), $"windows/x64 {version}")
+                .Requiring(Permissions.Software.Deploy)
+                .WithFailureReason($"{verification.Category}: {verification.Describe()}"));
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
     }
 
     /// <summary>
@@ -334,6 +443,32 @@ public sealed class AgentReleaseService(
             return (null, "The uploaded bytes do not hash to the declared SHA-256; the upload was refused.");
         }
 
+        var owner = await OwnerOfArtifactAsync(sha256, release.Id, cancellationToken);
+        if (owner is not null)
+        {
+            var duplicate = DuplicateOf(owner);
+            await AuditRefusedAsync(
+                "agent_release.artifact_replaced", release.Id, release.Version, duplicate,
+                actorId, actorDisplay, actorOrganizationId, cancellationToken);
+            return (null, duplicate.Describe());
+        }
+
+        // Verified against the new bytes before the row is touched, so a refused
+        // replacement leaves the draft exactly as it was. The same registration
+        // rule as CreateAsync: the package must be what the row says; the trust
+        // mode's signature requirement waits for publish.
+        var verification = await VerifyStoredAsync(sha256, size, release.Version, cancellationToken);
+        if (!verification.IsTrusted && verification.Failure != ReleaseVerificationFailure.SignatureRequired)
+        {
+            _logger.LogWarning(
+                "Refusing replacement artifact for agent release {Version}: {Reason}",
+                release.Version, verification.Describe());
+            await AuditRefusedAsync(
+                "agent_release.artifact_replaced", release.Id, release.Version, verification,
+                actorId, actorDisplay, actorOrganizationId, cancellationToken);
+            return (null, verification.Describe());
+        }
+
         var previousSha256 = release.Sha256;
         try
         {
@@ -344,7 +479,6 @@ public sealed class AgentReleaseService(
             return (null, ex.Message);
         }
 
-        var verification = await VerifyStoredAsync(release, cancellationToken);
         release.RecordVerifiedSigner(verification.SignerSubject);
 
         _auditWriter.Stage(

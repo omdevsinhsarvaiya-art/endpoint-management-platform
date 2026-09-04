@@ -21,9 +21,12 @@ namespace EndpointPlatform.Infrastructure.Tests.Agents;
 /// ever pass a production publish gate. That asymmetry is the point.
 /// </para>
 /// <para>
-/// The compound-file writer is the minimum that produces a file the reader must
-/// handle: v3 layout, one FAT sector, one directory sector, and streams in either
-/// regular sectors or the mini stream depending on the size cutoff requested.
+/// The compound-file writer is the minimum that produces the files the reader
+/// must handle: 512-byte (v3) or 4 KB (v4) sectors, as many FAT and directory
+/// sectors as the content needs, and streams in either regular sectors or the
+/// mini stream depending on the size cutoff requested. The 4 KB layout matters
+/// because it is what Windows Installer writes: the built agent MSI is v4, and
+/// its first reading exposed two things the 512-byte artifacts had not.
 /// </para>
 /// </remarks>
 public static class TestArtifacts
@@ -137,17 +140,20 @@ public static class TestArtifacts
 
     // ---- compound files -----------------------------------------------------
 
-    private const int Sector = 512;
+    private const int DefaultSectorSize = 512;
+
+    /// <summary>The 4 KB sectors Windows Installer itself writes, and the built agent MSI has.</summary>
+    public const int LargeSectorSize = 4096;
     private const int Mini = 64;
     private const uint EndOfChain = 0xFFFFFFFE;
     private const uint FreeSector = 0xFFFFFFFF;
     private const uint NoStream = 0xFFFFFFFF;
 
     /// <summary>A minimal compound file holding one stream (or none).</summary>
-    public static byte[] CompoundFile(string? streamName, byte[] payload, uint miniCutoff = 0) =>
+    public static byte[] CompoundFile(string? streamName, byte[] payload, uint miniCutoff = 0, int sectorSize = DefaultSectorSize) =>
         streamName is null
-            ? CompoundFile([], miniCutoff)
-            : CompoundFile([(streamName, payload)], miniCutoff);
+            ? CompoundFile([], miniCutoff, sectorSize)
+            : CompoundFile([(streamName, payload)], miniCutoff, sectorSize);
 
     /// <summary>
     /// A minimal compound file holding the given streams.
@@ -156,14 +162,36 @@ public static class TestArtifacts
     /// Size below which streams live in the mini stream. Pass 0 to force regular
     /// sectors regardless of size, or the standard 4096 to exercise the mini path.
     /// </param>
-    public static byte[] CompoundFile(IReadOnlyList<(string Name, byte[] Payload)> streams, uint miniCutoff = 0)
+    public static byte[] CompoundFile(IReadOnlyList<(string Name, byte[] Payload)> streams, uint miniCutoff = 0, int sectorSize = DefaultSectorSize)
     {
-        if (streams.Count > 3)
+        // The FAT sits at the front, so how many sectors it needs must be known
+        // before anything is placed -- and how many are needed depends on what is
+        // placed. Laid out with one FAT sector, then again with as many as that
+        // layout turned out to need; the second pass is stable, since adding FAT
+        // sectors adds one FAT entry each.
+        var fatSectors = 1;
+        while (true)
         {
-            throw new ArgumentException("The test writer supports at most three streams.", nameof(streams));
-        }
+            var file = Layout(streams, miniCutoff, sectorSize, fatSectors, out var needed);
+            if (needed <= fatSectors)
+            {
+                return file;
+            }
 
-        // Sector plan: 0 = FAT, 1 = directory, then data.
+            fatSectors = needed;
+        }
+    }
+
+    private static byte[] Layout(
+        IReadOnlyList<(string Name, byte[] Payload)> streams, uint miniCutoff, int sectorSize, int fatSectors, out int neededFatSectors)
+    {
+        // sectorSize plan: the FAT, then the directory (four 128-byte entries per
+        // sector, root included), then data. An MSI-shaped artifact carries a
+        // signature, a seed and three database streams, so the directory spans
+        // more than one sector; the reader walks the chain like any other.
+        var perDirectorySector = sectorSize / 128;
+        var directorySectors = (streams.Count + 1 + perDirectorySector - 1) / perDirectorySector;
+        var directoryStart = fatSectors;
         var sectors = new List<byte[]>();
         var fat = new List<uint>();
 
@@ -171,14 +199,21 @@ public static class TestArtifacts
         {
             for (var i = 0; i < count; i++)
             {
-                sectors.Add(new byte[Sector]);
+                sectors.Add(new byte[sectorSize]);
                 fat.Add(FreeSector);
             }
         }
 
-        Reserve(2);
-        fat[0] = 0xFFFFFFFD; // FAT sector marker
-        fat[1] = EndOfChain;
+        Reserve(fatSectors + directorySectors);
+        for (var s = 0; s < fatSectors; s++)
+        {
+            fat[s] = 0xFFFFFFFD; // FAT sector marker
+        }
+
+        for (var d = 0; d < directorySectors; d++)
+        {
+            fat[directoryStart + d] = d == directorySectors - 1 ? EndOfChain : (uint)(directoryStart + d + 1);
+        }
 
         // Mini-stream residents are packed into one buffer owned by the root entry.
         var miniResidents = new List<(int Index, byte[] Payload)>();
@@ -197,7 +232,7 @@ public static class TestArtifacts
             }
             else
             {
-                starts[i] = WriteChain(sectors, fat, Reserve, payload);
+                starts[i] = WriteChain(sectors, fat, Reserve, payload, sectorSize);
             }
         }
 
@@ -225,87 +260,218 @@ public static class TestArtifacts
             }
 
             var miniBytes = miniStream.ToArray();
-            rootStart = WriteChain(sectors, fat, Reserve, miniBytes);
+            rootStart = WriteChain(sectors, fat, Reserve, miniBytes, sectorSize);
             rootSize = (ulong)miniBytes.Length;
 
-            var miniFatBytes = new byte[Sector];
+            var miniFatBytes = new byte[sectorSize];
             Array.Fill(miniFatBytes, (byte)0xFF);
             for (var i = 0; i < miniFat.Count; i++)
             {
                 BinaryPrimitives.WriteUInt32LittleEndian(miniFatBytes.AsSpan(i * 4), miniFat[i]);
             }
 
-            miniFatStart = WriteChain(sectors, fat, Reserve, miniFatBytes);
+            miniFatStart = WriteChain(sectors, fat, Reserve, miniFatBytes, sectorSize);
             miniFatCount = 1;
         }
 
         // ---- directory --------------------------------------------------------
-        var dir = sectors[1];
-        for (var e = 0; e < Sector / 128; e++)
+        for (var d = 0; d < directorySectors; d++)
         {
-            BinaryPrimitives.WriteUInt32LittleEndian(dir.AsSpan(e * 128 + 0x44), NoStream);
-            BinaryPrimitives.WriteUInt32LittleEndian(dir.AsSpan(e * 128 + 0x48), NoStream);
-            BinaryPrimitives.WriteUInt32LittleEndian(dir.AsSpan(e * 128 + 0x4C), NoStream);
+            var dir = sectors[directoryStart + d];
+            for (var e = 0; e < sectorSize / 128; e++)
+            {
+                BinaryPrimitives.WriteUInt32LittleEndian(dir.AsSpan(e * 128 + 0x44), NoStream);
+                BinaryPrimitives.WriteUInt32LittleEndian(dir.AsSpan(e * 128 + 0x48), NoStream);
+                BinaryPrimitives.WriteUInt32LittleEndian(dir.AsSpan(e * 128 + 0x4C), NoStream);
+            }
         }
 
-        WriteEntry(dir, 0, "Root Entry", type: 5, start: rootStart, size: rootSize, child: streams.Count == 0 ? NoStream : 1);
+        WriteEntry(sectors, directoryStart, sectorSize, 0, "Root Entry", type: 5, start: rootStart, size: rootSize, child: streams.Count == 0 ? NoStream : 1);
         for (var i = 0; i < streams.Count; i++)
         {
-            WriteEntry(dir, i + 1, streams[i].Name, type: 2, start: starts[i], size: (ulong)streams[i].Payload.Length, child: NoStream);
+            WriteEntry(sectors, directoryStart, sectorSize, i + 1, streams[i].Name, type: 2, start: starts[i], size: (ulong)streams[i].Payload.Length, child: NoStream);
         }
 
-        // ---- FAT sector -------------------------------------------------------
-        var fatBytes = sectors[0];
-        Array.Fill(fatBytes, (byte)0xFF);
-        for (var i = 0; i < fat.Count; i++)
+        // ---- FAT sectors --------------------------------------------------------
+        var entriesPerFatSector = sectorSize / 4;
+        neededFatSectors = (fat.Count + entriesPerFatSector - 1) / entriesPerFatSector;
+        for (var s = 0; s < fatSectors; s++)
         {
-            BinaryPrimitives.WriteUInt32LittleEndian(fatBytes.AsSpan(i * 4), fat[i]);
+            Array.Fill(sectors[s], (byte)0xFF);
+        }
+
+        for (var i = 0; i < fat.Count && i < fatSectors * entriesPerFatSector; i++)
+        {
+            BinaryPrimitives.WriteUInt32LittleEndian(
+                sectors[i / entriesPerFatSector].AsSpan((i % entriesPerFatSector) * 4), fat[i]);
         }
 
         // ---- header -----------------------------------------------------------
-        var header = new byte[Sector];
+        var header = new byte[sectorSize];
         new byte[] { 0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1 }.CopyTo(header, 0);
         BinaryPrimitives.WriteUInt16LittleEndian(header.AsSpan(0x18), 0x003E);
-        BinaryPrimitives.WriteUInt16LittleEndian(header.AsSpan(0x1A), 0x0003);
+        BinaryPrimitives.WriteUInt16LittleEndian(header.AsSpan(0x1A), (ushort)(sectorSize == 512 ? 3 : 4));
         BinaryPrimitives.WriteUInt16LittleEndian(header.AsSpan(0x1C), 0xFFFE);
-        BinaryPrimitives.WriteUInt16LittleEndian(header.AsSpan(0x1E), 9);
+        BinaryPrimitives.WriteUInt16LittleEndian(header.AsSpan(0x1E), (ushort)(sectorSize == 512 ? 9 : 12));
         BinaryPrimitives.WriteUInt16LittleEndian(header.AsSpan(0x20), 6);
-        BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(0x2C), 1);
-        BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(0x30), 1);
+        BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(0x2C), (uint)fatSectors);
+        BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(0x30), (uint)directoryStart);
         BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(0x38), miniCutoff);
         BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(0x3C), miniFatStart);
         BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(0x40), miniFatCount);
         BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(0x44), EndOfChain);
         BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(0x48), 0);
-        for (var i = 0; i < 109; i++)
+        // The header lists the first 109 FAT sectors; this writer never needs more.
+        if (fatSectors > 109)
         {
-            BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(0x4C + i * 4), i == 0 ? 0u : FreeSector);
+            throw new ArgumentException("The test writer supports at most 109 FAT sectors.", nameof(streams));
         }
 
-        var file = new byte[Sector + sectors.Count * Sector];
+        for (var i = 0; i < 109; i++)
+        {
+            BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(0x4C + i * 4), i < fatSectors ? (uint)i : FreeSector);
+        }
+
+        var file = new byte[sectorSize + sectors.Count * sectorSize];
         header.CopyTo(file, 0);
         for (var i = 0; i < sectors.Count; i++)
         {
-            sectors[i].CopyTo(file, Sector + i * Sector);
+            sectors[i].CopyTo(file, sectorSize + i * sectorSize);
         }
 
         return file;
     }
 
+    // ---- Windows Installer database ------------------------------------------
+
     /// <summary>
-    /// An MSI-shaped file signed by the authority. <paramref name="seed"/> goes into
-    /// a second stream so distinct seeds yield distinct bytes and content addresses.
+    /// The ProductVersion an artifact carries when a test does not say otherwise.
+    /// A release declaring anything else is, correctly, refused.
     /// </summary>
-    public static byte[] SignedMsi(Authority authority, uint miniCutoff = 0, bool includeRootInBlob = true, string? seed = null) =>
-        SignedMsi(SignatureBlob(authority, includeRootInBlob), miniCutoff, seed);
+    public const string DefaultProductVersion = "1.0.0";
+
+    /// <summary>The Property rows a real agent MSI carries, around the one that matters.</summary>
+    public static IReadOnlyList<(string Property, string Value)> AgentProperties(string productVersion) =>
+    [
+        ("Manufacturer", "Endpoint Platform"),
+        ("ProductCode", "{C3470886-369C-40A5-8019-8A01D2D8DBBA}"),
+        ("ProductName", "Endpoint Platform Agent"),
+        ("ProductVersion", productVersion),
+        ("UpgradeCode", "{8F3C1D92-6B74-4A5E-9D21-7C4E8B0F5A63}"),
+    ];
+
+    /// <summary>
+    /// The three streams that make a compound file a Windows Installer database
+    /// with the given Property table: <c>_StringPool</c>, <c>_StringData</c> and
+    /// the <c>Property</c> table, under the names Windows Installer stores them as.
+    /// </summary>
+    /// <param name="longStringRefs">
+    /// Write three-byte string references and set the pool flag that announces
+    /// them, as a database with more than 65,535 strings would.
+    /// </param>
+    /// <param name="codePage">The string data's code page; 1252 is what WiX writes by default.</param>
+    public static IReadOnlyList<(string Name, byte[] Payload)> MsiDatabaseStreams(
+        IReadOnlyList<(string Property, string Value)> properties,
+        bool longStringRefs = false,
+        int codePage = 1252)
+    {
+        var strings = new List<string>();
+        int IdOf(string value)
+        {
+            var index = strings.IndexOf(value);
+            if (index < 0)
+            {
+                strings.Add(value);
+                index = strings.Count - 1;
+            }
+
+            return index + 1; // 1-based; 0 is the null string
+        }
+
+        var rows = properties.Select(p => (Name: IdOf(p.Property), Value: IdOf(p.Value))).ToList();
+
+        var encoding = codePage == 65001 ? Encoding.UTF8 : Encoding.Latin1;
+        using var pool = new MemoryStream();
+        using var data = new MemoryStream();
+
+        Span<byte> word = stackalloc byte[4];
+        BinaryPrimitives.WriteUInt16LittleEndian(word, (ushort)(codePage & 0xFFFF));
+        BinaryPrimitives.WriteUInt16LittleEndian(word[2..], (ushort)((codePage >> 16) | (longStringRefs ? 0x8000 : 0)));
+        pool.Write(word);
+
+        foreach (var value in strings)
+        {
+            var bytes = encoding.GetBytes(value);
+            if (bytes.Length > 0xFFFF)
+            {
+                // A long string: zero length with a non-zero count, then the real
+                // 32-bit length in the next slot.
+                BinaryPrimitives.WriteUInt16LittleEndian(word, 0);
+                BinaryPrimitives.WriteUInt16LittleEndian(word[2..], 1);
+                pool.Write(word);
+                BinaryPrimitives.WriteUInt32LittleEndian(word, (uint)bytes.Length);
+                pool.Write(word);
+            }
+            else
+            {
+                BinaryPrimitives.WriteUInt16LittleEndian(word, (ushort)bytes.Length);
+                BinaryPrimitives.WriteUInt16LittleEndian(word[2..], 1);
+                pool.Write(word);
+            }
+
+            data.Write(bytes);
+        }
+
+        // Column-major: every Property reference, then every Value reference.
+        var width = longStringRefs ? 3 : 2;
+        var table = new byte[rows.Count * width * 2];
+        for (var r = 0; r < rows.Count; r++)
+        {
+            WriteReference(table, r * width, rows[r].Name, width);
+            WriteReference(table, rows.Count * width + r * width, rows[r].Value, width);
+        }
+
+        return
+        [
+            (MsiDatabase.EncodeStreamName("_StringPool", database: true), pool.ToArray()),
+            (MsiDatabase.EncodeStreamName("_StringData", database: true), data.ToArray()),
+            (MsiDatabase.EncodeStreamName("Property", database: true), table),
+        ];
+    }
+
+    private static void WriteReference(byte[] table, int offset, int reference, int width)
+    {
+        table[offset] = (byte)reference;
+        table[offset + 1] = (byte)(reference >> 8);
+        if (width == 3)
+        {
+            table[offset + 2] = (byte)(reference >> 16);
+        }
+    }
+
+    /// <summary>
+    /// An MSI-shaped file signed by the authority, carrying a database whose
+    /// ProductVersion is <paramref name="productVersion"/>. <paramref name="seed"/>
+    /// goes into a further stream so distinct seeds yield distinct bytes and
+    /// content addresses.
+    /// </summary>
+    public static byte[] SignedMsi(
+        Authority authority,
+        uint miniCutoff = 0,
+        bool includeRootInBlob = true,
+        string? seed = null,
+        string productVersion = DefaultProductVersion) =>
+        SignedMsi(SignatureBlob(authority, includeRootInBlob), miniCutoff, seed, productVersion);
 
     /// <summary>An MSI-shaped file carrying a signature by an arbitrary leaf.</summary>
-    public static byte[] SignedMsi(X509Certificate2 leaf, X509Certificate2? rootToEmbed, string? seed = null) =>
-        SignedMsi(SignatureBlob(leaf, rootToEmbed), 0, seed);
+    public static byte[] SignedMsi(
+        X509Certificate2 leaf, X509Certificate2? rootToEmbed, string? seed = null, string productVersion = DefaultProductVersion) =>
+        SignedMsi(SignatureBlob(leaf, rootToEmbed), 0, seed, productVersion);
 
-    private static byte[] SignedMsi(byte[] blob, uint miniCutoff, string? seed)
+    private static byte[] SignedMsi(byte[] blob, uint miniCutoff, string? seed, string productVersion)
     {
         var streams = new List<(string, byte[])> { (AuthenticodeVerifier.SignatureStreamName, blob) };
+        streams.AddRange(MsiDatabaseStreams(AgentProperties(productVersion)));
         if (seed is not null)
         {
             streams.Add(("Seed", Encoding.UTF8.GetBytes(seed)));
@@ -314,8 +480,38 @@ public static class TestArtifacts
         return CompoundFile(streams, miniCutoff);
     }
 
-    /// <summary>An MSI-shaped file with no signature stream at all.</summary>
-    public static byte[] UnsignedMsi(string? seed = null)
+    /// <summary>
+    /// An MSI-shaped file with no signature stream at all, carrying a database
+    /// whose ProductVersion is <paramref name="productVersion"/>.
+    /// </summary>
+    public static byte[] UnsignedMsi(string? seed = null, string productVersion = DefaultProductVersion) =>
+        MsiWithProperties(AgentProperties(productVersion), seed);
+
+    /// <summary>An unsigned MSI-shaped file with exactly these Property rows.</summary>
+    public static byte[] MsiWithProperties(
+        IReadOnlyList<(string Property, string Value)> properties,
+        string? seed = null,
+        bool longStringRefs = false,
+        int codePage = 1252,
+        uint miniCutoff = 0,
+        int sectorSize = DefaultSectorSize)
+    {
+        var streams = new List<(string, byte[])> { ("SummaryInformation", Encoding.ASCII.GetBytes("not a signature")) };
+        streams.AddRange(MsiDatabaseStreams(properties, longStringRefs, codePage));
+        if (seed is not null)
+        {
+            streams.Add(("Seed", Encoding.UTF8.GetBytes(seed)));
+        }
+
+        return CompoundFile(streams, miniCutoff, sectorSize);
+    }
+
+    /// <summary>
+    /// A compound file that is an MSI in shape only: no database streams at all.
+    /// What every artifact this writer produced looked like before the
+    /// ProductVersion gate existed.
+    /// </summary>
+    public static byte[] MsiWithoutDatabase(string? seed = null)
     {
         var streams = new List<(string, byte[])> { ("SummaryInformation", Encoding.ASCII.GetBytes("not a signature")) };
         if (seed is not null)
@@ -326,19 +522,41 @@ public static class TestArtifacts
         return CompoundFile(streams);
     }
 
-    private static uint WriteChain(List<byte[]> sectors, List<uint> fat, Action<int> reserve, byte[] data)
+    /// <summary>
+    /// An unsigned MSI-shaped file of at least <paramref name="totalBytes"/>,
+    /// laid out the way Windows Installer lays out a large package: 4 KB
+    /// sectors, the database's small streams in the mini stream, and the bulk in
+    /// one patterned "Padding" stream -- fast to build, and content identity is
+    /// the hash.
+    /// </summary>
+    public static byte[] OversizedMsi(int totalBytes, byte seed, string productVersion)
     {
-        var count = Math.Max(1, (data.Length + Sector - 1) / Sector);
+        var padding = new byte[totalBytes];
+        for (var i = 0; i < padding.Length; i++)
+        {
+            padding[i] = (byte)(seed + (i % 251));
+        }
+
+        var streams = new List<(string, byte[])>();
+        streams.AddRange(MsiDatabaseStreams(AgentProperties(productVersion)));
+        streams.Add(("Padding", padding));
+
+        return CompoundFile(streams, miniCutoff: 4096, sectorSize: LargeSectorSize);
+    }
+
+    private static uint WriteChain(List<byte[]> sectors, List<uint> fat, Action<int> reserve, byte[] data, int sectorSize)
+    {
+        var count = Math.Max(1, (data.Length + sectorSize - 1) / sectorSize);
         var first = (uint)sectors.Count;
         reserve(count);
 
         for (var i = 0; i < count; i++)
         {
             var index = (int)first + i;
-            var take = Math.Min(Sector, data.Length - i * Sector);
+            var take = Math.Min(sectorSize, data.Length - i * sectorSize);
             if (take > 0)
             {
-                data.AsSpan(i * Sector, take).CopyTo(sectors[index]);
+                data.AsSpan(i * sectorSize, take).CopyTo(sectors[index]);
             }
 
             fat[index] = i == count - 1 ? EndOfChain : (uint)(index + 1);
@@ -347,9 +565,11 @@ public static class TestArtifacts
         return first;
     }
 
-    private static void WriteEntry(byte[] dir, int index, string name, byte type, uint start, ulong size, uint child)
+    private static void WriteEntry(
+        List<byte[]> sectors, int directoryStart, int sectorSize, int index, string name, byte type, uint start, ulong size, uint child)
     {
-        var entry = dir.AsSpan(index * 128, 128);
+        var perSector = sectorSize / 128;
+        var entry = sectors[directoryStart + index / perSector].AsSpan((index % perSector) * 128, 128);
         var nameBytes = Encoding.Unicode.GetBytes(name);
         nameBytes.CopyTo(entry);
         BinaryPrimitives.WriteUInt16LittleEndian(entry[0x40..], (ushort)(nameBytes.Length + 2));

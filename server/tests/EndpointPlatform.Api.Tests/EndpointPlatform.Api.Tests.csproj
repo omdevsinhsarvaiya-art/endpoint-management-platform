@@ -23,6 +23,7 @@
          rather than referenced so this project does not depend on another test
          assembly; one file, one definition of what a signed test artifact is. -->
     <Compile Include="..\EndpointPlatform.Infrastructure.Tests\Agents\TestArtifacts.cs" Link="Agents\TestArtifacts.cs" />
+    <Compile Include="..\EndpointPlatform.Infrastructure.Tests\Agents\RealAgentMsiFactAttribute.cs" Link="Agents\RealAgentMsiFactAttribute.cs" />
   </ItemGroup>
 
 </Project>

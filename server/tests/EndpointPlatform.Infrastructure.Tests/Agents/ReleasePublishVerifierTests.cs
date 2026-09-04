@@ -61,7 +61,7 @@ public sealed class ReleasePublishVerifierTests
         var (verifier, spy) = Build(AgentReleaseTrustMode.Internal);
         var msi = TestArtifacts.UnsignedMsi();
 
-        var result = verifier.Verify(msi, Sha(msi));
+        var result = verifier.Verify(msi, Sha(msi), TestArtifacts.DefaultProductVersion);
 
         result.IsTrusted.ShouldBeTrue(result.Describe());
         result.Mode.ShouldBe(AgentReleaseTrustMode.Internal);
@@ -80,7 +80,7 @@ public sealed class ReleasePublishVerifierTests
         var (verifier, spy) = Build(AgentReleaseTrustMode.Internal);
         var signed = TestArtifacts.SignedMsi(authority);
 
-        var result = verifier.Verify(signed, Sha(signed));
+        var result = verifier.Verify(signed, Sha(signed), TestArtifacts.DefaultProductVersion);
 
         result.IsTrusted.ShouldBeTrue();
         result.Authenticode.ShouldBeNull();
@@ -97,7 +97,7 @@ public sealed class ReleasePublishVerifierTests
             var (verifier, spy) = Build(AgentReleaseTrustMode.Internal, signer: unset);
             var msi = TestArtifacts.UnsignedMsi();
 
-            verifier.Verify(msi, Sha(msi)).IsTrusted.ShouldBeTrue();
+            verifier.Verify(msi, Sha(msi), TestArtifacts.DefaultProductVersion).IsTrusted.ShouldBeTrue();
             spy.Calls.ShouldBe(0);
         }
     }
@@ -111,7 +111,7 @@ public sealed class ReleasePublishVerifierTests
         var tampered = (byte[])msi.Clone();
         tampered[^1] ^= 0x01;
 
-        var result = verifier.Verify(tampered, Sha(msi));
+        var result = verifier.Verify(tampered, Sha(msi), TestArtifacts.DefaultProductVersion);
 
         result.IsTrusted.ShouldBeFalse();
         result.Failure.ShouldBe(ReleaseVerificationFailure.HashMismatch);
@@ -124,7 +124,7 @@ public sealed class ReleasePublishVerifierTests
         var (verifier, _) = Build(AgentReleaseTrustMode.Internal);
         var bytes = Encoding.ASCII.GetBytes("MZ an exe, not an msi");
 
-        verifier.Verify(bytes, Sha(bytes)).Failure.ShouldBe(ReleaseVerificationFailure.NotAnMsi);
+        verifier.Verify(bytes, Sha(bytes), TestArtifacts.DefaultProductVersion).Failure.ShouldBe(ReleaseVerificationFailure.NotAnMsi);
     }
 
     [Fact]
@@ -132,7 +132,7 @@ public sealed class ReleasePublishVerifierTests
     {
         var (verifier, _) = Build(AgentReleaseTrustMode.Internal);
 
-        verifier.Verify(null, new string('a', 64)).Failure.ShouldBe(ReleaseVerificationFailure.ArtifactMissing);
+        verifier.Verify(null, new string('a', 64), TestArtifacts.DefaultProductVersion).Failure.ShouldBe(ReleaseVerificationFailure.ArtifactMissing);
     }
 
     /// <summary>The recorded hash is compared case-insensitively; storage is lower-case, callers may not be.</summary>
@@ -142,7 +142,7 @@ public sealed class ReleasePublishVerifierTests
         var (verifier, _) = Build(AgentReleaseTrustMode.Internal);
         var msi = TestArtifacts.UnsignedMsi();
 
-        verifier.Verify(msi, Sha(msi).ToUpperInvariant()).IsTrusted.ShouldBeTrue();
+        verifier.Verify(msi, Sha(msi).ToUpperInvariant(), TestArtifacts.DefaultProductVersion).IsTrusted.ShouldBeTrue();
     }
 
     // ---- Public: retained for a future distribution model -------------------
@@ -153,7 +153,7 @@ public sealed class ReleasePublishVerifierTests
         var (verifier, spy) = Build(AgentReleaseTrustMode.Public);
         var msi = TestArtifacts.UnsignedMsi(); // shape and hash fine; the spy decides trust
 
-        var result = verifier.Verify(msi, Sha(msi));
+        var result = verifier.Verify(msi, Sha(msi), TestArtifacts.DefaultProductVersion);
 
         result.IsTrusted.ShouldBeTrue();
         result.SignerSubject.ShouldBe("CN=Techsara Test Signing");
@@ -167,7 +167,7 @@ public sealed class ReleasePublishVerifierTests
         var (verifier, spy) = Build(AgentReleaseTrustMode.Public, refusal);
         var msi = TestArtifacts.UnsignedMsi();
 
-        var result = verifier.Verify(msi, Sha(msi));
+        var result = verifier.Verify(msi, Sha(msi), TestArtifacts.DefaultProductVersion);
 
         result.Failure.ShouldBe(ReleaseVerificationFailure.SignatureRequired);
         result.Authenticode.ShouldBe(refusal);
@@ -182,7 +182,7 @@ public sealed class ReleasePublishVerifierTests
         var (verifier, spy) = Build(AgentReleaseTrustMode.Public);
         var msi = TestArtifacts.UnsignedMsi();
 
-        verifier.Verify(msi, new string('0', 64)).Failure.ShouldBe(ReleaseVerificationFailure.HashMismatch);
+        verifier.Verify(msi, new string('0', 64), TestArtifacts.DefaultProductVersion).Failure.ShouldBe(ReleaseVerificationFailure.HashMismatch);
         spy.Calls.ShouldBe(0);
     }
 

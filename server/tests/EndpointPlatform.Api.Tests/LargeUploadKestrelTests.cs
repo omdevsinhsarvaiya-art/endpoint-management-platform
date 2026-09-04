@@ -2,6 +2,7 @@
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
+using EndpointPlatform.Infrastructure.Tests.Agents;
 
 namespace EndpointPlatform.Api.Tests;
 
@@ -72,21 +73,27 @@ public sealed class LargeUploadKestrelTests(AdminApiPostgresFixture fixture)
     public async Task An_agent_release_larger_than_the_kestrel_default_uploads_and_round_trips()
     {
         using var client = await KestrelAdminAsync();
-        var (bytes, sha) = OversizedContent(seed: 1);
 
-        // 98.x versions: unique, and never the numeric "latest" other tests assert on.
+        // A real package shape, not patterned bytes: registration now reads the
+        // ProductVersion out of the upload, so what goes over the socket must be
+        // an MSI that says 98.0.1 -- written the way Windows Installer writes a
+        // large one, in 4 KB sectors. 98.x versions are unique, and never the
+        // numeric "latest" other tests assert on.
+        var bytes = TestArtifacts.OversizedMsi(OversizedBytes, seed: 1, productVersion: "98.0.1");
+        bytes.Length.ShouldBeGreaterThan(OversizedBytes, "the point is to exceed the Kestrel default");
+        var sha = Convert.ToHexStringLower(SHA256.HashData(bytes));
+
         var create = await client.PostAsync(
             new Uri("/admin/v1/agent-releases/", UriKind.Relative),
             Multipart(bytes, ("version", "98.0.1"), ("sha256", sha)));
 
-        create.StatusCode.ShouldBe(HttpStatusCode.Created);
+        create.StatusCode.ShouldBe(HttpStatusCode.Created, await create.Content.ReadAsStringAsync());
 
         // And the platform serves back exactly the bytes it accepted.
         var releaseId = (await create.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>())
             .GetProperty("releaseId").GetString()!;
         // Not published: this test is about the request-body limit and the byte
-        // round-trip, and a draft is downloadable by an administrator. Publishing
-        // would also be refused, correctly -- these bytes carry no signature.
+        // round-trip, and a draft is downloadable by an administrator.
         var downloaded = await client.GetByteArrayAsync(
             new Uri($"/admin/v1/agent-releases/{releaseId}/download", UriKind.Relative));
         Convert.ToHexStringLower(SHA256.HashData(downloaded)).ShouldBe(sha);

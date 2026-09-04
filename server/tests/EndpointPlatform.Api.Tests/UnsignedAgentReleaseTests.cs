@@ -85,8 +85,8 @@ public sealed class UnsignedAgentReleaseTests(AdminApiPostgresFixture fixture)
     {
         var seed = $"{version}-{Guid.CreateVersion7():N}";
         var bytes = signed
-            ? TestArtifacts.SignedMsi(AdminApiPostgresFixture.SigningAuthority, seed: seed)
-            : TestArtifacts.UnsignedMsi(seed);
+            ? TestArtifacts.SignedMsi(AdminApiPostgresFixture.SigningAuthority, seed: seed, productVersion: version)
+            : TestArtifacts.UnsignedMsi(seed, version);
 
         var sha256 = Convert.ToHexStringLower(SHA256.HashData(bytes));
 

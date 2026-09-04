@@ -32,12 +32,27 @@ Under **Internal**, publishing a release requires:
 4. the artifact is a Windows Installer package (an OLE2 compound file);
 5. the bytes on disk, re-read at that moment, still hash to the release's
    recorded SHA-256;
-6. version and lifecycle rules hold (one release per platform/architecture/
+6. the **ProductVersion inside the package** — read by the server from the
+   MSI's own Property table — is the version the release declares. A package
+   whose version cannot be read is refused, and the declared version is never
+   rewritten to match;
+7. **no other release, of any status, already records these bytes** as its
+   artifact — one package is one release;
+8. version and lifecycle rules hold (one release per platform/architecture/
    version; Draft → Published → Revoked, one way);
-7. an audit entry is written, naming the actor.
+9. an audit entry is written, naming the actor.
 
-Any failure answers **422** naming the check, and the release stays a Draft.
-There is no UI-side gate: a direct API call is refused identically.
+Any failure answers **422** naming the check, the release stays a Draft, and
+the refusal is itself audited with a category (`ProductVersionMismatch`,
+`DuplicateArtifact`, …). There is no UI-side gate: a direct API call is refused
+identically.
+
+Checks 4, 6 and 7 are applied at **upload** as well, so a draft that says one
+thing and holds another cannot be registered in the first place (answer:
+**400**, naming both versions). Publishing still re-reads and re-checks
+everything; upload-time validation is never trusted on its own. See
+[ADR-0013](adr/0013-agent-release-artifact-agrees-with-metadata.md) for why
+this exists.
 
 **No CA-issued Authenticode certificate is required under Internal, and no
 signature is read.** Not "checked and ignored" — the Authenticode verifier is

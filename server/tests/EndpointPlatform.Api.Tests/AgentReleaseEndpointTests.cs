@@ -27,9 +27,9 @@ public sealed class AgentReleaseEndpointTests(AdminApiPostgresFixture fixture)
     /// publish gate. The seed is folded into a second stream so each call yields
     /// distinct bytes and therefore a distinct content address.
     /// </summary>
-    private static (byte[] Bytes, string Sha256) Content(string seed)
+    private static (byte[] Bytes, string Sha256) Content(string seed, string version)
     {
-        var bytes = TestArtifacts.SignedMsi(AdminApiPostgresFixture.SigningAuthority, seed: seed);
+        var bytes = TestArtifacts.SignedMsi(AdminApiPostgresFixture.SigningAuthority, seed: seed, productVersion: version);
         return (bytes, Convert.ToHexStringLower(SHA256.HashData(bytes)));
     }
 
@@ -57,7 +57,7 @@ public sealed class AgentReleaseEndpointTests(AdminApiPostgresFixture fixture)
 
     private async Task<Guid> CreateDraftAsync(HttpClient client, string version, string seed)
     {
-        var (bytes, sha) = Content(seed);
+        var (bytes, sha) = Content(seed, version);
         var response = await client.PostAsync(Releases, Upload(bytes, sha, version));
         response.StatusCode.ShouldBe(HttpStatusCode.Created);
         var body = await response.Content.ReadAsStringAsync();
@@ -70,7 +70,7 @@ public sealed class AgentReleaseEndpointTests(AdminApiPostgresFixture fixture)
     public async Task Upload_publish_download_round_trip()
     {
         using var client = await AdminAsync();
-        var (bytes, sha) = Content("roundtrip");
+        var (bytes, sha) = Content("roundtrip", "9.0.1");
 
         var create = await client.PostAsync(Releases, Upload(bytes, sha, "9.0.1", "First release"));
         create.StatusCode.ShouldBe(HttpStatusCode.Created);
@@ -97,7 +97,7 @@ public sealed class AgentReleaseEndpointTests(AdminApiPostgresFixture fixture)
     public async Task An_upload_whose_bytes_do_not_match_the_declared_hash_is_refused()
     {
         using var client = await AdminAsync();
-        var (bytes, _) = Content("mismatch");
+        var (bytes, _) = Content("mismatch", "9.0.2");
         var wrongSha = new string('b', 64);
 
         var response = await client.PostAsync(Releases, Upload(bytes, wrongSha, "9.0.2"));
@@ -113,7 +113,7 @@ public sealed class AgentReleaseEndpointTests(AdminApiPostgresFixture fixture)
     {
         using var client = await AdminAsync();
         await CreateDraftAsync(client, "9.0.3", "dup-a");
-        var (bytes, sha) = Content("dup-b");
+        var (bytes, sha) = Content("dup-b", "9.0.3");
 
         var response = await client.PostAsync(Releases, Upload(bytes, sha, "9.0.3"));
 
@@ -179,7 +179,7 @@ public sealed class AgentReleaseEndpointTests(AdminApiPostgresFixture fixture)
     {
         var token = await _fixture.SignInAsync(AdminApiPostgresFixture.HelpdeskEmail);
         using var client = _fixture.CreateClientFor(token);
-        var (bytes, sha) = Content("helpdesk");
+        var (bytes, sha) = Content("helpdesk", "9.0.6");
 
         (await client.PostAsync(Releases, Upload(bytes, sha, "9.0.6")))
             .StatusCode.ShouldBe(HttpStatusCode.Forbidden);

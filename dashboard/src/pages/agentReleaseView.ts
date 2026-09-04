@@ -1,5 +1,20 @@
-import type { AgentReleaseRow, AgentReleaseTrustMode } from '../api/client'
+import { ApiError, type AgentReleaseRow, type AgentReleaseTrustMode } from '../api/client'
 import { compareVersions, isSigned } from './agentUpdateView'
+
+/**
+ * What to tell the operator when the server refused a release action.
+ *
+ * The server's refusal is the useful part -- "Declared release: 1.7.1 · MSI
+ * ProductVersion: 1.7.0" names the fix -- and it arrives as the `detail` of a
+ * problem response. It is shown as the server wrote it. The fallback is for a
+ * failure that carried no reason: a network error, or a status with no body.
+ * Nothing here decides that an action succeeded; the caller re-reads the
+ * server's state for that.
+ */
+export function apiFailureMessage(error: unknown, fallback: string): string {
+  const detail = error instanceof ApiError ? error.detail?.trim() : undefined
+  return detail ? detail : fallback
+}
 
 /**
  * Which release is "the latest", asked three different ways.

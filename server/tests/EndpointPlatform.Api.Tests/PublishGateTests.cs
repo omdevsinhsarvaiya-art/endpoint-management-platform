@@ -80,7 +80,7 @@ public sealed class PublishGateTests(AdminApiPostgresFixture fixture)
     public async Task The_recorded_hash_is_computed_by_the_server()
     {
         using var client = await AdminAsync();
-        var bytes = TestArtifacts.SignedMsi(AdminApiPostgresFixture.SigningAuthority, seed: Seed("7.60.0"));
+        var bytes = TestArtifacts.SignedMsi(AdminApiPostgresFixture.SigningAuthority, seed: Seed("7.60.0"), productVersion: "7.60.0");
 
         // No hash declared at all.
         var id = await IdOf(await client.PostAsync(Releases, Form(bytes, "7.60.0")));
@@ -93,7 +93,7 @@ public sealed class PublishGateTests(AdminApiPostgresFixture fixture)
     public async Task A_client_cannot_override_the_hash_with_a_wrong_declaration()
     {
         using var client = await AdminAsync();
-        var bytes = TestArtifacts.SignedMsi(AdminApiPostgresFixture.SigningAuthority, seed: Seed("7.61.0"));
+        var bytes = TestArtifacts.SignedMsi(AdminApiPostgresFixture.SigningAuthority, seed: Seed("7.61.0"), productVersion: "7.61.0");
 
         var response = await client.PostAsync(Releases, Form(bytes, "7.61.0", sha256: new string('c', 64)));
 
@@ -107,7 +107,7 @@ public sealed class PublishGateTests(AdminApiPostgresFixture fixture)
     public async Task A_correct_declared_hash_is_accepted_as_a_cross_check()
     {
         using var client = await AdminAsync();
-        var bytes = TestArtifacts.SignedMsi(AdminApiPostgresFixture.SigningAuthority, seed: Seed("7.62.0"));
+        var bytes = TestArtifacts.SignedMsi(AdminApiPostgresFixture.SigningAuthority, seed: Seed("7.62.0"), productVersion: "7.62.0");
         var sha = Convert.ToHexStringLower(SHA256.HashData(bytes));
 
         var id = await IdOf(await client.PostAsync(Releases, Form(bytes, "7.62.0", sha256: sha.ToUpperInvariant())));
@@ -129,11 +129,11 @@ public sealed class PublishGateTests(AdminApiPostgresFixture fixture)
         using var client = await AdminAsync();
 
         var unsigned = await IdOf(await client.PostAsync(
-            Releases, Form(TestArtifacts.UnsignedMsi(Seed("7.63.0")), "7.63.0", signer: "CN=Whoever I Say")));
+            Releases, Form(TestArtifacts.UnsignedMsi(Seed("7.63.0"), "7.63.0"), "7.63.0", signer: "CN=Whoever I Say")));
         (await RowAsync(unsigned)).SignerSubject.ShouldBeNull();
 
         var signed = await IdOf(await client.PostAsync(
-            Releases, Form(TestArtifacts.SignedMsi(AdminApiPostgresFixture.SigningAuthority, seed: Seed("7.64.0")), "7.64.0", signer: "CN=Whoever I Say")));
+            Releases, Form(TestArtifacts.SignedMsi(AdminApiPostgresFixture.SigningAuthority, seed: Seed("7.64.0"), productVersion: "7.64.0"), "7.64.0", signer: "CN=Whoever I Say")));
         (await RowAsync(signed)).SignerSubject.ShouldBeNull("Internal does not read the signature, so it records no signer");
     }
 
@@ -155,7 +155,7 @@ public sealed class PublishGateTests(AdminApiPostgresFixture fixture)
     public async Task An_unsigned_artifact_publishes_under_internal()
     {
         using var client = await AdminAsync();
-        var id = await IdOf(await client.PostAsync(Releases, Form(TestArtifacts.UnsignedMsi(Seed("7.65.0")), "7.65.0")));
+        var id = await IdOf(await client.PostAsync(Releases, Form(TestArtifacts.UnsignedMsi(Seed("7.65.0"), "7.65.0"), "7.65.0")));
 
         var response = await client.PostAsync(Release(id, "publish"), null);
 
@@ -174,7 +174,7 @@ public sealed class PublishGateTests(AdminApiPostgresFixture fixture)
     {
         using var client = await AdminAsync();
         using var impostor = TestArtifacts.IssueLeaf(AdminApiPostgresFixture.SigningAuthority, "CN=Not Techsara Ltd");
-        var bytes = TestArtifacts.SignedMsi(impostor, AdminApiPostgresFixture.SigningAuthority.Root, Seed("7.66.0"));
+        var bytes = TestArtifacts.SignedMsi(impostor, AdminApiPostgresFixture.SigningAuthority.Root, Seed("7.66.0"), productVersion: "7.66.0");
 
         var id = await IdOf(await client.PostAsync(Releases, Form(bytes, "7.66.0")));
 
@@ -182,14 +182,31 @@ public sealed class PublishGateTests(AdminApiPostgresFixture fixture)
         (await RowAsync(id)).SignerSubject.ShouldBeNull();
     }
 
-    /// <summary>Bytes that are not a Windows Installer package are refused in every mode.</summary>
+    /// <summary>
+    /// Bytes that are not a Windows Installer package are refused in every mode --
+    /// at registration now, so no such draft can exist, and at publish still, for
+    /// bytes that stopped being an MSI after they were stored.
+    /// </summary>
     [Fact]
-    public async Task An_artifact_that_is_not_an_msi_cannot_be_published()
+    public async Task An_artifact_that_is_not_an_msi_cannot_be_registered_or_published()
     {
         using var client = await AdminAsync();
-        var bytes = System.Text.Encoding.ASCII.GetBytes("MZ definitely-an-exe " + Seed("7.67.0") + new string('x', 2048));
+        var exe = System.Text.Encoding.ASCII.GetBytes("MZ definitely-an-exe " + Seed("7.67.0") + new string('x', 2048));
 
-        var id = await IdOf(await client.PostAsync(Releases, Form(bytes, "7.67.0")));
+        var refused = await client.PostAsync(Releases, Form(exe, "7.67.0"));
+        refused.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+        (await refused.Content.ReadAsStringAsync()).ShouldContain("Windows Installer");
+        await using (var db = _fixture.CreateDbContext())
+        {
+            (await db.AgentReleases.AnyAsync(r => r.Version == "7.67.0")).ShouldBeFalse("nothing is recorded from a refused upload");
+        }
+
+        // A draft that was an MSI when stored, overwritten on disk with something
+        // that is not: the publish gate re-reads the bytes and refuses.
+        var id = await IdOf(await client.PostAsync(Releases, Form(TestArtifacts.UnsignedMsi(Seed("7.67.1"), "7.67.1"), "7.67.1")));
+        var row = await RowAsync(id);
+        var directory = _fixture.Factory.Services.GetRequiredService<IOptions<PackageStorageOptions>>().Value.Directory;
+        await File.WriteAllBytesAsync(Path.Combine(directory, row.Sha256 + ".bin"), exe);
 
         var response = await client.PostAsync(Release(id, "publish"), null);
         response.StatusCode.ShouldBe(HttpStatusCode.UnprocessableEntity);
@@ -205,7 +222,7 @@ public sealed class PublishGateTests(AdminApiPostgresFixture fixture)
     public async Task A_stored_artifact_modified_after_upload_cannot_be_published()
     {
         using var client = await AdminAsync();
-        var bytes = TestArtifacts.SignedMsi(AdminApiPostgresFixture.SigningAuthority, seed: Seed("7.68.0"));
+        var bytes = TestArtifacts.SignedMsi(AdminApiPostgresFixture.SigningAuthority, seed: Seed("7.68.0"), productVersion: "7.68.0");
         var id = await IdOf(await client.PostAsync(Releases, Form(bytes, "7.68.0")));
         var row = await RowAsync(id);
 
@@ -228,7 +245,7 @@ public sealed class PublishGateTests(AdminApiPostgresFixture fixture)
     public async Task Publishing_is_audited()
     {
         using var client = await AdminAsync();
-        var id = await IdOf(await client.PostAsync(Releases, Form(TestArtifacts.UnsignedMsi(Seed("7.69.0")), "7.69.0")));
+        var id = await IdOf(await client.PostAsync(Releases, Form(TestArtifacts.UnsignedMsi(Seed("7.69.0"), "7.69.0"), "7.69.0")));
 
         (await client.PostAsync(Release(id, "publish"), null)).StatusCode.ShouldBe(HttpStatusCode.NoContent);
 
@@ -244,7 +261,7 @@ public sealed class PublishGateTests(AdminApiPostgresFixture fixture)
     public async Task A_refusal_names_the_requirement_not_the_bytes()
     {
         using var client = await AdminAsync();
-        var bytes = TestArtifacts.UnsignedMsi(Seed("7.70.0"));
+        var bytes = TestArtifacts.UnsignedMsi(Seed("7.70.0"), "7.70.0");
         var id = await IdOf(await client.PostAsync(Releases, Form(bytes, "7.70.0")));
         var row = await RowAsync(id);
 
@@ -273,12 +290,12 @@ public sealed class PublishGateTests(AdminApiPostgresFixture fixture)
     public async Task A_drafts_artifact_can_be_replaced_and_the_hash_follows_the_new_bytes()
     {
         using var client = await AdminAsync();
-        var unsigned = TestArtifacts.UnsignedMsi(Seed("7.71.0"));
+        var unsigned = TestArtifacts.UnsignedMsi(Seed("7.71.0"), "7.71.0");
         var id = await IdOf(await client.PostAsync(Releases, Form(unsigned, "7.71.0")));
         var before = await RowAsync(id);
         before.SignerSubject.ShouldBeNull();
 
-        var signed = TestArtifacts.SignedMsi(AdminApiPostgresFixture.SigningAuthority, seed: Seed("7.71.0-signed"));
+        var signed = TestArtifacts.SignedMsi(AdminApiPostgresFixture.SigningAuthority, seed: Seed("7.71.0-signed"), productVersion: "7.71.0");
         var replace = await client.PutAsync(Release(id, "artifact"), Form(signed, "7.71.0"));
         replace.StatusCode.ShouldBe(HttpStatusCode.OK);
 
@@ -300,12 +317,12 @@ public sealed class PublishGateTests(AdminApiPostgresFixture fixture)
     {
         using var client = await AdminAsync();
         var id = await IdOf(await client.PostAsync(
-            Releases, Form(TestArtifacts.SignedMsi(AdminApiPostgresFixture.SigningAuthority, seed: Seed("7.72.0")), "7.72.0")));
+            Releases, Form(TestArtifacts.SignedMsi(AdminApiPostgresFixture.SigningAuthority, seed: Seed("7.72.0"), productVersion: "7.72.0"), "7.72.0")));
         (await client.PostAsync(Release(id, "publish"), null)).EnsureSuccessStatusCode();
         var published = await RowAsync(id);
 
         var response = await client.PutAsync(
-            Release(id, "artifact"), Form(TestArtifacts.SignedMsi(AdminApiPostgresFixture.SigningAuthority, seed: Seed("7.72.0-other")), "7.72.0"));
+            Release(id, "artifact"), Form(TestArtifacts.SignedMsi(AdminApiPostgresFixture.SigningAuthority, seed: Seed("7.72.0-other"), productVersion: "7.72.0"), "7.72.0"));
 
         response.StatusCode.ShouldBe(HttpStatusCode.Conflict);
         (await RowAsync(id)).Sha256.ShouldBe(published.Sha256, "the published bytes are frozen");
@@ -318,7 +335,7 @@ public sealed class PublishGateTests(AdminApiPostgresFixture fixture)
 
         (await client.PutAsync(
             Release(Guid.CreateVersion7(), "artifact"),
-            Form(TestArtifacts.UnsignedMsi(Seed("7.73.0")), "7.73.0")))
+            Form(TestArtifacts.UnsignedMsi(Seed("7.73.0"), "7.73.0"), "7.73.0")))
             .StatusCode.ShouldBe(HttpStatusCode.NotFound);
     }
 
@@ -327,11 +344,11 @@ public sealed class PublishGateTests(AdminApiPostgresFixture fixture)
     public async Task Helpdesk_cannot_replace_an_artifact()
     {
         using var admin = await AdminAsync();
-        var id = await IdOf(await admin.PostAsync(Releases, Form(TestArtifacts.UnsignedMsi(Seed("7.74.0")), "7.74.0")));
+        var id = await IdOf(await admin.PostAsync(Releases, Form(TestArtifacts.UnsignedMsi(Seed("7.74.0"), "7.74.0"), "7.74.0")));
 
         using var helpdesk = _fixture.CreateClientFor(await _fixture.SignInAsync(AdminApiPostgresFixture.HelpdeskEmail));
 
-        (await helpdesk.PutAsync(Release(id, "artifact"), Form(TestArtifacts.UnsignedMsi(Seed("7.74.0-b")), "7.74.0")))
+        (await helpdesk.PutAsync(Release(id, "artifact"), Form(TestArtifacts.UnsignedMsi(Seed("7.74.0-b"), "7.74.0"), "7.74.0")))
             .StatusCode.ShouldBe(HttpStatusCode.Forbidden);
     }
 }

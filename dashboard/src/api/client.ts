@@ -29,12 +29,38 @@ export interface HealthReport {
 export class ApiError extends Error {
   readonly status: number
   readonly correlationId: string | null
+  /**
+   * The server's own explanation, when it gave one: the `detail` of an RFC 7807
+   * problem response. This is where an actionable refusal lives -- "Declared
+   * release: 1.7.1 · MSI ProductVersion: 1.7.0" -- as opposed to `message`,
+   * which only says which request failed with which status.
+   */
+  readonly detail: string | null
 
-  constructor(status: number, message: string, correlationId: string | null) {
+  constructor(status: number, message: string, correlationId: string | null, detail: string | null = null) {
     super(message)
     this.name = 'ApiError'
     this.status = status
     this.correlationId = correlationId
+    this.detail = detail
+  }
+}
+
+/**
+ * The `detail` (or failing that, `title`) of a problem response, or null when
+ * the body is not one. Never throws: an error path must not produce a second
+ * error while explaining the first.
+ */
+async function problemDetail(response: Response): Promise<string | null> {
+  try {
+    const type = response.headers.get('Content-Type') ?? ''
+    if (!type.includes('json')) return null
+    const body = (await response.json()) as { detail?: unknown; title?: unknown }
+    if (typeof body.detail === 'string' && body.detail.trim()) return body.detail
+    if (typeof body.title === 'string' && body.title.trim()) return body.title
+    return null
+  } catch {
+    return null
   }
 }
 
@@ -60,12 +86,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   if (!response.ok) {
-    // Surface the correlation id so a user can quote it to an operator.
+    // Surface the correlation id so a user can quote it to an operator, and the
+    // server's own reason so a page can show it instead of guessing.
     const correlationId = response.headers.get('X-Correlation-Id')
     throw new ApiError(
       response.status,
       `Request to ${path} failed with HTTP ${response.status}`,
       correlationId,
+      await problemDetail(response),
     )
   }
 
@@ -1749,7 +1777,9 @@ export async function createAgentRelease(
     body: form,
   })
   if (r.status === 401) sessionExpiredEvent.dispatchEvent(new Event('expired'))
-  if (!r.ok) throw new ApiError(r.status, 'Release upload failed', r.headers.get('X-Correlation-Id'))
+  if (!r.ok) {
+    throw new ApiError(r.status, 'Release upload failed', r.headers.get('X-Correlation-Id'), await problemDetail(r))
+  }
 }
 
 export async function publishAgentRelease(releaseId: string): Promise<void> {

@@ -141,8 +141,13 @@ depends on it is written against the mode by name.
   Installer package; and those bytes, re-read from disk at that moment, still
   hashing to the SHA-256 **the server computed** over what it stored. A hash
   supplied by the client is a transit cross-check only (mismatch → 400). The
-  agent re-computes the SHA-256 over the bytes it downloaded and refuses a
-  mismatch before anything is scheduled. Transport is HTTPS with full TLS
+  package's own ProductVersion, read by the server from the MSI's Property
+  table, must be the version the release declares, and the same bytes cannot
+  be registered or published as more than one release (ADR-0013) — so a row
+  cannot say one version while its artifact is another, which is how a
+  "1.5.1" carrying the 1.5.0 package once came to exist. The agent
+  re-computes the SHA-256 over the bytes it downloaded and refuses a mismatch
+  before anything is scheduled. Transport is HTTPS with full TLS
   validation; publish, revoke and every queued update are audited. There is no
   UI-side gate — a direct API call is refused identically.
 - **Public.** Everything Internal requires, plus a valid Authenticode signature

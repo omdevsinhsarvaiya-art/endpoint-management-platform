@@ -291,6 +291,40 @@ public sealed class CompoundFileTests
         Read(truncated, "Payload").ShouldBeEmpty();
     }
 
+    /// <summary>
+    /// A file whose final sector is short is not a truncated file. Windows
+    /// Installer writes packages whose length is not a multiple of the sector
+    /// size -- the built agent MSI ends 3,085 bytes into its last 4 KB sector --
+    /// and the stream that ends there is whole. The reader used to refuse any
+    /// sector it could not read in full, which made that stream unreadable and
+    /// the package's string pool "missing".
+    /// </summary>
+    [Fact]
+    public void A_stream_ending_in_a_short_final_sector_is_read_whole()
+    {
+        var payload = RandomNumberGenerator.GetBytes(Sector * 2 + 100);
+        var file = TestArtifacts.CompoundFile("Payload", payload, 0);
+
+        // The writer pads the last data sector with zeros; drop that padding so
+        // the file ends exactly where the payload does, as msi.dll would write it.
+        var unpadded = file[..(file.Length - (Sector - 100))];
+
+        Read(unpadded, "Payload").ShouldBe(payload);
+    }
+
+    /// <summary>Tolerating a short sector must not tolerate a missing one.</summary>
+    [Fact]
+    public void A_stream_that_claims_more_than_the_file_holds_is_still_refused()
+    {
+        var payload = RandomNumberGenerator.GetBytes(Sector * 2 + 100);
+        var file = TestArtifacts.CompoundFile("Payload", payload, 0);
+
+        // One byte short of the payload's end: the stream cannot be completed.
+        var cut = file[..(file.Length - (Sector - 100) - 1)];
+
+        Read(cut, "Payload").ShouldBeEmpty();
+    }
+
     /// <summary>A FAT that loops on itself terminates at the cap, not never.</summary>
     [Fact]
     public void A_cyclic_fat_chain_terminates()

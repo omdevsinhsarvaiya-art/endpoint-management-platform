@@ -102,12 +102,15 @@ internal static class CompoundFile
         foreach (var sector in Chain(fat, dirStart))
         {
             var offset = SectorOffset(sector, sectorSize);
-            if (offset + sectorSize > file.Length)
+            if (offset >= file.Length)
             {
                 return null;
             }
 
-            for (var i = 0; i + DirectoryEntrySize <= sectorSize; i += DirectoryEntrySize)
+            // Only the entries the file actually holds, for the same reason as
+            // ReadChain: a short final sector is a real layout, not damage.
+            var available = Math.Min(sectorSize, file.Length - offset);
+            for (var i = 0; i + DirectoryEntrySize <= available; i += DirectoryEntrySize)
             {
                 var entry = file.Slice(offset + i, DirectoryEntrySize);
                 var type = entry[0x42];
@@ -291,12 +294,20 @@ internal static class CompoundFile
             }
 
             var offset = SectorOffset(sector, sectorSize);
-            if (offset + sectorSize > file.Length)
+            if (offset >= file.Length)
             {
                 return null;
             }
 
-            var take = Math.Min(sectorSize, length - copied);
+            // The file's last sector may be short. Windows Installer writes a
+            // package whose length is not a multiple of the sector size -- the
+            // agent MSI ends 3,085 bytes into its final 4 KB sector -- and
+            // reads it back without complaint, so the stream that ends there
+            // must be readable here too. What is still refused is a stream that
+            // claims more bytes than the file holds: that leaves copied short of
+            // length below, and a short read is no read.
+            var available = Math.Min(sectorSize, file.Length - offset);
+            var take = Math.Min(available, length - copied);
             file.Slice(offset, take).CopyTo(result.AsSpan(copied));
             copied += take;
         }

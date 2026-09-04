@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  apiFailureMessage,
   deploymentWarning,
   describeReleaseGap,
   downloadHint,
@@ -17,7 +18,7 @@ import {
   upgradeTargets,
   type DeviceUpdateCandidate,
 } from '../../pages/agentUpdateView'
-import type { AgentReleaseRow } from '../../api/client'
+import { ApiError, type AgentReleaseRow } from '../../api/client'
 
 /**
  * Which release is "the latest", and what that entitles it to.
@@ -305,5 +306,56 @@ describe('downloading a build', () => {
 
   it('has nothing to add for a published release', () => {
     expect(downloadHint(release({ status: 'Published' }))).toBeNull()
+  })
+})
+
+describe('what the operator is told when the server refuses', () => {
+  /**
+   * The refusal is the useful part. A release declared as 1.7.1 over a 1.7.0
+   * package is refused by the server with both versions named; the page must
+   * show exactly that, not a generic "upload failed" that sends the operator
+   * to check the file extension.
+   */
+  it('shows the server reason verbatim when there is one', () => {
+    const error = new ApiError(
+      400,
+      'Release upload failed',
+      'corr-1',
+      'The declared release version does not match the MSI. Declared release: 1.7.1 · MSI ProductVersion: 1.7.0',
+    )
+
+    const text = apiFailureMessage(error, 'Upload failed.')
+
+    expect(text).toContain('Declared release: 1.7.1')
+    expect(text).toContain('MSI ProductVersion: 1.7.0')
+    expect(text).not.toContain('Upload failed.')
+  })
+
+  it('shows the duplicate-artifact reason verbatim', () => {
+    const error = new ApiError(
+      422,
+      'Request failed with HTTP 422',
+      null,
+      'The artifact already belongs to another release version. Release 1.5.0 (Published) already uses this artifact.',
+    )
+
+    expect(apiFailureMessage(error, 'The release could not be published.')).toContain('1.5.0 (Published)')
+  })
+
+  it('falls back when the server gave no reason', () => {
+    expect(apiFailureMessage(new ApiError(500, 'Request failed with HTTP 500', null), 'Fallback.')).toBe('Fallback.')
+    expect(apiFailureMessage(new ApiError(502, 'Request failed with HTTP 502', null, '   '), 'Fallback.')).toBe('Fallback.')
+  })
+
+  it('falls back for anything that is not an API error', () => {
+    expect(apiFailureMessage(new TypeError('Failed to fetch'), 'Fallback.')).toBe('Fallback.')
+    expect(apiFailureMessage(undefined, 'Fallback.')).toBe('Fallback.')
+  })
+
+  /** The generic HTTP line is never what the operator sees when a real reason exists. */
+  it('never surfaces the generic request line in place of a reason', () => {
+    const error = new ApiError(422, 'Request to /x failed with HTTP 422', null, 'Named reason.')
+
+    expect(apiFailureMessage(error, 'Fallback.')).toBe('Named reason.')
   })
 })

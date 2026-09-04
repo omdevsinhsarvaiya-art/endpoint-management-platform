@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
-  ApiError,
   createAgentRelease,
   downloadAgentRelease,
   getAgentReleasePolicy,
@@ -14,6 +13,7 @@ import { useAuth } from '../auth/AuthContext'
 import { Icon } from '../components/Icon'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import {
+  apiFailureMessage,
   deploymentWarning,
   describeReleaseGap,
   downloadHint,
@@ -101,8 +101,12 @@ export function AgentReleasesPage() {
       setNotes('')
       setShowUpload(false)
       await load()
-    } catch {
-      setError('Upload failed. Check the version is unique three-part (e.g. 1.1.0) and the file is the MSI.')
+    } catch (e) {
+      // The server says why: a version that is not the MSI's ProductVersion, a
+      // build already registered under another version, a file that is not an
+      // MSI. Shown as written, so the fix is named rather than guessed at.
+      setError(apiFailureMessage(
+        e, 'Upload failed. Check the version is unique three-part (e.g. 1.1.0) and the file is the MSI.'))
     } finally {
       setBusy(false)
     }
@@ -128,8 +132,11 @@ export function AgentReleasesPage() {
       await load()
     } catch (e) {
       // A 422 carries the server's reason; show it verbatim. It names the
-      // requirement that failed and nothing about the bytes.
-      setError(e instanceof ApiError && e.message ? e.message : 'The release could not be published.')
+      // requirement that failed and nothing about the bytes. Then re-read the
+      // list: the row is whatever the server says it is, which after a refusal
+      // is still a Draft, and the page must show that rather than assume.
+      setError(apiFailureMessage(e, 'The release could not be published.'))
+      await load()
     }
   }
 
@@ -217,7 +224,10 @@ export function AgentReleasesPage() {
                 onChange={(e) => setVersion(e.target.value)}
                 placeholder="1.1.0"
               />
-              <div className="field-hint">Three numeric parts. Must match the MSI's product version.</div>
+              <div className="field-hint">
+                Three numeric parts. The server reads the ProductVersion out of the MSI itself and
+                refuses an upload that declares anything else.
+              </div>
             </div>
             {/* No signer field. The signer is a fact the server reads from the
                 MSI's own Authenticode signature, never something an uploader

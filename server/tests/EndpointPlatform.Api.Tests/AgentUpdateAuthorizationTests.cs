@@ -121,7 +121,7 @@ public sealed class AgentUpdateAuthorizationTests(AdminApiPostgresFixture fixtur
         // Signed by the fixture authority: most callers go on to publish, and the
         // publish gate refuses anything else.
         var bytes = TestArtifacts.SignedMsi(
-            AdminApiPostgresFixture.SigningAuthority, seed: $"{version}-{Guid.CreateVersion7():N}");
+            AdminApiPostgresFixture.SigningAuthority, seed: $"{version}-{Guid.CreateVersion7():N}", productVersion: version);
 
         var file = new ByteArrayContent(bytes);
         file.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");

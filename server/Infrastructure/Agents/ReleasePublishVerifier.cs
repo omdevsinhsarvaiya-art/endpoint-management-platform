@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using EndpointPlatform.Domain.Agents;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -21,9 +22,10 @@ namespace EndpointPlatform.Infrastructure.Agents;
 /// What does <em>not</em> vary by mode: the SHA-256 is always the server's, always
 /// re-checked against the stored bytes at publish, and always re-checked by the
 /// agent over the downloaded bytes; the artifact must always be a Windows
-/// Installer package; publishing always needs an authorized administrator, a
-/// Draft release, and an audit entry; transport is always HTTPS. Only the
-/// Authenticode requirement is a matter of mode.
+/// Installer package whose own ProductVersion is the version the release
+/// declares; publishing always needs an authorized administrator, a Draft
+/// release, and an audit entry; transport is always HTTPS. Only the Authenticode
+/// requirement is a matter of mode.
 /// </para>
 /// </remarks>
 public enum AgentReleaseTrustMode
@@ -58,6 +60,19 @@ public enum ReleaseVerificationFailure
     /// <summary>The stored bytes no longer hash to the release's recorded SHA-256.</summary>
     HashMismatch,
 
+    /// <summary>
+    /// The package's ProductVersion could not be read: no Windows Installer
+    /// database inside the compound file, no Property table, no ProductVersion
+    /// row, or streams that do not decode.
+    /// </summary>
+    ProductVersionUnavailable,
+
+    /// <summary>The package's ProductVersion is not the version the release declares.</summary>
+    ProductVersionMismatch,
+
+    /// <summary>The same bytes are already the artifact of a release with a different version.</summary>
+    DuplicateArtifact,
+
     /// <summary>Public mode only: the Authenticode requirement was not met.</summary>
     SignatureRequired,
 }
@@ -66,6 +81,11 @@ public enum ReleaseVerificationFailure
 /// <param name="Authenticode">
 /// In Public mode, the Authenticode result that produced <see cref="ReleaseVerificationFailure.SignatureRequired"/>
 /// or the verified signer. Always null in Internal mode: that path is never taken.
+/// </param>
+/// <param name="Detail">
+/// The specifics an administrator needs to act -- the two versions that disagree,
+/// the release that already owns the bytes. Never anything about the bytes
+/// themselves.
 /// </param>
 public sealed record ReleaseVerification(
     ReleaseVerificationFailure? Failure,
@@ -78,6 +98,9 @@ public sealed record ReleaseVerification(
     /// <summary>The verified signer, when the mode verifies one.</summary>
     public string? SignerSubject => Authenticode?.IsTrusted == true ? Authenticode.SignerSubject : null;
 
+    /// <summary>The failure's name, for an audit trail that is searched by category.</summary>
+    public string? Category => Failure?.ToString();
+
     public static ReleaseVerification Trusted(AgentReleaseTrustMode mode, AuthenticodeVerification? authenticode = null) =>
         new(null, mode, authenticode, null);
 
@@ -89,15 +112,25 @@ public sealed record ReleaseVerification(
     public string Describe() => Failure switch
     {
         null => Mode == AgentReleaseTrustMode.Internal
-            ? "The artifact is a Windows Installer package whose stored bytes match its recorded SHA-256."
-            : "The artifact's bytes match its recorded SHA-256 and it is signed by the expected publisher.",
+            ? "The artifact is a Windows Installer package whose stored bytes match its recorded SHA-256 and whose ProductVersion matches the release."
+            : "The artifact's bytes match its recorded SHA-256, its ProductVersion matches the release, and it is signed by the expected publisher.",
         ReleaseVerificationFailure.ArtifactMissing => "The release's artifact is missing from storage.",
         ReleaseVerificationFailure.NotAnMsi => "The artifact is not a Windows Installer package.",
         ReleaseVerificationFailure.HashMismatch => "The stored artifact does not match the release's recorded SHA-256.",
+        ReleaseVerificationFailure.ProductVersionUnavailable =>
+            "The artifact's ProductVersion could not be read. " + (Detail ?? "It does not carry a readable Windows Installer Property table."),
+        ReleaseVerificationFailure.ProductVersionMismatch =>
+            "The declared release version does not match the MSI. " + (Detail ?? "Declared release and MSI ProductVersion differ."),
+        ReleaseVerificationFailure.DuplicateArtifact =>
+            "The artifact already belongs to another release version. " + (Detail ?? "One build is one release; upload a build made for this version."),
         ReleaseVerificationFailure.SignatureRequired => Authenticode?.Describe()
             ?? "Public releases must be Authenticode-signed by the configured publisher.",
         _ => "The artifact could not be verified.",
     };
+
+    /// <summary>The wording for a version mismatch, kept in one place so console and audit agree.</summary>
+    public static string VersionMismatchDetail(string declaredVersion, string productVersion) =>
+        $"Declared release: {declaredVersion} · MSI ProductVersion: {productVersion}";
 }
 
 /// <summary>Decides whether stored release bytes may be published.</summary>
@@ -106,8 +139,11 @@ public interface IReleasePublishVerifier
     /// <summary>The mode this platform is configured for.</summary>
     AgentReleaseTrustMode Mode { get; }
 
-    /// <summary>Verifies the bytes on disk against the release's recorded hash, per the mode.</summary>
-    ReleaseVerification Verify(ReadOnlyMemory<byte>? storedBytes, string recordedSha256);
+    /// <summary>
+    /// Verifies the bytes on disk against the release's recorded hash and
+    /// declared version, per the mode.
+    /// </summary>
+    ReleaseVerification Verify(ReadOnlyMemory<byte>? storedBytes, string recordedSha256, string declaredVersion);
 }
 
 /// <summary>
@@ -116,9 +152,19 @@ public interface IReleasePublishVerifier
 /// <remarks>
 /// <para>
 /// The mode-independent checks run first and are the ones that hold the whole
-/// model up: the artifact exists, it is a Windows Installer package, and its bytes
-/// still hash to what the release row says. A build that fails any of these is
-/// refused in every mode, whatever it is signed with.
+/// model up: the artifact exists, it is a Windows Installer package, its bytes
+/// still hash to what the release row says, and the ProductVersion inside it is
+/// the version the release declares. A build that fails any of these is refused
+/// in every mode, whatever it is signed with.
+/// </para>
+/// <para>
+/// The ProductVersion check is what makes the row and the bytes one thing. Before
+/// it, a release row said "1.5.1" and its artifact said "1.5.0", and nothing
+/// noticed until an agent did. The version is read out of the package by
+/// <see cref="MsiDatabase"/> rather than trusted from the upload form, and a
+/// package whose version cannot be read is refused rather than assumed: the
+/// declared version is never rewritten to match, because the point is that the
+/// two must agree, not that one must win.
 /// </para>
 /// <para>
 /// Only then, and only in <see cref="AgentReleaseTrustMode.Public"/>, does the
@@ -142,7 +188,7 @@ public sealed class ReleasePublishVerifier(
 
     public AgentReleaseTrustMode Mode => _options.TrustMode;
 
-    public ReleaseVerification Verify(ReadOnlyMemory<byte>? storedBytes, string recordedSha256)
+    public ReleaseVerification Verify(ReadOnlyMemory<byte>? storedBytes, string recordedSha256, string declaredVersion)
     {
         var mode = _options.TrustMode;
 
@@ -169,6 +215,26 @@ public sealed class ReleasePublishVerifier(
             return ReleaseVerification.Failed(ReleaseVerificationFailure.HashMismatch, mode);
         }
 
+        // Bytes proven intact; now they must be the build the row says they are.
+        var product = MsiDatabase.TryReadProductVersion(bytes);
+        if (!product.IsFound)
+        {
+            return ReleaseVerification.Failed(
+                ReleaseVerificationFailure.ProductVersionUnavailable, mode, DescribeUnavailable(product.Outcome));
+        }
+
+        if (!AgentVersionNumber.TryParse(product.Value, out var productVersion)
+            || !AgentVersionNumber.TryParse(declaredVersion, out var declared)
+            || productVersion != declared)
+        {
+            _logger.LogWarning(
+                "Agent release declares {Declared} but its MSI ProductVersion is {Product}; refusing to publish.",
+                declaredVersion, product.Value);
+            return ReleaseVerification.Failed(
+                ReleaseVerificationFailure.ProductVersionMismatch, mode,
+                ReleaseVerification.VersionMismatchDetail(declaredVersion, product.Value!));
+        }
+
         if (mode == AgentReleaseTrustMode.Internal)
         {
             // Deliberately the end of the road. Nothing below this line is reached.
@@ -180,4 +246,12 @@ public sealed class ReleasePublishVerifier(
             ? ReleaseVerification.Trusted(mode, authenticode)
             : ReleaseVerification.Failed(ReleaseVerificationFailure.SignatureRequired, mode, authenticode.Describe(), authenticode);
     }
+
+    private static string DescribeUnavailable(MsiProductVersionOutcome outcome) => outcome switch
+    {
+        MsiProductVersionOutcome.NoStringPool => "The file has no Windows Installer database inside it.",
+        MsiProductVersionOutcome.NoPropertyTable => "The package has no Property table.",
+        MsiProductVersionOutcome.NotDeclared => "The package's Property table declares no ProductVersion.",
+        _ => "The package's database could not be decoded.",
+    };
 }
