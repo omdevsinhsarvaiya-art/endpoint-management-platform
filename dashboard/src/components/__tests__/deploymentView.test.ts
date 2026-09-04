@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  hasCancellableWork,
+  hasRetryableWork,
   hasWorkToDo,
   isSettled,
   matchesSearch,
@@ -42,6 +44,7 @@ function plan(overrides: Partial<DeploymentPlan> = {}): DeploymentPlan {
 function tally(overrides: Partial<DeploymentTally> = {}): DeploymentTally {
   return {
     total: 0, pending: 0, installing: 0, succeeded: 0, failed: 0, expired: 0, skipped: 0,
+    offline: 0, cancelled: 0,
     ...overrides,
   }
 }
@@ -114,10 +117,33 @@ describe('deployment plan', () => {
 
 describe('deployment progress', () => {
   /** Settled means nothing is still moving — never a stored flag. */
-  it('is settled only when nothing is pending or installing', () => {
+  it('is settled only when nothing is pending, installing or offline', () => {
     expect(isSettled(tally({ total: 3, succeeded: 2, failed: 1 }))).toBe(true)
     expect(isSettled(tally({ total: 3, succeeded: 2, pending: 1 }))).toBe(false)
     expect(isSettled(tally({ total: 3, succeeded: 2, installing: 1 }))).toBe(false)
+    // An offline device still owes work: the task runs if it returns in time.
+    expect(isSettled(tally({ total: 3, succeeded: 2, offline: 1 }))).toBe(false)
+  })
+
+  /**
+   * Retry acts on work that never succeeded. Expired and cancelled qualify —
+   * neither ever ran — while skipped does not: a skipped device was deliberately
+   * sent nothing and retrying would skip it again.
+   */
+  it('offers retry only for work that failed, expired or was cancelled', () => {
+    expect(hasRetryableWork(tally({ total: 2, succeeded: 1, failed: 1 }))).toBe(true)
+    expect(hasRetryableWork(tally({ total: 2, succeeded: 1, expired: 1 }))).toBe(true)
+    expect(hasRetryableWork(tally({ total: 2, succeeded: 1, cancelled: 1 }))).toBe(true)
+    expect(hasRetryableWork(tally({ total: 2, succeeded: 1, skipped: 1 }))).toBe(false)
+    expect(hasRetryableWork(tally({ total: 1, succeeded: 1 }))).toBe(false)
+  })
+
+  /** Only queued work can be cancelled; finished work cannot be undone. */
+  it('offers cancel only while work is still queued', () => {
+    expect(hasCancellableWork(tally({ total: 2, succeeded: 1, pending: 1 }))).toBe(true)
+    expect(hasCancellableWork(tally({ total: 2, succeeded: 1, offline: 1 }))).toBe(true)
+    expect(hasCancellableWork(tally({ total: 2, succeeded: 1, installing: 1 }))).toBe(false)
+    expect(hasCancellableWork(tally({ total: 2, succeeded: 2 }))).toBe(false)
   })
 
   it('summarises only the categories that occurred', () => {

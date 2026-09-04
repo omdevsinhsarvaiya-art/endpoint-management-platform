@@ -42,6 +42,7 @@ internal sealed class SoftwareDeploymentTargetConfiguration : IEntityTypeConfigu
         builder.Property(t => t.State).HasConversion<string>().HasMaxLength(16).IsRequired();
         builder.Property(t => t.Reason).HasConversion<string>().HasMaxLength(32).IsRequired();
         builder.Property(t => t.ObservedVersion).HasMaxLength(128);
+        builder.Property(t => t.Attempt).IsRequired();
         builder.Property(t => t.CreatedAt).IsRequired();
         builder.Property(t => t.UpdatedAt).IsRequired();
 
@@ -55,13 +56,13 @@ internal sealed class SoftwareDeploymentTargetConfiguration : IEntityTypeConfigu
             .HasForeignKey(t => t.DeviceId)
             .OnDelete(DeleteBehavior.Cascade);
 
-        // A device appears at most once in a deployment. The unique index is the
-        // guard against double-queueing, not a convention: without it a repeated
-        // or concurrent submission would install the same package twice on one
-        // machine.
-        builder.HasIndex(t => new { t.DeploymentId, t.DeviceId })
+        // A device appears at most once per attempt. Attempt is part of the key
+        // because a retry adds a row rather than overwriting one -- keeping the
+        // history -- while still making it impossible for one attempt to queue the
+        // same device twice, which would install the package twice on one machine.
+        builder.HasIndex(t => new { t.DeploymentId, t.DeviceId, t.Attempt })
             .IsUnique()
-            .HasDatabaseName("ux_software_deployment_targets_deployment_device");
+            .HasDatabaseName("ux_software_deployment_targets_deployment_device_attempt");
 
         // Status is read by joining the task, so this is the join column.
         builder.HasIndex(t => t.TaskId)

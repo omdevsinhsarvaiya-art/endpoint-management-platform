@@ -535,6 +535,9 @@ export interface DeploymentTally {
   failed: number
   expired: number
   skipped: number
+  /** Queued, but the device has been silent long enough to be waiting on it. */
+  offline: number
+  cancelled: number
 }
 
 export interface DeploymentSummary {
@@ -568,6 +571,8 @@ export interface DeploymentDeviceResult {
   taskId: string | null
   resultMessage: string | null
   completedAt: string | null
+  /** 1 for the original deployment, 2 for the first retry, and so on. */
+  attempt: number
 }
 
 export interface DeploymentDetail {
@@ -621,6 +626,28 @@ export function getDeployments(page: number, pageSize: number): Promise<Deployme
 
 export function getDeployment(deploymentId: string): Promise<DeploymentDetail> {
   return request<DeploymentDetail>(`/admin/v1/deployments/${deploymentId}`)
+}
+
+/**
+ * Re-runs the devices that did not succeed, as a new attempt.
+ *
+ * The server re-decides everything — authorization, package lifecycle, retired
+ * state, eligibility — so a device that has since become compliant or been
+ * retired is not sent an install because it failed earlier.
+ */
+export function retryDeployment(deploymentId: string): Promise<DeploymentCreated> {
+  return request<DeploymentCreated>(`/admin/v1/deployments/${deploymentId}/retry`, { method: 'POST' })
+}
+
+/**
+ * Cancels work that has not reached an agent. A delivered install is running on
+ * a Windows machine and is deliberately left alone.
+ */
+export function cancelDeployment(
+  deploymentId: string,
+): Promise<{ deploymentId: string; considered: number; cancelled: number }> {
+  return request<{ deploymentId: string; considered: number; cancelled: number }>(
+    `/admin/v1/deployments/${deploymentId}/cancel`, { method: 'POST' })
 }
 
 /**

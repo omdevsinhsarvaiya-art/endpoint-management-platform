@@ -108,7 +108,8 @@ public sealed class SoftwareDeploymentTarget : AuditableEntity
         DeploymentTargetState state,
         SoftwareEligibility reason,
         Guid? taskId,
-        string? observedVersion)
+        string? observedVersion,
+        int attempt = 1)
     {
         DeploymentId = Guard.NotEmpty(deploymentId);
         DeviceId = Guard.NotEmpty(deviceId);
@@ -116,6 +117,9 @@ public sealed class SoftwareDeploymentTarget : AuditableEntity
         Reason = reason;
         TaskId = taskId;
         ObservedVersion = Guard.OptionalMaxLength(observedVersion, 128);
+        Attempt = attempt < 1
+            ? throw new ArgumentOutOfRangeException(nameof(attempt), "Attempts start at 1.")
+            : attempt;
     }
 
     public Guid DeploymentId { get; private set; }
@@ -138,4 +142,17 @@ public sealed class SoftwareDeploymentTarget : AuditableEntity
     /// fact even once inventory has moved on.
     /// </remarks>
     public string? ObservedVersion { get; private set; }
+
+    /// <summary>
+    /// Which attempt this row belongs to: 1 for the original deployment, 2 for
+    /// the first retry, and so on.
+    /// </summary>
+    /// <remarks>
+    /// A retry adds rows rather than mutating the ones already there, so the
+    /// history stays intact: "attempt 1 failed with a hash mismatch, attempt 2
+    /// succeeded" is a different and far more useful record than a row that only
+    /// ever shows its latest state. The unique index is over
+    /// (deployment, device, attempt) for the same reason.
+    /// </remarks>
+    public int Attempt { get; private set; }
 }

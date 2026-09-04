@@ -117,56 +117,8 @@ public sealed class SoftwareDeploymentService(
             organizationId, package.Id, package.Name, package.Version, targetType, actorId, actorDisplay);
         _dbContext.SoftwareDeployments.Add(deployment);
 
-        var queued = 0;
-        var skipped = 0;
-
-        // Built once. Going through SoftwarePackageService.DeployToDeviceAsync per
-        // device would re-read the package on every iteration -- measured at ~14ms
-        // per device across a 200-device group, which is a query the loop does not
-        // need since the package is already in hand.
-        var payload = new TaskPayloads.InstallPackage(
-            package.Id, package.Sha256, package.MsiProductCode, package.RequiredSignerSubject,
-            package.Name, package.Version);
-
-        foreach (var decision in decisions)
-        {
-            Guid? taskId = null;
-
-            if (decision.Eligibility.NeedsInstall())
-            {
-                // Still queued through the task service, never by writing a task
-                // row here: it is what enforces the retired-device rule, the
-                // minimum agent version and the catalog definition, and a second
-                // path that skipped those would be a hole in all three.
-                var task = await _taskService.QueueAsync(
-                    organizationId, decision.DeviceId, DeviceTaskType.InstallPackage,
-                    payload, actorId, actorDisplay, cancellationToken);
-
-                taskId = task?.Id;
-            }
-
-            var state = taskId is null ? DeploymentTargetState.Skipped : DeploymentTargetState.Queued;
-
-            // A device that needed the package but whose task was refused is not
-            // silently dropped: it is recorded as skipped, and the reason it was
-            // refused (retired, or an agent too old for InstallPackage) is what
-            // the operator sees.
-            var reason = state == DeploymentTargetState.Skipped && decision.Eligibility.NeedsInstall()
-                ? SoftwareEligibility.Retired
-                : decision.Eligibility;
-
-            _dbContext.SoftwareDeploymentTargets.Add(new SoftwareDeploymentTarget(
-                deployment.Id, decision.DeviceId, state, reason, taskId, decision.ObservedVersion));
-
-            if (state == DeploymentTargetState.Queued)
-            {
-                queued++;
-            }
-            else
-            {
-                skipped++;
-            }
-        }
+        var (queued, skipped) = await WriteTargetsAsync(
+            deployment, package, decisions, attempt: 1, actorId, actorDisplay, cancellationToken);
 
         var summary = JsonSerializer.Serialize(new
         {
@@ -185,6 +137,247 @@ public sealed class SoftwareDeploymentService(
         await _dbContext.SaveChangesAsync(cancellationToken);
 
         return new DeploymentResult(deployment.Id, decisions.Count, queued, skipped);
+    }
+
+    /// <summary>
+    /// Re-runs the devices that did not succeed, as a new attempt on the same
+    /// deployment.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Deliberately re-runs the <em>whole</em> decision, not just the queueing:
+    /// authorization, package lifecycle, retired state and eligibility are all
+    /// evaluated again through the same <see cref="DecideAsync"/> path the
+    /// original deployment used. A retry is a fresh decision about the world as
+    /// it is now, not a replay of an old one -- a device that has since been
+    /// retired, fallen out of scope, or acquired the software by other means must
+    /// not be sent an install because it failed an hour ago.
+    /// </para>
+    /// <para>
+    /// A withdrawn package stops retries too: <see cref="SoftwarePackageService.GetDeployableAsync"/>
+    /// returns null, so there is nothing to retry with. That is the point of
+    /// withdrawal.
+    /// </para>
+    /// <para>
+    /// History is preserved. The previous attempt's rows are untouched and the
+    /// new decisions are written as attempt N+1.
+    /// </para>
+    /// </remarks>
+    public async Task<DeploymentResult?> RetryAsync(
+        Guid organizationId,
+        Guid deploymentId,
+        IReadOnlyCollection<Guid>? scopedDeviceIds,
+        Guid actorId,
+        string actorDisplay,
+        CancellationToken cancellationToken = default)
+    {
+        var deployment = await _dbContext.SoftwareDeployments
+            .SingleOrDefaultAsync(
+                d => d.Id == deploymentId && d.OrganizationId == organizationId, cancellationToken);
+
+        if (deployment is null)
+        {
+            return null;
+        }
+
+        var package = await _packageService.GetDeployableAsync(
+            organizationId, deployment.PackageId, cancellationToken);
+        if (package is null)
+        {
+            return null;
+        }
+
+        // The devices worth retrying: those whose most recent attempt ended
+        // badly. A target that succeeded, or is still running, is not retried --
+        // that is the difference between a retry and a redeploy.
+        var rows = await (
+            from target in _dbContext.SoftwareDeploymentTargets.AsNoTracking()
+            join task in _dbContext.DeviceTasks.AsNoTracking() on target.TaskId equals task.Id into taskJoin
+            from task in taskJoin.DefaultIfEmpty()
+            where target.DeploymentId == deploymentId
+            select new
+            {
+                target.DeviceId,
+                target.Attempt,
+                target.State,
+                TaskStatus = (DeviceTaskStatus?)task.Status,
+            })
+            .ToListAsync(cancellationToken);
+
+        if (rows.Count == 0)
+        {
+            return null;
+        }
+
+        var nextAttempt = rows.Max(r => r.Attempt) + 1;
+
+        var retryable = rows
+            .GroupBy(r => r.DeviceId)
+            .Select(g => g.OrderByDescending(r => r.Attempt).First())
+            .Where(r => r.State == DeploymentTargetState.Queued
+                && r.TaskStatus is DeviceTaskStatus.Failed
+                    or DeviceTaskStatus.Expired
+                    or DeviceTaskStatus.Cancelled)
+            .Select(r => r.DeviceId)
+            .ToList();
+
+        if (retryable.Count == 0)
+        {
+            return new DeploymentResult(deployment.Id, 0, 0, 0);
+        }
+
+        var decisions = await DecideAsync(
+            organizationId, package, retryable, [], scopedDeviceIds, cancellationToken);
+
+        var (queued, skipped) = await WriteTargetsAsync(
+            deployment, package, decisions, nextAttempt, actorId, actorDisplay, cancellationToken);
+
+        _auditWriter.Stage(organizationId, AuditActorType.PlatformUser, actorId, actorDisplay,
+            action: "software.deployment.retry", AuditResult.Success,
+            a => a.OnTarget("software_deployment", deployment.Id.ToString(), $"{package.Name} {package.Version}")
+                  .Requiring(Permissions.Software.Deploy)
+                  .WithStateChange(null, JsonSerializer.Serialize(new
+                  {
+                      attempt = nextAttempt,
+                      retried = decisions.Count,
+                      queued,
+                      skipped,
+                  })));
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        return new DeploymentResult(deployment.Id, decisions.Count, queued, skipped);
+    }
+
+    /// <summary>
+    /// Cancels the work in a deployment that has not reached an agent yet.
+    /// </summary>
+    /// <remarks>
+    /// Only Queued tasks are cancellable, and that limit comes from
+    /// <see cref="DeviceTaskService.CancelAsync"/> rather than being re-decided
+    /// here: a task already delivered is running on a Windows machine, and
+    /// reporting it as cancelled would be a lie the console then repeats.
+    /// Delivered and finished targets are left exactly as they are.
+    /// </remarks>
+    public async Task<DeploymentCancelResult?> CancelPendingAsync(
+        Guid organizationId,
+        Guid deploymentId,
+        Guid actorId,
+        string actorDisplay,
+        CancellationToken cancellationToken = default)
+    {
+        var deployment = await _dbContext.SoftwareDeployments.AsNoTracking()
+            .SingleOrDefaultAsync(
+                d => d.Id == deploymentId && d.OrganizationId == organizationId, cancellationToken);
+
+        if (deployment is null)
+        {
+            return null;
+        }
+
+        var pending = await (
+            from target in _dbContext.SoftwareDeploymentTargets.AsNoTracking()
+            join task in _dbContext.DeviceTasks.AsNoTracking() on target.TaskId equals task.Id
+            where target.DeploymentId == deploymentId && task.Status == DeviceTaskStatus.Queued
+            select new { target.DeviceId, TaskId = task.Id })
+            .ToListAsync(cancellationToken);
+
+        var cancelled = 0;
+        foreach (var item in pending)
+        {
+            var result = await _taskService.CancelAsync(
+                organizationId, item.DeviceId, item.TaskId, actorId, actorDisplay, cancellationToken);
+
+            // NotCancellable means the agent claimed it between the query and
+            // now. That is a race the design expects, and losing it is correct:
+            // the install is genuinely under way.
+            if (result == TaskCancelResult.Success)
+            {
+                cancelled++;
+            }
+        }
+
+        _auditWriter.Stage(organizationId, AuditActorType.PlatformUser, actorId, actorDisplay,
+            action: "software.deployment.cancel", AuditResult.Success,
+            a => a.OnTarget("software_deployment", deployment.Id.ToString(),
+                    $"{deployment.PackageName} {deployment.PackageVersion}")
+                  .Requiring(Permissions.Software.Deploy)
+                  .WithStateChange(null, JsonSerializer.Serialize(new
+                  {
+                      considered = pending.Count,
+                      cancelled,
+                  })));
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        return new DeploymentCancelResult(deployment.Id, pending.Count, cancelled);
+    }
+
+    /// <summary>
+    /// Writes one attempt's decisions and queues the tasks they call for.
+    /// </summary>
+    /// <remarks>
+    /// Shared by the first deployment and every retry so the two can never drift
+    /// -- the rule about what gets a task, and what gets recorded as skipped, is
+    /// written once.
+    /// </remarks>
+    private async Task<(int Queued, int Skipped)> WriteTargetsAsync(
+        SoftwareDeployment deployment,
+        SoftwarePackage package,
+        IReadOnlyList<DeploymentDecision> decisions,
+        int attempt,
+        Guid actorId,
+        string actorDisplay,
+        CancellationToken cancellationToken)
+    {
+        var payload = new TaskPayloads.InstallPackage(
+            package.Id, package.Sha256, package.MsiProductCode, package.RequiredSignerSubject,
+            package.Name, package.Version);
+
+        var queued = 0;
+        var skipped = 0;
+
+        foreach (var decision in decisions)
+        {
+            Guid? taskId = null;
+
+            if (decision.Eligibility.NeedsInstall())
+            {
+                // Still queued through the task service, never by writing a task
+                // row here: it is what enforces the retired-device rule, the
+                // minimum agent version and the catalog definition, and a second
+                // path that skipped those would be a hole in all three.
+                var task = await _taskService.QueueAsync(
+                    deployment.OrganizationId, decision.DeviceId, DeviceTaskType.InstallPackage,
+                    payload, actorId, actorDisplay, cancellationToken);
+
+                taskId = task?.Id;
+            }
+
+            var state = taskId is null ? DeploymentTargetState.Skipped : DeploymentTargetState.Queued;
+
+            // A device that needed the package but whose task was refused is not
+            // silently dropped: it is recorded as skipped, and the reason it was
+            // refused (retired, or an agent too old for InstallPackage) is what
+            // the operator sees.
+            var reason = state == DeploymentTargetState.Skipped && decision.Eligibility.NeedsInstall()
+                ? SoftwareEligibility.Retired
+                : decision.Eligibility;
+
+            _dbContext.SoftwareDeploymentTargets.Add(new SoftwareDeploymentTarget(
+                deployment.Id, decision.DeviceId, state, reason, taskId, decision.ObservedVersion, attempt));
+
+            if (state == DeploymentTargetState.Queued)
+            {
+                queued++;
+            }
+            else
+            {
+                skipped++;
+            }
+        }
+
+        return (queued, skipped);
     }
 
     /// <summary>
@@ -261,6 +454,24 @@ public sealed class SoftwareDeploymentService(
                     .Select(s => new InstalledApplication(s.Name, s.Version, s.Publisher, s.ProductCode))
                     .ToList());
 
+        // Devices already carrying an outstanding install of this package. One
+        // query, not one per device. This is what makes a double-clicked Deploy,
+        // a browser retry or a client retry after a timeout safe: the second
+        // request resolves the same devices and finds the work already queued.
+        var inFlight = await (
+            from target in _dbContext.SoftwareDeploymentTargets.AsNoTracking()
+            join deployment in _dbContext.SoftwareDeployments.AsNoTracking()
+                on target.DeploymentId equals deployment.Id
+            join task in _dbContext.DeviceTasks.AsNoTracking() on target.TaskId equals task.Id
+            where deployment.PackageId == package.Id
+                && deviceIdSet.Contains(target.DeviceId)
+                && (task.Status == DeviceTaskStatus.Queued || task.Status == DeviceTaskStatus.Delivered)
+            select target.DeviceId)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+
+        var outstanding = inFlight.ToHashSet();
+
         var deployable = new DeployableSoftware(
             package.Name, package.Version, package.Publisher, package.MsiProductCode);
 
@@ -278,6 +489,14 @@ public sealed class SoftwareDeploymentService(
             }
 
             var apps = byDevice.TryGetValue(device.Id, out var found) ? found : [];
+
+            if (outstanding.Contains(device.Id))
+            {
+                decisions.Add(new DeploymentDecision(
+                    device.Id, SoftwareEligibility.AlreadyInProgress, ObservedVersionFor(deployable, apps)));
+                continue;
+            }
+
             var eligibility = SoftwareEligibilityEvaluator.Evaluate(deployable, apps);
 
             decisions.Add(new DeploymentDecision(
@@ -332,5 +551,16 @@ public sealed record DeploymentPlan(
     public int NotComparable => Decisions.Count(d => d.Eligibility == SoftwareEligibility.VersionNotComparable);
 }
 
-/// <summary>The outcome of creating a deployment.</summary>
+/// <summary>The outcome of creating a deployment, or of one retry attempt.</summary>
 public sealed record DeploymentResult(Guid DeploymentId, int Targeted, int Queued, int Skipped);
+
+/// <summary>
+/// The outcome of cancelling pending work.
+/// </summary>
+/// <param name="Considered">Targets that were still Queued when the sweep began.</param>
+/// <param name="Cancelled">
+/// Those actually cancelled. Lower than <paramref name="Considered"/> when an
+/// agent claimed a task mid-sweep -- that install is genuinely running and is
+/// correctly left alone.
+/// </param>
+public sealed record DeploymentCancelResult(Guid DeploymentId, int Considered, int Cancelled);

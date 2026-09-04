@@ -110,6 +110,7 @@ public sealed class SoftwareDeploymentReadService(EndpointPlatformDbContext dbCo
                 target.Reason,
                 target.ObservedVersion,
                 target.TaskId,
+                target.Attempt,
                 TaskStatus = (DeviceTaskStatus?)task.Status,
                 task.ResultMessage,
                 task.CompletedAt,
@@ -123,18 +124,21 @@ public sealed class SoftwareDeploymentReadService(EndpointPlatformDbContext dbCo
 
         var rows = await query.OrderBy(x => x.Hostname).ToListAsync(cancellationToken);
 
+        var now = DateTimeOffset.UtcNow;
+
         var targets = rows.Select(r => new DeploymentDeviceResult(
             r.DeviceId,
             r.Hostname,
             r.DisplayName,
             r.DeviceStatus.ToString(),
             r.LastSeenAt,
-            StatusOf(r.State, r.TaskStatus),
+            StatusOf(r.State, r.TaskStatus, r.LastSeenAt, now),
             r.Reason.ToString(),
             r.ObservedVersion,
             r.TaskId,
             r.ResultMessage,
-            r.CompletedAt)).ToList();
+            r.CompletedAt,
+            r.Attempt)).ToList();
 
         return new DeploymentDetail(
             deployment.Id, deployment.PackageId, deployment.PackageName, deployment.PackageVersion,
@@ -157,11 +161,13 @@ public sealed class SoftwareDeploymentReadService(EndpointPlatformDbContext dbCo
             join task in _dbContext.DeviceTasks.AsNoTracking() on target.TaskId equals task.Id into taskJoin
             from task in taskJoin.DefaultIfEmpty()
             where deploymentIds.Contains(target.DeploymentId)
+            join device in _dbContext.Devices.AsNoTracking() on target.DeviceId equals device.Id
             select new
             {
                 target.DeploymentId,
                 target.DeviceId,
                 target.State,
+                device.LastSeenAt,
                 TaskStatus = (DeviceTaskStatus?)task.Status,
             };
 
@@ -174,7 +180,8 @@ public sealed class SoftwareDeploymentReadService(EndpointPlatformDbContext dbCo
         var rows = await query.ToListAsync(cancellationToken);
 
         return rows
-            .Select(r => new TargetState(r.DeploymentId, StatusOf(r.State, r.TaskStatus)))
+            .Select(r => new TargetState(
+                r.DeploymentId, StatusOf(r.State, r.TaskStatus, r.LastSeenAt, DateTimeOffset.UtcNow)))
             .ToList();
     }
 
@@ -187,7 +194,18 @@ public sealed class SoftwareDeploymentReadService(EndpointPlatformDbContext dbCo
     /// queued-but-unclaimed task is Pending, a delivered one is Installing, and an
     /// expired one is Expired rather than being quietly counted as failed.
     /// </remarks>
-    private static string StatusOf(DeploymentTargetState state, DeviceTaskStatus? taskStatus)
+    /// <summary>
+    /// How long a device may be silent before queued work is reported as waiting
+    /// on it rather than merely pending.
+    /// </summary>
+    /// <remarks>
+    /// Generous relative to the ~60 s heartbeat: a device is called offline only
+    /// once it has missed many beats, so a slow check-in is not mislabelled.
+    /// </remarks>
+    private static readonly TimeSpan OfflineAfter = TimeSpan.FromMinutes(15);
+
+    private static string StatusOf(
+        DeploymentTargetState state, DeviceTaskStatus? taskStatus, DateTimeOffset? lastSeenAt, DateTimeOffset now)
     {
         if (state == DeploymentTargetState.Skipped)
         {
@@ -196,11 +214,21 @@ public sealed class SoftwareDeploymentReadService(EndpointPlatformDbContext dbCo
 
         return taskStatus switch
         {
+            // Queued means the agent has not collected it. Whether that is
+            // "any moment now" or "this machine is not running" is the difference
+            // between Pending and Offline, and reporting both as Pending leaves an
+            // operator waiting on a device that will never answer. Neither is a
+            // failure: the task simply waits until its TTL expires.
+            DeviceTaskStatus.Queued when lastSeenAt is null || now - lastSeenAt > OfflineAfter
+                => "Offline",
             DeviceTaskStatus.Queued => "Pending",
             DeviceTaskStatus.Delivered => "Installing",
             DeviceTaskStatus.Succeeded => "Succeeded",
             DeviceTaskStatus.Failed => "Failed",
+            // Never claimed before its deadline -- distinct from Failed, which
+            // means the endpoint tried and could not.
             DeviceTaskStatus.Expired => "Expired",
+            DeviceTaskStatus.Cancelled => "Cancelled",
             // The task row is gone. Honest about not knowing rather than
             // presenting a default that reads like a real outcome.
             _ => "Unknown",
@@ -217,7 +245,9 @@ public sealed class SoftwareDeploymentReadService(EndpointPlatformDbContext dbCo
             list.Count(s => s.Status == "Succeeded"),
             list.Count(s => s.Status == "Failed"),
             list.Count(s => s.Status == "Expired"),
-            list.Count(s => s.Status == "Skipped"));
+            list.Count(s => s.Status == "Skipped"),
+            list.Count(s => s.Status == "Offline"),
+            list.Count(s => s.Status == "Cancelled"));
     }
 
     private static DeploymentTally TallyResults(IEnumerable<DeploymentDeviceResult> results) =>
@@ -227,7 +257,8 @@ public sealed class SoftwareDeploymentReadService(EndpointPlatformDbContext dbCo
 }
 
 public sealed record DeploymentTally(
-    int Total, int Pending, int Installing, int Succeeded, int Failed, int Expired, int Skipped);
+    int Total, int Pending, int Installing, int Succeeded, int Failed, int Expired, int Skipped,
+    int Offline, int Cancelled);
 
 public sealed record DeploymentSummary(
     Guid Id, Guid PackageId, string PackageName, string PackageVersion, string TargetType,
@@ -239,7 +270,7 @@ public sealed record DeploymentSummaryPage(
 public sealed record DeploymentDeviceResult(
     Guid DeviceId, string Hostname, string? DisplayName, string DeviceStatus, DateTimeOffset? LastSeenAt,
     string Status, string Reason, string? ObservedVersion, Guid? TaskId, string? ResultMessage,
-    DateTimeOffset? CompletedAt);
+    DateTimeOffset? CompletedAt, int Attempt);
 
 public sealed record DeploymentDetail(
     Guid Id, Guid PackageId, string PackageName, string PackageVersion, string TargetType,

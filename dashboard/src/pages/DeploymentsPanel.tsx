@@ -1,13 +1,23 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
+  cancelDeployment,
   getDeployment,
   getDeployments,
+  retryDeployment,
   type DeploymentDetail,
   type DeploymentSummaryPage,
 } from '../api/client'
+import { useAuth } from '../auth/AuthContext'
 import { Icon } from '../components/Icon'
-import { isSettled, reasonLabel, statusTone, tallySummary } from './deploymentView'
+import {
+  hasCancellableWork,
+  hasRetryableWork,
+  isSettled,
+  reasonLabel,
+  statusTone,
+  tallySummary,
+} from './deploymentView'
 
 const PAGE_SIZE = 25
 
@@ -25,9 +35,14 @@ export function DeploymentsPanel({ focusDeploymentId }: { focusDeploymentId?: st
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
+  const { hasPermission } = useAuth()
+  const canDeploy = hasPermission('software.deploy')
+
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [detail, setDetail] = useState<DeploymentDetail | null>(null)
   const [detailError, setDetailError] = useState<string | null>(null)
+  const [acting, setActing] = useState(false)
+  const [notice, setNotice] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -74,6 +89,50 @@ export function DeploymentsPanel({ focusDeploymentId }: { focusDeploymentId?: st
       cancelled = true
     }
   }, [selectedId])
+
+  /** Re-reads the deployment after an action so the numbers come from the server. */
+  const refreshDetail = useCallback(async (id: string) => {
+    setDetail(await getDeployment(id))
+    await load()
+  }, [load])
+
+  async function onRetry(id: string) {
+    setActing(true)
+    setNotice(null)
+    try {
+      const result = await retryDeployment(id)
+      setNotice(
+        result.queued === 0
+          ? 'Nothing needed retrying — every failed device is now compliant, retired, or out of scope.'
+          : `Retrying ${result.queued} device${result.queued === 1 ? '' : 's'}.`,
+      )
+      await refreshDetail(id)
+    } catch {
+      setDetailError('The retry could not be started.')
+    } finally {
+      setActing(false)
+    }
+  }
+
+  async function onCancel(id: string) {
+    setActing(true)
+    setNotice(null)
+    try {
+      const result = await cancelDeployment(id)
+      // Considered minus cancelled is work an agent claimed mid-request. Saying
+      // so is more useful than reporting a number that looks like a failure.
+      setNotice(
+        result.cancelled === result.considered
+          ? `Cancelled ${result.cancelled} pending install${result.cancelled === 1 ? '' : 's'}.`
+          : `Cancelled ${result.cancelled} of ${result.considered}; the rest had already started and were left running.`,
+      )
+      await refreshDetail(id)
+    } catch {
+      setDetailError('The deployment could not be cancelled.')
+    } finally {
+      setActing(false)
+    }
+  }
 
   const totalPages = data ? Math.max(1, Math.ceil(data.totalCount / PAGE_SIZE)) : 1
 
@@ -175,10 +234,42 @@ export function DeploymentsPanel({ focusDeploymentId }: { focusDeploymentId?: st
         <div className="card">
           <div className="card-header">
             <h2>{detail ? `${detail.packageName} ${detail.packageVersion}` : 'Deployment'}</h2>
-            <button type="button" className="btn-sm" onClick={() => setSelectedId(null)}>
-              Close
-            </button>
+            <div className="btn-row">
+              {/* Offered only when there is work of that kind. A Retry button on
+                  a deployment with nothing failed would invite a no-op, and a
+                  Cancel button on finished work would imply it could be undone. */}
+              {canDeploy && detail && hasRetryableWork(detail.tally) && (
+                <button
+                  type="button"
+                  className="btn-sm"
+                  disabled={acting}
+                  onClick={() => void onRetry(detail.id)}
+                >
+                  Retry failed
+                </button>
+              )}
+              {canDeploy && detail && hasCancellableWork(detail.tally) && (
+                <button
+                  type="button"
+                  className="btn-sm"
+                  disabled={acting}
+                  onClick={() => void onCancel(detail.id)}
+                >
+                  Cancel pending
+                </button>
+              )}
+              <button type="button" className="btn-sm" onClick={() => setSelectedId(null)}>
+                Close
+              </button>
+            </div>
           </div>
+
+          {notice && (
+            <div className="notice" role="status">
+              <Icon name="check" size={15} />
+              <span>{notice}</span>
+            </div>
+          )}
 
           {detailError && (
             <div className="error-banner" role="alert">
@@ -216,19 +307,23 @@ export function DeploymentsPanel({ focusDeploymentId }: { focusDeploymentId?: st
                     <tr>
                       <th>Device</th>
                       <th>Status</th>
+                      <th>Attempt</th>
                       <th>Version when targeted</th>
                       <th>Detail</th>
                     </tr>
                   </thead>
                   <tbody>
+                    {/* Keyed by device AND attempt: a retried device appears once
+                        per attempt, and that history is the point. */}
                     {detail.targets.map((t) => (
-                      <tr key={t.deviceId}>
+                      <tr key={`${t.deviceId}|${t.attempt}`}>
                         <td>
                           <Link to={`/devices/${t.deviceId}`}>{t.displayName ?? t.hostname}</Link>
                         </td>
                         <td>
                           <span className={`badge ${statusTone(t.status)}`}>{t.status}</span>
                         </td>
+                        <td>{t.attempt}</td>
                         <td>{t.observedVersion ?? 'Not installed'}</td>
                         {/* For a skipped device the reason is the useful fact; for
                             one that ran, the agent's own result message is. */}

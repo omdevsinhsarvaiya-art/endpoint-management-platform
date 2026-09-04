@@ -27,6 +27,18 @@ public enum SoftwareEligibility
 
     /// <summary>Outside the administrator's device scope, or not in the organization.</summary>
     NotPermitted = 6,
+
+    /// <summary>
+    /// An install of this package is already outstanding on this device. No task.
+    /// </summary>
+    /// <remarks>
+    /// The idempotency guard. A double-clicked Deploy button, a browser retry, or
+    /// a client retrying after a network timeout all arrive as a second, entirely
+    /// valid-looking request. Without this the device would get two InstallPackage
+    /// tasks for the same package and run the installer twice concurrently, which
+    /// Windows Installer serialises at best and fails at worst.
+    /// </remarks>
+    AlreadyInProgress = 7,
 }
 
 /// <summary>One installed application, as far as eligibility is concerned.</summary>

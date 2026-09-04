@@ -38,7 +38,72 @@ public static class DeploymentEndpoints
             .WithName("CreateDeployment")
             .RequirePermission(Permissions.Software.Deploy);
 
+        group.MapPost("/{deploymentId:guid}/retry", RetryAsync)
+            .WithName("RetryDeployment")
+            .RequirePermission(Permissions.Software.Deploy);
+
+        group.MapPost("/{deploymentId:guid}/cancel", CancelAsync)
+            .WithName("CancelDeployment")
+            .RequirePermission(Permissions.Software.Deploy);
+
         return endpoints;
+    }
+
+    /// <summary>
+    /// Re-runs the devices that did not succeed, as a new attempt.
+    /// </summary>
+    /// <remarks>
+    /// Requires <c>software.deploy</c> because it queues installs. The service
+    /// re-runs authorization, package lifecycle and eligibility rather than
+    /// replaying the old decision, so a device that has since become compliant,
+    /// been retired, or left the caller's scope is not sent an install.
+    /// </remarks>
+    private static async Task<IResult> RetryAsync(
+        Guid deploymentId,
+        SoftwareDeploymentService deploymentService,
+        DeviceScopeAuthorizer scope,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var actor = AdminActor.Required(httpContext.User);
+        var scopedDeviceIds = await scope.ScopedDeviceIdsOrNullAsync(
+            actor.UserId, actor.OrganizationId, cancellationToken);
+
+        var result = await deploymentService.RetryAsync(
+            actor.OrganizationId, deploymentId, scopedDeviceIds, actor.UserId, actor.Email, cancellationToken);
+
+        // Null covers a missing deployment, another organization's, and a package
+        // that is no longer deployable -- all 404, so a caller learns nothing it
+        // was not already entitled to know.
+        return result is null
+            ? Results.NotFound()
+            : Results.Accepted(
+                $"/admin/v1/deployments/{deploymentId}",
+                new { result.DeploymentId, result.Targeted, result.Queued, result.Skipped });
+    }
+
+    /// <summary>
+    /// Cancels the work in a deployment that has not reached an agent yet.
+    /// </summary>
+    /// <remarks>
+    /// Only Queued tasks are cancellable. A delivered install is running on a
+    /// Windows machine and is deliberately left alone rather than reported as
+    /// cancelled, which would be a claim the platform cannot support.
+    /// </remarks>
+    private static async Task<IResult> CancelAsync(
+        Guid deploymentId,
+        SoftwareDeploymentService deploymentService,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var actor = AdminActor.Required(httpContext.User);
+
+        var result = await deploymentService.CancelPendingAsync(
+            actor.OrganizationId, deploymentId, actor.UserId, actor.Email, cancellationToken);
+
+        return result is null
+            ? Results.NotFound()
+            : Results.Ok(new { result.DeploymentId, result.Considered, result.Cancelled });
     }
 
     /// <summary>

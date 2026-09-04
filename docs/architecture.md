@@ -255,8 +255,54 @@ are reverted automatically.
   size; the residual per-device cost is `QueueAsync`'s own lookup and insert,
   kept deliberately rather than bypassed.
 
+- **Deployment reliability (retry, cancel, offline): complete.** A retry is a new
+  **attempt** on the same deployment, not a mutation of it: target rows carry an
+  `Attempt` number and the unique index is (deployment, device, attempt), so
+  "attempt 1 failed with a hash mismatch, attempt 2 succeeded" survives as a
+  record. Retry re-runs the *whole* decision through the same `DecideAsync` path
+  the original used — authorization, package lifecycle, retired state,
+  eligibility — because a retry is a fresh decision about the world as it is now.
+  A device that has since become compliant, moved to a newer version, been
+  retired, or left the caller's scope is not sent an install because it failed an
+  hour ago; a withdrawn package stops retries entirely.
+
+  **Idempotency** is enforced by eligibility, not by the UI: a device with a
+  Queued or Delivered task for the same package resolves as `AlreadyInProgress`,
+  so a double-clicked Deploy, a browser retry, or a client retry after a network
+  timeout all queue nothing the second time.
+
+  **Cancel** stops only Queued work, reusing `DeviceTaskService.CancelAsync`. A
+  delivered install is running on a Windows machine and is deliberately left
+  alone — reporting it cancelled would be a claim the platform cannot support.
+  Losing the race (the agent claims a task mid-sweep) is reported honestly as
+  "cancelled N of M" rather than as a failure.
+
+  **Offline is a distinct state.** A Queued task on a device silent for more than
+  15 minutes reads as `Offline`, not `Pending` (which hides that nothing is
+  coming) and not `Failed` (which sends an operator chasing a fault that does not
+  exist). It is not "settled": the task still runs if the device returns before
+  its TTL, after which it becomes `Expired` — also distinct from `Failed`, which
+  means the endpoint tried and could not.
+
 - **Application execution control (enable/disable): NOT implemented, by
-  decision.** The fleet runs Windows 11 Pro. AppLocker enforcement requires
+  decision — re-evaluated against Windows 11 Pro 26200 and re-confirmed.**
+
+  Measured on a real fleet machine rather than argued from documentation:
+
+  | Mechanism | Viable | Evidence |
+  |---|---|---|
+  | AppLocker | No | No AppLocker entitlement in this SKU's `ProductPolicy`; `AppIDSvc` is Stopped/Manual. Enforcement is Enterprise/Education. |
+  | WDAC | No | `WldpApplyCiPolicy` is **not exported** from `wldp.dll` — there is no documented API to activate a policy. Activation needs `CiTool.exe` (a process launch, ADR-0005) or a reboot; compilation needs `ConvertFrom-CIPolicy` (PowerShell SDK, banned). A malformed CI policy can prevent boot. |
+  | SRP | No | Present and registry-configurable, but deprecated by Microsoft **and** removable from the registry by a local administrator — and the interactive users on this fleet are local administrators, so the control would be removable by exactly the people it constrains. |
+  | Smart App Control | No | State 0 (off); cannot be re-enabled without OS reinstall, and is all-or-nothing reputation, not per-application. |
+  | IFEO | No | Hostile technique, antivirus-flagged, trivially bypassed. |
+  | Windows Firewall | No | Blocks network, not execution. Labelling that "Disabled" would misrepresent it. |
+
+  Real execution blocking therefore requires a dedicated application-control
+  subsystem and, realistically, a Windows edition change. **`IsWithdrawn` remains
+  catalogue state only** — "do not deploy this again" — and never blocks
+  installed software. No Enable/Disable control is exposed, because a button that
+  only flips a database boolean would be worse than its absence. The fleet runs Windows 11 Pro. AppLocker enforcement requires
   Enterprise/Education, so it is unavailable by edition. WDAC/App Control is
   available on Pro but cannot be applied under ADR-0005: the supported refresh is
   `CiTool.exe` (a process launch), policy compilation is a PowerShell cmdlet, and

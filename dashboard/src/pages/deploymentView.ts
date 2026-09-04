@@ -84,7 +84,26 @@ export function hasWorkToDo(plan: DeploymentPlan | null): boolean {
  * for a deployment whose tasks are still outstanding.
  */
 export function isSettled(tally: DeploymentTally): boolean {
-  return tally.pending === 0 && tally.installing === 0
+  // Offline counts as outstanding: the task is still queued and will run if the
+  // device comes back before its TTL. Calling it settled would tell an operator
+  // the deployment is finished while work is still owed.
+  return tally.pending === 0 && tally.installing === 0 && tally.offline === 0
+}
+
+/**
+ * Whether there is failed work a retry could act on.
+ *
+ * Expired and cancelled count: neither ever ran, so both are worth another
+ * attempt. Skipped does not — a skipped device was deliberately not sent
+ * anything, and retrying it would just skip it again.
+ */
+export function hasRetryableWork(tally: DeploymentTally): boolean {
+  return tally.failed > 0 || tally.expired > 0 || tally.cancelled > 0
+}
+
+/** Whether anything is still queued and therefore cancellable. */
+export function hasCancellableWork(tally: DeploymentTally): boolean {
+  return tally.pending > 0 || tally.offline > 0
 }
 
 /** One line describing where a deployment has got to. */
@@ -95,8 +114,10 @@ export function tallySummary(tally: DeploymentTally): string {
   if (tally.succeeded > 0) parts.push(`${tally.succeeded} succeeded`)
   if (tally.installing > 0) parts.push(`${tally.installing} installing`)
   if (tally.pending > 0) parts.push(`${tally.pending} pending`)
+  if (tally.offline > 0) parts.push(`${tally.offline} offline`)
   if (tally.failed > 0) parts.push(`${tally.failed} failed`)
   if (tally.expired > 0) parts.push(`${tally.expired} expired`)
+  if (tally.cancelled > 0) parts.push(`${tally.cancelled} cancelled`)
   if (tally.skipped > 0) parts.push(`${tally.skipped} skipped`)
 
   return parts.join(', ')
@@ -112,6 +133,10 @@ export function statusTone(status: string): 'ok' | 'warn' | 'crit' | 'info' | 'n
     case 'Failed':
       return 'crit'
     case 'Expired':
+      return 'warn'
+    // Waiting on a machine that is not answering. Not a failure, but not
+    // progress either, so it must not read as either.
+    case 'Offline':
       return 'warn'
     // Skipped is not a problem: it usually means the device was already correct.
     default:
@@ -141,6 +166,8 @@ export function reasonLabel(reason: string): string {
       return 'Device retired or not eligible'
     case 'NotPermitted':
       return 'Not permitted'
+    case 'AlreadyInProgress':
+      return 'An install of this package is already under way'
     default:
       return reason
   }
