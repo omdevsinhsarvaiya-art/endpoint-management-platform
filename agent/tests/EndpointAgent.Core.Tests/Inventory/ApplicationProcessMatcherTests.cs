@@ -1,6 +1,6 @@
-using EndpointPlatform.Domain.Software;
+using EndpointAgent.Core.Inventory;
 
-namespace EndpointPlatform.Domain.Tests.Software;
+namespace EndpointAgent.Core.Tests.Inventory;
 
 /// <summary>
 /// Deciding which running processes belong to an installed application.

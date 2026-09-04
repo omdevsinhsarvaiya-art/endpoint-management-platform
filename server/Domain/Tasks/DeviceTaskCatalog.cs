@@ -44,6 +44,14 @@ public static class DeviceTaskCatalog
             new(DeviceTaskType.SignOutUser, Permissions.Device.SignOutUser, HighRisk: true, 900),
             new(DeviceTaskType.ControlService, Permissions.Task.Execute, HighRisk: true, 900),
             new(DeviceTaskType.TerminateProcess, Permissions.Task.Execute, HighRisk: true, 600),
+
+            // Resolution happens on the endpoint, so this needs an agent that has
+            // the executor. Gated rather than best-effort: an older agent would
+            // report an unknown task type, which reads in the console exactly like
+            // the application failing to stop, and the operator would retry
+            // something that cannot work.
+            new(DeviceTaskType.StopApplication, Permissions.Task.Execute, HighRisk: true, 600,
+                MinimumAgentVersion: "1.6.0"),
             // Short TTL. A grant is time-boxed from the moment it is issued, so a
             // policy task that sat queued for an hour would arrive describing a
             // window that has largely elapsed; better to expire it and have the

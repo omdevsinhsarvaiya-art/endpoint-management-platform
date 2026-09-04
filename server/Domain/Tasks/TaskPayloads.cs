@@ -144,6 +144,27 @@ public static class TaskPayloads
     public sealed record TerminateProcess(int ProcessId, string ExpectedImageName);
 
     /// <summary>
+    /// Stop a named installed application. The endpoint resolves the processes.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Carries no process id and no image name, deliberately. Those are the
+    /// agent's to determine from live state at execution time; a pid chosen here
+    /// would already be a guess about a machine this server last heard from
+    /// minutes or hours ago.
+    /// </para>
+    /// <para>
+    /// <paramref name="InstallLocation"/> is the directory this platform recorded
+    /// for the application in its own inventory -- server-derived, never supplied
+    /// by a client. It is what the agent matches running executables against. The
+    /// agent re-applies its own safety rules to it rather than trusting it: a
+    /// broad or system root is refused on the endpoint too.
+    /// </para>
+    /// </remarks>
+    public sealed record StopApplication(
+        string ApplicationName, string? Publisher, string InstallLocation);
+
+    /// <summary>
     /// Everything the agent needs to install an approved package, self-contained so
     /// the install decision never depends on a second lookup. The agent downloads
     /// the package content, verifies it against <paramref name="Sha256"/> and

@@ -17,22 +17,29 @@ namespace EndpointPlatform.Infrastructure.Software;
 /// <para>
 /// <b>The client names an application, never a process.</b> The request carries
 /// the application's display name and publisher -- values that already exist in
-/// this platform's own inventory -- and the server resolves those to concrete
-/// process ids itself. Accepting an image name or executable path from the
-/// browser would be accepting an instruction to terminate an arbitrary process,
-/// which is precisely the capability the typed-task architecture exists to deny.
+/// this platform's own inventory. Accepting an image name, an executable path or
+/// a pid from the browser would be accepting an instruction to terminate an
+/// arbitrary process, which is precisely the capability the typed-task
+/// architecture exists to deny.
 /// </para>
 /// <para>
-/// Resolution is by install path, not by name: see
-/// <see cref="ApplicationProcessMatcher"/> for why a display name cannot be
-/// turned into an image name safely. An application that cannot be resolved
-/// produces no tasks and says so, rather than guessing.
+/// <b>No pid is chosen here.</b> This service decides only <em>whether</em> an
+/// application can be stopped on a device and queues one
+/// <see cref="DeviceTaskType.StopApplication"/> task carrying the install
+/// directory. Which processes that resolves to is determined on the endpoint, at
+/// the moment of termination, from live enumeration.
 /// </para>
 /// <para>
-/// Termination itself is the existing <see cref="DeviceTaskType.TerminateProcess"/>
-/// task, queued through <see cref="DeviceTaskService"/>. Nothing new executes on
-/// the endpoint: the same executor, the same PID-reuse guard, the same refusal to
-/// touch system processes. This service only decides which pids to name.
+/// That split is the whole point. Inventory is collected on request, not
+/// continuously: a process list measured on this fleet was ninety minutes old.
+/// Naming a pid from it would name a process that has very likely exited,
+/// restarted under a new pid, or had its pid reused -- and the endpoint's guard
+/// would then correctly refuse, making Force Stop fail on an application that is
+/// running perfectly well.
+/// </para>
+/// <para>
+/// The install directory is server-derived from inventory and re-validated on the
+/// endpoint; neither side trusts the other to have done it.
 /// </para>
 /// </remarks>
 public sealed class ApplicationForceStopService(
@@ -77,26 +84,16 @@ public sealed class ApplicationForceStopService(
 
         var deviceIdSet = devices.Select(d => d.Id).ToHashSet();
 
-        // Two queries for the whole request, not two per device.
+        // One query. The process list is deliberately NOT read here: it is a
+        // snapshot from whenever inventory last ran -- ninety minutes old on this
+        // fleet when measured -- and choosing a pid from it would be a guess about
+        // a machine that has carried on since. The endpoint enumerates its own
+        // processes at execution time instead.
         var software = await _dbContext.DeviceSoftware
             .AsNoTracking()
             .Where(s => deviceIdSet.Contains(s.DeviceId) && s.Name == applicationName)
             .Select(s => new { s.DeviceId, s.Name, s.Publisher, s.InstallLocation })
             .ToListAsync(cancellationToken);
-
-        var processes = await _dbContext.DeviceProcesses
-            .AsNoTracking()
-            .Where(p => deviceIdSet.Contains(p.DeviceId))
-            .Select(p => new { p.DeviceId, p.ProcessId, p.Name, p.ExecutablePath })
-            .ToListAsync(cancellationToken);
-
-        var processesByDevice = processes
-            .GroupBy(p => p.DeviceId)
-            .ToDictionary(
-                g => g.Key,
-                g => (IReadOnlyList<RunningProcess>)g
-                    .Select(p => new RunningProcess(p.ProcessId, p.Name, p.ExecutablePath))
-                    .ToList());
 
         var outcomes = new List<ForceStopDeviceOutcome>(devices.Count);
         var queuedTotal = 0;
@@ -120,57 +117,44 @@ public sealed class ApplicationForceStopService(
                 continue;
             }
 
-            var running = processesByDevice.TryGetValue(device.Id, out var found) ? found : [];
+            // The install directory this platform recorded. Whether any process is
+            // actually running under it is not decided here -- that is a question
+            // only the endpoint can answer without a stale gap.
+            var location = installs
+                .Select(i => i.InstallLocation)
+                .FirstOrDefault(ApplicationInstallLocation.IsUsable);
 
-            var matched = installs
-                .SelectMany(i => ApplicationProcessMatcher.Match(i.InstallLocation, running))
-                .GroupBy(m => m.ProcessId)
-                .Select(g => g.First())
-                .ToList();
-
-            if (matched.Count == 0)
+            if (location is null)
             {
-                // Two different situations, deliberately reported apart: the
-                // application cannot be resolved to processes at all, or it can
-                // but nothing of it is running. Only the first makes Force Stop
-                // permanently unavailable.
-                var resolvable = installs.Any(i => ApplicationProcessMatcher.CanResolve(i.InstallLocation));
-
+                // Nothing links this application to a process, and nothing will:
+                // reported as permanently unavailable rather than as a failure the
+                // operator would retry.
                 outcomes.Add(new ForceStopDeviceOutcome(
-                    device.Id, device.Hostname,
-                    resolvable ? ForceStopOutcome.NotRunning : ForceStopOutcome.Unresolvable,
-                    0));
+                    device.Id, device.Hostname, ForceStopOutcome.Unresolvable, 0));
                 continue;
             }
 
-            var queued = 0;
-            foreach (var process in matched)
-            {
-                // Queued through the task service so the retired-device rule, the
-                // catalog definition and the minimum agent version all still
-                // apply. The agent re-checks the image name against the live
-                // process before terminating, so a pid that has been recycled
-                // since inventory was collected is refused on the endpoint.
-                var task = await _taskService.QueueAsync(
-                    organizationId, device.Id, DeviceTaskType.TerminateProcess,
-                    new TaskPayloads.TerminateProcess(process.ProcessId, process.ImageName),
-                    actorId, actorDisplay, cancellationToken);
+            // One task per device, not one per process. Which processes exist is
+            // the endpoint's determination, made at the moment it acts.
+            var task = await _taskService.QueueAsync(
+                organizationId, device.Id, DeviceTaskType.StopApplication,
+                new TaskPayloads.StopApplication(applicationName, publisher, location),
+                actorId, actorDisplay, cancellationToken);
 
-                if (task is not null)
-                {
-                    queued++;
-                }
+            if (task is null)
+            {
+                // Retired, or an agent without the executor. Distinguished from
+                // "not running" because the operator can act on it -- by updating
+                // the agent -- whereas "not running" needs nothing.
+                outcomes.Add(new ForceStopDeviceOutcome(
+                    device.Id, device.Hostname, ForceStopOutcome.NotEligible, 0));
+                continue;
             }
 
-            queuedTotal += queued;
+            queuedTotal++;
 
             outcomes.Add(new ForceStopDeviceOutcome(
-                device.Id, device.Hostname,
-                // A device whose tasks were all refused is retired or below the
-                // required agent version; saying "queued 0" would look like the
-                // application simply was not running.
-                queued > 0 ? ForceStopOutcome.Queued : ForceStopOutcome.NotEligible,
-                queued));
+                device.Id, device.Hostname, ForceStopOutcome.Queued, 1));
         }
 
         _auditWriter.Stage(organizationId, AuditActorType.PlatformUser, actorId, actorDisplay,
@@ -202,7 +186,11 @@ public enum ForceStopOutcome
     /// <summary>The application is not installed on this device.</summary>
     NotInstalled = 1,
 
-    /// <summary>Installed and resolvable, but nothing of it is running.</summary>
+    /// <summary>
+    /// Reserved for the endpoint answer: installed and resolvable, but nothing of
+    /// it is running. The server no longer decides this -- only the agent can,
+    /// and it reports it as a task result.
+    /// </summary>
     NotRunning = 2,
 
     /// <summary>

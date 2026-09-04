@@ -54,6 +54,28 @@ public enum DeviceTaskType
     /// </remarks>
     ApplyUsbPolicy = 22,
 
+    /// <summary>
+    /// Stop a named installed application, resolving its processes on the endpoint.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Distinct from <see cref="TerminateProcess"/>, which names one process id the
+    /// console already knows. This names an <em>application</em> and leaves the
+    /// resolution to the agent, which enumerates processes as they are at the
+    /// moment of execution.
+    /// </para>
+    /// <para>
+    /// That separation exists because the console's process list is a snapshot,
+    /// and inventory is collected on request rather than continuously -- one
+    /// measured on this fleet was ninety minutes old. Resolving a pid server-side
+    /// from a snapshot that old means naming a process that has very likely
+    /// exited, restarted under a new pid, or had its pid reused. The endpoint is
+    /// the only place where "what is running" and "terminate it" can happen
+    /// without a gap in between.
+    /// </para>
+    /// </remarks>
+    StopApplication = 23,
+
     /// <summary>Install an approved, hash-verified package (Phase 11).</summary>
     InstallPackage = 30,
 

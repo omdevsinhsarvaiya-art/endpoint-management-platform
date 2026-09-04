@@ -155,15 +155,15 @@ describe('force stop', () => {
    * only told it failed, but only the second means it will never work.
    */
   it('distinguishes not-running from permanently unavailable', () => {
-    expect(forceStopMessage('Chrome', 'NotRunning', 0)).toMatch(/not running/i)
-    expect(forceStopMessage('Chrome', 'Unresolvable', 0)).toMatch(/unavailable/i)
-    expect(forceStopMessage('Chrome', 'NotInstalled', 0)).toMatch(/not installed/i)
-    expect(forceStopMessage('Chrome', 'NotEligible', 0)).toMatch(/retired|too old/i)
+    expect(forceStopMessage('Chrome', 'NotRunning')).toMatch(/not running/i)
+    expect(forceStopMessage('Chrome', 'Unresolvable')).toMatch(/unavailable/i)
+    expect(forceStopMessage('Chrome', 'NotInstalled')).toMatch(/not installed/i)
+    expect(forceStopMessage('Chrome', 'NotEligible')).toMatch(/retired|too old/i)
   })
 
-  it('reports how many processes were asked to stop', () => {
-    expect(forceStopMessage('Chrome', 'Queued', 1)).toBe('Chrome was asked to stop.')
-    expect(forceStopMessage('Chrome', 'Queued', 3)).toContain('3 processes')
+  it('says the device checks live process state before stopping', () => {
+    expect(forceStopMessage('Chrome', 'Queued')).toMatch(/^Chrome was asked to stop./)
+    expect(forceStopMessage('Chrome', 'Queued')).toMatch(/checks which processes are running/i)
   })
 
   /**
@@ -172,10 +172,10 @@ describe('force stop', () => {
    * support.
    */
   it('does not claim the application has already stopped', () => {
-    expect(forceStopMessage('Chrome', 'Queued', 1)).not.toMatch(/has stopped|was stopped|terminated/i)
+    expect(forceStopMessage('Chrome', 'Queued')).not.toMatch(/has stopped|was stopped|terminated/i)
   })
 
   it('falls back to a plain failure rather than showing a raw enum', () => {
-    expect(forceStopMessage('Chrome', 'SomethingNew', 0)).toBe('Chrome could not be stopped.')
+    expect(forceStopMessage('Chrome', 'SomethingNew')).toBe('Chrome could not be stopped.')
   })
 })

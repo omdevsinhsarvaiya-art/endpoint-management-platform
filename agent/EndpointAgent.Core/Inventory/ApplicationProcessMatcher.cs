@@ -1,4 +1,4 @@
-namespace EndpointPlatform.Domain.Software;
+namespace EndpointAgent.Core.Inventory;
 
 /// <summary>One process the endpoint reported as running.</summary>
 public sealed record RunningProcess(int ProcessId, string Name, string? ExecutablePath);

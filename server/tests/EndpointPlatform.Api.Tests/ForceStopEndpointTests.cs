@@ -12,10 +12,18 @@ namespace EndpointPlatform.Api.Tests;
 /// Force Stop: stopping a named installed application on one or more devices.
 /// </summary>
 /// <remarks>
+/// <para>
 /// The request names an application, never a process. These tests exist mostly to
-/// prove what cannot be asked for: no image name, no executable path, nothing
-/// outside the caller's organization, and nothing that would reach a retired
-/// device or a system process.
+/// prove what cannot be asked for: no pid, no image name, no executable path,
+/// nothing outside the caller's organization, and nothing that would reach a
+/// retired device.
+/// </para>
+/// <para>
+/// The server queues exactly one <see cref="DeviceTaskType.StopApplication"/> per
+/// device and chooses no pid at all. Which processes that resolves to is settled
+/// on the endpoint at execution time, because a pid picked here would come from a
+/// snapshot that can be hours old.
+/// </para>
 /// </remarks>
 [Collection(AdminApiPostgresCollection.Name)]
 public sealed class ForceStopEndpointTests(AdminApiPostgresFixture fixture)
@@ -25,6 +33,9 @@ public sealed class ForceStopEndpointTests(AdminApiPostgresFixture fixture)
     private static readonly Uri ForceStop = new("/admin/v1/software/force-stop", UriKind.Relative);
 
     private const string ChromeDir = @"C:\Program Files\Google\Chrome\Application";
+
+    /// <summary>The first agent version carrying the StopApplication executor.</summary>
+    private const string SupportedAgent = "1.6.0";
 
     private sealed record DeviceOutcome(Guid DeviceId, string Hostname, string Outcome, int ProcessesQueued);
 
@@ -37,15 +48,18 @@ public sealed class ForceStopEndpointTests(AdminApiPostgresFixture fixture)
     }
 
     /// <summary>
-    /// A device with Chrome installed and, optionally, Chrome plus unrelated
-    /// processes running.
+    /// A device with Chrome installed, plus a deliberately stale process list.
     /// </summary>
+    /// <remarks>
+    /// The seeded processes exist to prove they are <em>not</em> used: the server
+    /// must not read them, and no pid from them may appear in the queued task.
+    /// </remarks>
     private async Task<Guid> SeedAsync(
         string hostname,
         string? installLocation = ChromeDir,
-        bool running = true,
         DeviceStatus status = DeviceStatus.Active,
-        string appName = "Google Chrome")
+        string appName = "Google Chrome",
+        string agentVersion = SupportedAgent)
     {
         await using var db = _fixture.CreateDbContext();
         var organizationId = await db.Organizations.Select(o => o.Id).FirstAsync();
@@ -58,7 +72,7 @@ public sealed class ForceStopEndpointTests(AdminApiPostgresFixture fixture)
         db.EnrollmentTokens.Add(token);
 
         var device = Device.Enroll(
-            organizationId, hostname, $"smbios-{Guid.CreateVersion7()}", "1.5.0",
+            organizationId, hostname, $"smbios-{Guid.CreateVersion7()}", agentVersion,
             "Microsoft Windows 11 Pro", token.Id, now);
 
         if (status == DeviceStatus.Retired)
@@ -72,29 +86,21 @@ public sealed class ForceStopEndpointTests(AdminApiPostgresFixture fixture)
             device.Id, appName, "152.0.1", "Google LLC", null, installLocation, "x86", now,
             "Machine", null, null));
 
-        if (running)
-        {
-            db.DeviceProcesses.Add(new DeviceProcessEntry(
-                device.Id, 4321, "chrome", 100_000, $@"{ChromeDir}\chrome.exe", now));
-            db.DeviceProcesses.Add(new DeviceProcessEntry(
-                device.Id, 4322, "chrome", 100_000, $@"{ChromeDir}\chrome.exe", now));
-        }
-
-        // Always present, and never a legitimate target.
+        // A stale snapshot. Nothing here may influence the queued task.
+        db.DeviceProcesses.Add(new DeviceProcessEntry(
+            device.Id, 4321, "chrome", 100_000, $@"{ChromeDir}\chrome.exe", now));
         db.DeviceProcesses.Add(new DeviceProcessEntry(
             device.Id, 900, "explorer", 100_000, @"C:\Windows\explorer.exe", now));
-        db.DeviceProcesses.Add(new DeviceProcessEntry(
-            device.Id, 4, "System", 0, null, now));
 
         await db.SaveChangesAsync();
         return device.Id;
     }
 
-    private static async Task<List<DeviceTask>> TerminateTasksAsync(AdminApiPostgresFixture f, Guid deviceId)
+    private static async Task<List<DeviceTask>> StopTasksAsync(AdminApiPostgresFixture f, Guid deviceId)
     {
         await using var db = f.CreateDbContext();
         return await db.DeviceTasks
-            .Where(t => t.DeviceId == deviceId && t.Type == DeviceTaskType.TerminateProcess)
+            .Where(t => t.DeviceId == deviceId && t.Type == DeviceTaskType.StopApplication)
             .ToListAsync();
     }
 
@@ -104,12 +110,11 @@ public sealed class ForceStopEndpointTests(AdminApiPostgresFixture fixture)
     // ------------------------------------------------------------------- core
 
     /// <summary>
-    /// One task per running process of that application, and nothing else. The
-    /// payload names the pid and the image the server observed, which the agent
-    /// re-checks before terminating.
+    /// One task per device, carrying the application and its install directory —
+    /// and no pid, because the server does not choose one.
     /// </summary>
     [Fact]
-    public async Task Force_stop_queues_a_task_for_each_running_process_of_the_application()
+    public async Task Force_stop_queues_one_task_that_names_the_application_not_a_process()
     {
         using var client = await AdminAsync();
         var device = await SeedAsync("FS-RUNNING");
@@ -118,39 +123,43 @@ public sealed class ForceStopEndpointTests(AdminApiPostgresFixture fixture)
         response.StatusCode.ShouldBe(HttpStatusCode.Accepted);
 
         var result = (await response.Content.ReadFromJsonAsync<ForceStopResponse>())!;
-        result.ProcessesQueued.ShouldBe(2);
         result.Devices.Single().Outcome.ShouldBe("Queued");
 
-        var tasks = await TerminateTasksAsync(_fixture, device);
-        tasks.Count.ShouldBe(2);
+        var task = (await StopTasksAsync(_fixture, device)).Single();
+        task.PayloadJson.ShouldNotBeNull();
 
-        // Only Chrome's pids. explorer and System were present and untouched.
-        foreach (var task in tasks)
-        {
-            task.PayloadJson.ShouldNotBeNull();
-            task.PayloadJson!.Contains("chrome", StringComparison.OrdinalIgnoreCase).ShouldBeTrue();
-            task.PayloadJson.Contains("explorer", StringComparison.OrdinalIgnoreCase).ShouldBeFalse();
-            task.PayloadJson.Contains("900", StringComparison.Ordinal).ShouldBeFalse();
-        }
+        task.PayloadJson!.Contains("Google Chrome", StringComparison.Ordinal).ShouldBeTrue();
+        task.PayloadJson.Contains("Chrome\\\\Application", StringComparison.Ordinal).ShouldBeTrue();
+
+        // The staleness fix, pinned: no pid from the snapshot reaches the endpoint.
+        task.PayloadJson.Contains("processId", StringComparison.OrdinalIgnoreCase).ShouldBeFalse();
+        task.PayloadJson.Contains("4321", StringComparison.Ordinal).ShouldBeFalse();
+        task.PayloadJson.Contains("explorer", StringComparison.OrdinalIgnoreCase).ShouldBeFalse();
     }
 
     /// <summary>
-    /// Installed and resolvable, but nothing running. Distinct from "cannot be
-    /// resolved", because only the latter makes Force Stop permanently
-    /// unavailable for the application.
+    /// Whether the application is running is the endpoint's determination, made at
+    /// execution time. The server queues regardless, because it cannot know — and
+    /// the alternative is deciding from a snapshot that may be hours old.
     /// </summary>
     [Fact]
-    public async Task An_application_that_is_not_running_queues_nothing_and_says_so()
+    public async Task The_server_does_not_decide_whether_the_application_is_running()
     {
         using var client = await AdminAsync();
-        var device = await SeedAsync("FS-IDLE", running: false);
+
+        // No process rows at all: the old implementation reported NotRunning here.
+        var device = await SeedAsync("FS-NOPROCS");
+        await using (var db = _fixture.CreateDbContext())
+        {
+            await db.Database.ExecuteSqlRawAsync(
+                "DELETE FROM endpoint_platform.device_processes WHERE device_id = {0}", device);
+        }
 
         var result = (await (await client.PostAsJsonAsync(ForceStop, Body([device])))
             .Content.ReadFromJsonAsync<ForceStopResponse>())!;
 
-        result.ProcessesQueued.ShouldBe(0);
-        result.Devices.Single().Outcome.ShouldBe("NotRunning");
-        (await TerminateTasksAsync(_fixture, device)).ShouldBeEmpty();
+        result.Devices.Single().Outcome.ShouldBe("Queued");
+        (await StopTasksAsync(_fixture, device)).Count.ShouldBe(1);
     }
 
     /// <summary>
@@ -167,24 +176,29 @@ public sealed class ForceStopEndpointTests(AdminApiPostgresFixture fixture)
             .Content.ReadFromJsonAsync<ForceStopResponse>())!;
 
         result.Devices.Single().Outcome.ShouldBe("Unresolvable");
-        (await TerminateTasksAsync(_fixture, device)).ShouldBeEmpty();
+        (await StopTasksAsync(_fixture, device)).ShouldBeEmpty();
     }
 
     /// <summary>
-    /// An over-broad install location must never sweep up the operating system.
+    /// An over-broad install location is refused before a task is queued. The
+    /// endpoint refuses it again; neither side trusts the other to have checked.
     /// </summary>
-    [Fact]
-    public async Task An_application_registered_against_a_system_root_terminates_nothing()
+    [Theory]
+    [InlineData(@"C:\Windows")]
+    [InlineData(@"C:\")]
+    [InlineData(@"C:\Program Files")]
+    [InlineData(@"C:\Users")]
+    public async Task An_application_registered_against_a_system_root_queues_nothing(string location)
     {
         using var client = await AdminAsync();
-        var device = await SeedAsync("FS-BADPATH", installLocation: @"C:\Windows");
+        var device = await SeedAsync($"FS-BAD-{Guid.CreateVersion7():N}"[..12], installLocation: location);
 
         var result = (await (await client.PostAsJsonAsync(ForceStop, Body([device])))
             .Content.ReadFromJsonAsync<ForceStopResponse>())!;
 
         result.ProcessesQueued.ShouldBe(0);
         result.Devices.Single().Outcome.ShouldBe("Unresolvable");
-        (await TerminateTasksAsync(_fixture, device)).ShouldBeEmpty();
+        (await StopTasksAsync(_fixture, device)).ShouldBeEmpty();
     }
 
     [Fact]
@@ -197,7 +211,7 @@ public sealed class ForceStopEndpointTests(AdminApiPostgresFixture fixture)
             .Content.ReadFromJsonAsync<ForceStopResponse>())!;
 
         result.Devices.Single().Outcome.ShouldBe("NotInstalled");
-        (await TerminateTasksAsync(_fixture, device)).ShouldBeEmpty();
+        (await StopTasksAsync(_fixture, device)).ShouldBeEmpty();
     }
 
     [Fact]
@@ -205,22 +219,43 @@ public sealed class ForceStopEndpointTests(AdminApiPostgresFixture fixture)
     {
         using var client = await AdminAsync();
         var a = await SeedAsync("FS-MULTI-A");
-        var b = await SeedAsync("FS-MULTI-B", running: false);
+        var b = await SeedAsync("FS-MULTI-B", installLocation: null);
 
         var result = (await (await client.PostAsJsonAsync(ForceStop, Body([a, b])))
             .Content.ReadFromJsonAsync<ForceStopResponse>())!;
 
         result.Devices.Count.ShouldBe(2);
         result.Devices.Single(d => d.DeviceId == a).Outcome.ShouldBe("Queued");
-        result.Devices.Single(d => d.DeviceId == b).Outcome.ShouldBe("NotRunning");
-        result.ProcessesQueued.ShouldBe(2);
+        result.Devices.Single(d => d.DeviceId == b).Outcome.ShouldBe("Unresolvable");
+        result.ProcessesQueued.ShouldBe(1);
+    }
+
+    // ------------------------------------------------------- agent capability
+
+    /// <summary>
+    /// Resolution happens on the endpoint, so an agent without the executor cannot
+    /// do it. Refused before a row exists rather than delivered and reported as an
+    /// unknown task type, which reads exactly like the application failing to stop.
+    /// </summary>
+    [Fact]
+    public async Task An_agent_without_the_executor_is_reported_ineligible_not_failed()
+    {
+        using var client = await AdminAsync();
+        var device = await SeedAsync("FS-OLDAGENT", agentVersion: "1.5.0");
+
+        var result = (await (await client.PostAsJsonAsync(ForceStop, Body([device])))
+            .Content.ReadFromJsonAsync<ForceStopResponse>())!;
+
+        result.ProcessesQueued.ShouldBe(0);
+        result.Devices.Single().Outcome.ShouldBe("NotEligible");
+        (await StopTasksAsync(_fixture, device)).ShouldBeEmpty();
     }
 
     // --------------------------------------------------------------- security
 
     /// <summary>Retired devices receive no tasks of any kind.</summary>
     [Fact]
-    public async Task A_retired_device_receives_no_termination_task()
+    public async Task A_retired_device_receives_no_task()
     {
         using var client = await AdminAsync();
         var device = await SeedAsync("FS-RETIRED", status: DeviceStatus.Retired);
@@ -230,7 +265,7 @@ public sealed class ForceStopEndpointTests(AdminApiPostgresFixture fixture)
 
         result.ProcessesQueued.ShouldBe(0);
         result.Devices.Single().Outcome.ShouldBe("NotEligible");
-        (await TerminateTasksAsync(_fixture, device)).ShouldBeEmpty();
+        (await StopTasksAsync(_fixture, device)).ShouldBeEmpty();
     }
 
     /// <summary>
@@ -273,11 +308,11 @@ public sealed class ForceStopEndpointTests(AdminApiPostgresFixture fixture)
 
     /// <summary>
     /// The contract accepts an application name and nothing else. A caller cannot
-    /// smuggle in a process name or an executable path, so no request can ask the
-    /// fleet to terminate something arbitrary.
+    /// smuggle in a pid, a process name or an executable path, so no request can
+    /// ask the fleet to terminate something arbitrary.
     /// </summary>
     [Fact]
-    public async Task A_process_name_or_path_supplied_by_the_client_is_ignored()
+    public async Task A_pid_process_name_or_path_supplied_by_the_client_is_ignored()
     {
         using var client = await AdminAsync();
         var device = await SeedAsync("FS-INJECT");
@@ -290,13 +325,18 @@ public sealed class ForceStopEndpointTests(AdminApiPostgresFixture fixture)
             processName = "explorer.exe",
             executablePath = @"C:\Windows\explorer.exe",
             processId = 900,
+            installLocation = @"C:\Windows",
         });
 
         response.StatusCode.ShouldBe(HttpStatusCode.Accepted);
 
-        var tasks = await TerminateTasksAsync(_fixture, device);
-        tasks.Count.ShouldBe(2, "still only Chrome's two processes");
-        tasks.ShouldAllBe(t => !t.PayloadJson!.Contains("explorer", StringComparison.OrdinalIgnoreCase));
+        var task = (await StopTasksAsync(_fixture, device)).Single();
+
+        // The install location came from inventory, not from the request body.
+        task.PayloadJson!.Contains("explorer", StringComparison.OrdinalIgnoreCase).ShouldBeFalse();
+        task.PayloadJson.Contains("Windows", StringComparison.Ordinal).ShouldBeFalse();
+        task.PayloadJson.Contains("Chrome", StringComparison.Ordinal).ShouldBeTrue();
+        task.PayloadJson.Contains("900", StringComparison.Ordinal).ShouldBeFalse();
     }
 
     /// <summary>
@@ -304,7 +344,7 @@ public sealed class ForceStopEndpointTests(AdminApiPostgresFixture fixture)
     /// that name, so nothing is queued.
     /// </summary>
     [Fact]
-    public async Task Naming_a_windows_process_as_the_application_terminates_nothing()
+    public async Task Naming_a_windows_process_as_the_application_queues_nothing()
     {
         using var client = await AdminAsync();
         var device = await SeedAsync("FS-SYSNAME");
@@ -314,7 +354,7 @@ public sealed class ForceStopEndpointTests(AdminApiPostgresFixture fixture)
 
         result.ProcessesQueued.ShouldBe(0);
         result.Devices.Single().Outcome.ShouldBe("NotInstalled");
-        (await TerminateTasksAsync(_fixture, device)).ShouldBeEmpty();
+        (await StopTasksAsync(_fixture, device)).ShouldBeEmpty();
     }
 
     // ------------------------------------------------------------------ audit
@@ -342,8 +382,8 @@ public sealed class ForceStopEndpointTests(AdminApiPostgresFixture fixture)
 
     /// <summary>
     /// Asking twice queues twice, which is correct: the operator is asking again
-    /// because the application is still running. The agent refuses a pid that has
-    /// been recycled, so a stale request cannot hit an unrelated process.
+    /// because the application is still running. Each task resolves independently
+    /// against live state, so a repeat cannot act on anything stale.
     /// </summary>
     [Fact]
     public async Task Repeating_a_force_stop_is_safe()
@@ -354,8 +394,8 @@ public sealed class ForceStopEndpointTests(AdminApiPostgresFixture fixture)
         await client.PostAsJsonAsync(ForceStop, Body([device]));
         await client.PostAsJsonAsync(ForceStop, Body([device]));
 
-        var tasks = await TerminateTasksAsync(_fixture, device);
-        tasks.Count.ShouldBe(4);
-        tasks.ShouldAllBe(t => t.Type == DeviceTaskType.TerminateProcess);
+        var tasks = await StopTasksAsync(_fixture, device);
+        tasks.Count.ShouldBe(2);
+        tasks.ShouldAllBe(t => t.Type == DeviceTaskType.StopApplication);
     }
 }

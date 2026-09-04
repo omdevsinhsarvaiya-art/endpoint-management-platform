@@ -338,7 +338,7 @@ export function DeviceDetailPage() {
       const outcome = result.devices[0]
 
       setActionMsg(outcome
-        ? forceStopMessage(name, outcome.outcome, outcome.processesQueued)
+        ? forceStopMessage(name, outcome.outcome)
         : `${name} could not be stopped.`)
     } catch {
       setActionMsg(`${name} could not be stopped.`)

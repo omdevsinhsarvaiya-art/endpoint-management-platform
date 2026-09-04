@@ -121,16 +121,13 @@ export function canForceStop(installLocation: string | null): boolean {
  * look the same to an operator who is only told it did not work, but only the
  * second means the action will never work for that application.
  */
-export function forceStopMessage(
-  application: string,
-  outcome: string,
-  processesQueued: number,
-): string {
+export function forceStopMessage(application: string, outcome: string): string {
   switch (outcome) {
     case 'Queued':
-      return processesQueued === 1
-        ? `${application} was asked to stop.`
-        : `${application} was asked to stop (${processesQueued} processes).`
+      // "Asked to stop", not "stopped": the device checks which processes are
+      // actually running and terminates them on its next check-in, so claiming
+      // completion here would be a claim the console cannot support.
+      return `${application} was asked to stop. The device checks which processes are running before stopping them.`
     case 'NotRunning':
       return `${application} is not running on this device.`
     case 'NotInstalled':

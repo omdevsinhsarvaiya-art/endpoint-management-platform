@@ -295,6 +295,17 @@ are reverted automatically.
   contain an image name, an executable path or a pid, so the browser cannot ask
   the fleet to terminate something arbitrary.
 
+  **Resolution happens on the endpoint, at execution time.** The server chooses no
+  pid: it queues one `StopApplication` task carrying the install directory, and
+  the agent enumerates its own processes and matches them when it acts. Inventory
+  is collected on request rather than continuously — a process list measured on
+  this fleet was ninety minutes old — so a pid picked server-side would name a
+  process that has very likely exited, restarted under a new pid, or had its pid
+  reused, and the endpoint guard would then correctly refuse. That made Force Stop
+  fail on applications that were running perfectly well. `StopApplication`
+  requires **agent 1.6.0**; below that the console reports NotEligible rather than
+  acting on stale data.
+
   **Resolution is by install path, not by name.** `ApplicationProcessMatcher`
   matches a process whose executable lives under the application's reported
   `InstallLocation`. A display name cannot be turned into an image name safely —
