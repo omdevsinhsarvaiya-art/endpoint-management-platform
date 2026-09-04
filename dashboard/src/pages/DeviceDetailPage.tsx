@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { signingLabel, upgradeTargets } from './agentUpdateView'
-import { registryViewLabel, scopeLabel } from './softwareView'
+import { canForceStop, forceStopMessage, registryViewLabel, scopeLabel } from './softwareView'
+import { forceStopApplication } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import { DeviceUsersPanel } from './DeviceUsersPanel'
 import { DeviceGroupsPanel } from './DeviceGroupsPanel'
@@ -124,6 +125,8 @@ export function DeviceDetailPage() {
   const [latestAgent, setLatestAgent] = useState<LatestAgentRelease | null>(null)
   const [releases, setReleases] = useState<AgentReleaseRow[]>([])
   const [targetReleaseId, setTargetReleaseId] = useState<string>('')
+  const [softwareSearch, setSoftwareSearch] = useState('')
+  const [stopping, setStopping] = useState<string | null>(null)
 
   // The published agent release, for the "update agent" affordance. Fetched
   // once per page visit: releases change rarely, and the compare is cheap.
@@ -314,6 +317,35 @@ export function DeviceDetailPage() {
 
   const canRename = hasPermission('device.rename')
   const canDeploy = hasPermission('software.deploy')
+  // Force Stop terminates a process, so it needs the same permission as doing
+  // that directly rather than a weaker software-view one.
+  const canExecuteTasks = hasPermission('task.execute')
+
+  /**
+   * Asks the server to stop an application by name.
+   *
+   * The name and publisher are all that is sent; the server resolves them to
+   * process ids from its own inventory, so this cannot ask for an arbitrary
+   * process to be terminated.
+   */
+  async function onForceStop(name: string, publisher: string | null) {
+    if (!device) return
+
+    setStopping(name)
+    setActionMsg(null)
+    try {
+      const result = await forceStopApplication([device.id], name, publisher)
+      const outcome = result.devices[0]
+
+      setActionMsg(outcome
+        ? forceStopMessage(name, outcome.outcome, outcome.processesQueued)
+        : `${name} could not be stopped.`)
+    } catch {
+      setActionMsg(`${name} could not be stopped.`)
+    } finally {
+      setStopping(null)
+    }
+  }
 
   // Every published release this device could legitimately move to, newest
   // first. The rules -- retired, not-newer, unpublished, unreadable version --
@@ -649,7 +681,19 @@ export function DeviceDetailPage() {
           {!device.software.length && <InventoryEmpty title="No software inventory yet" />}
           {!!device.software.length && (
             <div className="card">
-              <h2>Installed applications</h2>
+              <div className="card-header">
+                <h2>Installed applications</h2>
+                <div className="input-search" style={{ maxWidth: 260 }}>
+                  <Icon name="search" size={15} className="search-icon" />
+                  <input
+                    type="search"
+                    placeholder="Search applications…"
+                    aria-label="Search installed applications"
+                    value={softwareSearch}
+                    onChange={(e) => setSoftwareSearch(e.target.value)}
+                  />
+                </div>
+              </div>
               <div className="scroll-y table-wrap">
                 <table className="table">
                   <thead>
@@ -659,10 +703,16 @@ export function DeviceDetailPage() {
                       <th>Publisher</th>
                       <th>Installed for</th>
                       <th>Found in</th>
+                      {canExecuteTasks && <th style={{ textAlign: 'right' }}>Actions</th>}
                     </tr>
                   </thead>
                   <tbody>
-                    {device.software.map((sw) => (
+                    {device.software
+                      .filter((sw) =>
+                        softwareSearch.trim() === ''
+                        || sw.name.toLowerCase().includes(softwareSearch.trim().toLowerCase())
+                        || (sw.publisher ?? '').toLowerCase().includes(softwareSearch.trim().toLowerCase()))
+                      .map((sw) => (
                       // Keyed by user as well as name and version: one machine
                       // legitimately holds the same application once per user,
                       // and keying without the user collides on exactly those
@@ -675,6 +725,28 @@ export function DeviceDetailPage() {
                         {/* Not the binary's architecture: 64-bit products
                             routinely register under WOW6432Node. */}
                         <td>{registryViewLabel(sw.architecture)}</td>
+                        {canExecuteTasks && (
+                          <td style={{ textAlign: 'right' }}>
+                            {/* Offered only where the application reports an
+                                install path, because that is the only evidence
+                                linking it to a process. Without it the action
+                                would be a guess, so it is not offered at all. */}
+                            {canForceStop(sw.installLocation) ? (
+                              <button
+                                type="button"
+                                className="btn-sm"
+                                disabled={stopping !== null}
+                                onClick={() => void onForceStop(sw.name, sw.publisher)}
+                              >
+                                {stopping === sw.name ? 'Stopping…' : 'Force Stop'}
+                              </button>
+                            ) : (
+                              <span className="muted" title="No install location was reported for this application">
+                                Unavailable
+                              </span>
+                            )}
+                          </td>
+                        )}
                       </tr>
                     ))}
                   </tbody>

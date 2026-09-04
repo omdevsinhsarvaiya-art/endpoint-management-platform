@@ -493,6 +493,41 @@ export interface DeviceSoftwareItem {
   installationScope: string | null
   installedForUser: string | null
   productCode: string | null
+  /**
+   * Where the application was installed. Force Stop resolves an application to
+   * its processes by this path, so its absence means the application cannot be
+   * stopped — the server is still the authority on that.
+   */
+  installLocation: string | null
+}
+
+/** What Force Stop did on one device. */
+export interface ForceStopDeviceOutcome {
+  deviceId: string
+  hostname: string
+  outcome: 'Queued' | 'NotInstalled' | 'NotRunning' | 'Unresolvable' | 'NotEligible'
+  processesQueued: number
+}
+
+export interface ForceStopResult {
+  processesQueued: number
+  devices: ForceStopDeviceOutcome[]
+}
+
+/**
+ * Stops a named installed application on the given devices.
+ *
+ * Deliberately takes an application name, never a process name or path: the
+ * server resolves those from its own inventory, so the browser cannot ask for an
+ * arbitrary process to be terminated.
+ */
+export function forceStopApplication(
+  deviceIds: string[], name: string, publisher: string | null,
+): Promise<ForceStopResult> {
+  return request<ForceStopResult>('/admin/v1/software/force-stop', {
+    method: 'POST',
+    body: JSON.stringify({ deviceIds, name, publisher }),
+  })
 }
 
 export function getSoftwareTitles(page: number, pageSize: number, search: string, publisher: string): Promise<SoftwareTitlePage> {

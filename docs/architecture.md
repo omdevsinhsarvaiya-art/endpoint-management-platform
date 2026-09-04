@@ -284,6 +284,34 @@ are reverted automatically.
   its TTL, after which it becomes `Expired` — also distinct from `Failed`, which
   means the endpoint tried and could not.
 
+- **Force Stop application: complete.** From a device's installed-applications
+  list an operator can stop a running application. It reuses the existing
+  `DeviceTaskType.TerminateProcess` task, executor and PID-reuse guard — there is
+  no second process-kill implementation, and no new table or migration.
+
+  **The client names an application, never a process.** The request carries only
+  the display name and publisher, both of which already exist in this platform's
+  inventory; the server resolves them to concrete pids itself. A request cannot
+  contain an image name, an executable path or a pid, so the browser cannot ask
+  the fleet to terminate something arbitrary.
+
+  **Resolution is by install path, not by name.** `ApplicationProcessMatcher`
+  matches a process whose executable lives under the application's reported
+  `InstallLocation`. A display name cannot be turned into an image name safely —
+  "Microsoft Visual Studio Code" runs as `Code.exe`, "Google Chrome" as
+  `chrome.exe` — and a name table would be wrong for every application nobody
+  anticipated, where being wrong means terminating someone else's process. An
+  over-broad install location (`C:\`, `C:\Windows`, a bare Program Files root) is
+  refused outright, so one badly-registered application cannot become a request
+  to terminate the operating system. Where there is no usable path the console
+  says Force Stop is unavailable rather than guessing.
+
+  Outcomes are reported apart — queued, not installed, not running, unresolvable,
+  not eligible — because "not running" and "cannot ever be resolved" look
+  identical to an operator told only that it failed. Gated on `task.execute`,
+  device-scoped, retired devices excluded by `QueueAsync`, and audited with
+  hostnames and outcomes but deliberately **not** executable paths.
+
 - **Application execution control (enable/disable): NOT implemented, by
   decision — re-evaluated against Windows 11 Pro 26200 and re-confirmed.**
 

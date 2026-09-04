@@ -420,6 +420,11 @@ public static class DeviceEndpoints
                 sw.InstallationScope,
                 sw.InstalledForUser,
                 sw.ProductCode,
+                // Force Stop resolves an application to processes by install
+                // path, so the console needs to know whether one was reported --
+                // an application without it cannot be stopped and should say so
+                // rather than offering a button that will not work.
+                sw.InstallLocation,
             })
             .ToListAsync(cancellationToken);
 

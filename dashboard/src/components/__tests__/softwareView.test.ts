@@ -5,6 +5,8 @@ import {
   isSameTitle,
   registryViewLabel,
   scopeLabel,
+  canForceStop,
+  forceStopMessage,
   titleKey,
 } from '../../pages/softwareView'
 import type { SoftwareInstallation } from '../../api/client'
@@ -134,5 +136,46 @@ describe('deployment targeting', () => {
     ]
 
     expect(activeInstallations(rows).map((i) => i.deviceId)).toEqual(['d1'])
+  })
+})
+
+describe('force stop', () => {
+  /**
+   * A display name cannot be turned into an image name safely, so Force Stop
+   * needs an install path as evidence. Without one the action is not offered.
+   */
+  it('is offered only when the application reports an install location', () => {
+    expect(canForceStop('C:\\Program Files\\Google\\Chrome\\Application')).toBe(true)
+    expect(canForceStop(null)).toBe(false)
+    expect(canForceStop('   ')).toBe(false)
+  })
+
+  /**
+   * "Not running" and "cannot be resolved" look identical to an operator who is
+   * only told it failed, but only the second means it will never work.
+   */
+  it('distinguishes not-running from permanently unavailable', () => {
+    expect(forceStopMessage('Chrome', 'NotRunning', 0)).toMatch(/not running/i)
+    expect(forceStopMessage('Chrome', 'Unresolvable', 0)).toMatch(/unavailable/i)
+    expect(forceStopMessage('Chrome', 'NotInstalled', 0)).toMatch(/not installed/i)
+    expect(forceStopMessage('Chrome', 'NotEligible', 0)).toMatch(/retired|too old/i)
+  })
+
+  it('reports how many processes were asked to stop', () => {
+    expect(forceStopMessage('Chrome', 'Queued', 1)).toBe('Chrome was asked to stop.')
+    expect(forceStopMessage('Chrome', 'Queued', 3)).toContain('3 processes')
+  })
+
+  /**
+   * Asked to stop, not stopped: the task is queued and the agent acts on its
+   * next poll, so claiming completion here would be a claim the console cannot
+   * support.
+   */
+  it('does not claim the application has already stopped', () => {
+    expect(forceStopMessage('Chrome', 'Queued', 1)).not.toMatch(/has stopped|was stopped|terminated/i)
+  })
+
+  it('falls back to a plain failure rather than showing a raw enum', () => {
+    expect(forceStopMessage('Chrome', 'SomethingNew', 0)).toBe('Chrome could not be stopped.')
   })
 })

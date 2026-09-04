@@ -2,12 +2,16 @@ using EndpointPlatform.Api.Security;
 using EndpointPlatform.Domain.Authorization;
 using EndpointPlatform.Infrastructure.Devices;
 using EndpointPlatform.Infrastructure.Security;
+using EndpointPlatform.Infrastructure.Software;
 
 namespace EndpointPlatform.Api.Endpoints;
 
 /// <summary>Fleet-wide software inventory views (read-only, software.view).</summary>
 public static class SoftwareEndpoints
 {
+    /// <summary>Bounds an implausible request before any query runs.</summary>
+    private const int MaxForceStopDevices = 500;
+
     public static IEndpointRouteBuilder MapSoftwareEndpoints(this IEndpointRouteBuilder endpoints)
     {
         var group = endpoints.MapGroup("/admin/v1/software");
@@ -24,7 +28,72 @@ public static class SoftwareEndpoints
             .WithName("ListSoftwarePublishers")
             .RequirePermission(Permissions.Software.View);
 
+        group.MapPost("/force-stop", ForceStopAsync)
+            .WithName("ForceStopApplication")
+            .RequirePermission(Permissions.Task.Execute);
+
         return endpoints;
+    }
+
+    /// <summary>
+    /// Stops a named installed application on one or more devices.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Gated on <c>task.execute</c>, the same permission as terminating a process
+    /// directly, because that is what this ultimately does.
+    /// </para>
+    /// <para>
+    /// The body names an <em>application</em>. It cannot name a process, an image
+    /// or a path: the server resolves those from its own inventory, so no request
+    /// from a browser can ask the fleet to terminate something arbitrary.
+    /// </para>
+    /// </remarks>
+    private static async Task<IResult> ForceStopAsync(
+        ForceStopRequest request,
+        ApplicationForceStopService forceStopService,
+        DeviceScopeAuthorizer scope,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(request.Name) || request.Name.Length > 384)
+        {
+            return Results.Problem("An application name is required.", statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        if (request.DeviceIds is not { Count: > 0 })
+        {
+            return Results.Problem("At least one deviceId is required.", statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        if (request.DeviceIds.Count > MaxForceStopDevices)
+        {
+            return Results.Problem(
+                $"At most {MaxForceStopDevices} devices may be targeted at once.",
+                statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        var actor = AdminActor.Required(httpContext.User);
+        var scopedDeviceIds = await scope.ScopedDeviceIdsOrNullAsync(
+            actor.UserId, actor.OrganizationId, cancellationToken);
+
+        var result = await forceStopService.StopAsync(
+            actor.OrganizationId, request.DeviceIds, request.Name.Trim(), request.Publisher,
+            scopedDeviceIds, actor.UserId, actor.Email, cancellationToken);
+
+        // Accepted, not Ok: the tasks exist, the processes have not been stopped
+        // yet. The agent does that on its next poll.
+        return Results.Accepted("/admin/v1/software", new
+        {
+            result.ProcessesQueued,
+            devices = result.Devices.Select(d => new
+            {
+                d.DeviceId,
+                d.Hostname,
+                outcome = d.Outcome.ToString(),
+                d.ProcessesQueued,
+            }),
+        });
     }
 
     /// <summary>
@@ -86,3 +155,14 @@ public static class SoftwareEndpoints
         return Results.Ok(await softwareReadService.ListPublishersAsync(organizationId, cancellationToken));
     }
 }
+
+/// <summary>
+/// A Force Stop request: an application, and the devices to stop it on.
+/// </summary>
+/// <remarks>
+/// Deliberately has no field for a process name, image or executable path. The
+/// server resolves those from inventory, so the browser cannot ask for an
+/// arbitrary process to be terminated.
+/// </remarks>
+public sealed record ForceStopRequest(
+    IReadOnlyList<Guid>? DeviceIds, string? Name, string? Publisher);

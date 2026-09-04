@@ -99,6 +99,51 @@ export function installationSummary(
   return `${totalCount} installations across ${deviceText}`
 }
 
+/**
+ * Whether Force Stop can be offered for an installed application.
+ *
+ * Force Stop resolves an application to its running processes by install path,
+ * because a display name cannot be turned into an image name safely — "Microsoft
+ * Visual Studio Code" runs as Code.exe. Without a path there is no evidence, so
+ * the action is not offered rather than guessed at.
+ *
+ * The server re-checks this and is the authority; this only avoids showing a
+ * control that is certain to report "unavailable".
+ */
+export function canForceStop(installLocation: string | null): boolean {
+  return installLocation !== null && installLocation.trim().length > 0
+}
+
+/**
+ * What a Force Stop attempt did, in words.
+ *
+ * Each outcome is distinct on purpose: "not running" and "cannot be resolved"
+ * look the same to an operator who is only told it did not work, but only the
+ * second means the action will never work for that application.
+ */
+export function forceStopMessage(
+  application: string,
+  outcome: string,
+  processesQueued: number,
+): string {
+  switch (outcome) {
+    case 'Queued':
+      return processesQueued === 1
+        ? `${application} was asked to stop.`
+        : `${application} was asked to stop (${processesQueued} processes).`
+    case 'NotRunning':
+      return `${application} is not running on this device.`
+    case 'NotInstalled':
+      return `${application} is not installed on this device.`
+    case 'Unresolvable':
+      return `Force Stop is unavailable for ${application}: it reports no usable install location.`
+    case 'NotEligible':
+      return `${application} could not be stopped: the device is retired or its agent is too old.`
+    default:
+      return `${application} could not be stopped.`
+  }
+}
+
 /** Devices that can be acted on: a retired device is not a deployment target. */
 export function activeInstallations(
   installations: readonly SoftwareInstallation[],
