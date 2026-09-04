@@ -62,6 +62,11 @@ public sealed class WindowsSoftwareCollector(
     {
         cancellationToken.ThrowIfCancellationRequested();
 
+        // Anything the resolver learned about the machine on a previous run is
+        // discarded here: this collector is a singleton, so a cache kept across
+        // collections would age with the service rather than with the machine.
+        _installLocationResolver.BeginCollection();
+
         var discovered = new List<DiscoveredSoftware>();
 
         ReadMachineHive(RegistryView.Registry64, UninstallPath, "x64", discovered);

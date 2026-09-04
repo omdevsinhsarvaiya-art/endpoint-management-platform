@@ -164,6 +164,40 @@ public sealed class WindowsSoftwareCollectorTests
             .ShouldAllBe(s => !self.StartsWith(s.InstallLocation!.TrimEnd('\\') + "\\", StringComparison.OrdinalIgnoreCase));
     }
 
+    /// <summary>
+    /// Each collection re-reads the machine rather than reusing what a previous
+    /// one learned.
+    /// </summary>
+    /// <remarks>
+    /// The resolver is a singleton, so its component index would otherwise be as
+    /// old as the service: an application installed after the agent started would
+    /// never get an install location, and would sit in the console as
+    /// permanently unavailable for Force Stop until somebody restarted the
+    /// service. Building it once per collection keeps the cost (seconds, shared
+    /// across every product in that collection) without the staleness.
+    /// </remarks>
+    [Fact]
+    public async Task Each_collection_rebuilds_the_installer_component_index()
+    {
+        var resolver = new WindowsInstallLocationResolver(
+            NullLogger<WindowsInstallLocationResolver>.Instance);
+        var collector = new WindowsSoftwareCollector(
+            NullLogger<WindowsSoftwareCollector>.Instance, resolver);
+
+        // Force a first walk of the machine, independent of what this machine
+        // happens to have installed.
+        resolver.Resolve("{00000000-0000-0000-0000-000000000000}", null);
+        var before = resolver.IndexBuildCount;
+        before.ShouldBe(1);
+
+        await collector.CollectAsync(CancellationToken.None);
+        resolver.Resolve("{00000000-0000-0000-0000-000000000000}", null);
+
+        // Two walks only if the collection discarded the first index. Without
+        // the reset both calls reuse it and this stays at one.
+        resolver.IndexBuildCount.ShouldBeGreaterThan(before);
+    }
+
     [Fact]
     public async Task No_field_name_resembles_credential_material()
     {

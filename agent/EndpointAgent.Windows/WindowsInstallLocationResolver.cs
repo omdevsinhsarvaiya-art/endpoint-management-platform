@@ -83,7 +83,30 @@ public sealed class WindowsInstallLocationResolver(
         @"\Temp\",
     ];
 
+    /// <summary>
+    /// The component index for the collection currently in progress.
+    /// </summary>
+    /// <remarks>
+    /// Held across one collection because walking every component on the machine
+    /// costs seconds and there are dozens of products to resolve; discarded
+    /// between collections because this resolver is a singleton and the index
+    /// would otherwise be as old as the service. An application installed after
+    /// the agent started would then never resolve until someone restarted it,
+    /// which is exactly the kind of staleness Force Stop is built to avoid.
+    /// </remarks>
     private Dictionary<string, List<string>>? _componentPathsByProduct;
+
+    /// <summary>
+    /// Discards the cached index so the next resolve re-reads the machine.
+    /// Called at the start of each collection.
+    /// </summary>
+    internal void BeginCollection() => _componentPathsByProduct = null;
+
+    /// <summary>
+    /// How many times the machine has been walked. Lets a test tell a rebuilt
+    /// index from a reused one, which is the whole point of the reset.
+    /// </summary>
+    internal int IndexBuildCount { get; private set; }
 
     /// <summary>
     /// The install directory for one application, or null when nothing reliable
@@ -236,6 +259,8 @@ public sealed class WindowsInstallLocationResolver(
         {
             return _componentPathsByProduct;
         }
+
+        IndexBuildCount++;
 
         var index = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
         var stopwatch = Stopwatch.StartNew();
