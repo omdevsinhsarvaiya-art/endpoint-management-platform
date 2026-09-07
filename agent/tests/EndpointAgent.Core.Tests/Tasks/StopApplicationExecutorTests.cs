@@ -19,19 +19,37 @@ public sealed class StopApplicationExecutorTests
 {
     private const string ChromeDir = @"C:\Program Files\Google\Chrome\Application";
 
-    /// <summary>Live process list, as the endpoint would enumerate it now.</summary>
+    /// <summary>
+    /// Live process list, as the endpoint would enumerate it now.
+    /// </summary>
+    /// <remarks>
+    /// The capped method models the real Windows provider -- largest first, never
+    /// more than 500 -- rather than handing back everything. A fake that returned
+    /// the full list from both methods would let the executor call the wrong one
+    /// and still pass every test, which is precisely how the cap went unnoticed.
+    /// </remarks>
     private sealed class FakeCollector(params InventoryProcess[] processes) : IServiceProcessCollector
     {
         public ValueTask<IReadOnlyList<InventoryService>> CollectServicesAsync(
             CancellationToken cancellationToken = default) =>
             ValueTask.FromResult<IReadOnlyList<InventoryService>>([]);
 
-        public int RequestedMax { get; private set; }
+        public bool CappedSummaryCalled { get; private set; }
+
+        public bool CompleteEnumerationCalled { get; private set; }
 
         public ValueTask<IReadOnlyList<InventoryProcess>> CollectProcessesAsync(
             int max, CancellationToken cancellationToken = default)
         {
-            RequestedMax = max;
+            CappedSummaryCalled = true;
+            return ValueTask.FromResult<IReadOnlyList<InventoryProcess>>(
+                processes.OrderByDescending(p => p.WorkingSetBytes).Take(Math.Clamp(max, 1, 500)).ToArray());
+        }
+
+        public ValueTask<IReadOnlyList<InventoryProcess>> CollectAllProcessesAsync(
+            CancellationToken cancellationToken = default)
+        {
+            CompleteEnumerationCalled = true;
             return ValueTask.FromResult<IReadOnlyList<InventoryProcess>>(processes);
         }
     }
@@ -109,18 +127,51 @@ public sealed class StopApplicationExecutorTests
     }
 
     /// <summary>
-    /// The enumeration must not be the capped, working-set-ordered list inventory
-    /// uses: a low-memory helper process would be missed, and the application
-    /// would be reported stopped while still running.
+    /// The enumeration must be the complete one, not the inventory summary. The
+    /// earlier version of this test asserted that the executor <em>asked</em> for
+    /// more than the cap -- and the Windows provider clamped the answer to 500
+    /// regardless, so the test was green while the behaviour was wrong. What is
+    /// asserted now is which method ran.
     /// </summary>
     [Fact]
-    public async Task Process_enumeration_is_not_capped_like_the_inventory_summary()
+    public async Task The_executor_enumerates_every_process_not_the_inventory_summary()
     {
         var collector = new FakeCollector(Proc(1000, "chrome", $@"{ChromeDir}\chrome.exe"));
 
         await Executor(collector, new FakeControl()).ExecuteAsync(Task_());
 
-        collector.RequestedMax.ShouldBeGreaterThan(1000);
+        collector.CompleteEnumerationCalled.ShouldBeTrue();
+        collector.CappedSummaryCalled.ShouldBeFalse("the capped summary can miss an application's own processes");
+    }
+
+    /// <summary>
+    /// The case the cap actually produces. A machine with 700 processes; the
+    /// browser is large and ranks near the top, its helper is tiny and ranks at
+    /// 650 -- past the 500 the summary would return. Both must be stopped, and
+    /// the result must not claim success with the helper still running.
+    /// </summary>
+    [Fact]
+    public async Task A_low_memory_helper_ranked_past_the_inventory_cap_is_still_terminated()
+    {
+        // 698 unrelated processes with descending working sets, the browser at
+        // the top, and the helper placed so that ~650 processes outrank it.
+        var unrelated = Enumerable.Range(0, 698)
+            .Select(i => new InventoryProcess(10_000 + i, $"svc{i}", 50_000_000 - i * 10_000, @"C:\Windows\System32\svchost.exe"));
+        var browser = new InventoryProcess(1000, "chrome", 900_000_000, $@"{ChromeDir}\chrome.exe");
+        var helper = new InventoryProcess(1001, "chrome", 50_000_000 - 650 * 10_000 - 5_000, $@"{ChromeDir}\chrome.exe");
+
+        var all = unrelated.Append(browser).Append(helper).ToArray();
+        all.Length.ShouldBe(700);
+        all.OrderByDescending(p => p.WorkingSetBytes).ToList().IndexOf(helper).ShouldBeInRange(640, 660);
+
+        var collector = new FakeCollector(all);
+        var control = new FakeControl();
+
+        var result = await Executor(collector, control).ExecuteAsync(Task_());
+
+        result.Succeeded.ShouldBeTrue();
+        control.Terminated.Select(t => t.Pid).ShouldBe([1000, 1001], ignoreOrder: true);
+        control.Terminated.ShouldNotContain(t => t.Pid >= 10_000, "no unrelated process is touched");
     }
 
     // ------------------------------------------------------------- staleness

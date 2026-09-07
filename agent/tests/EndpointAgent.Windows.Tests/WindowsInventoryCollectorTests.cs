@@ -82,4 +82,20 @@ public sealed class WindowsInventoryCollectorTests
                 $"'{address}' should be a parseable IP address");
         }
     }
+
+    /// <summary>
+    /// The inventory snapshot is a summary and stays one: at most sixty
+    /// processes, and therefore never near the 500 the server refuses. Pinned
+    /// here because the collector now shares its enumeration with Force Stop,
+    /// which takes everything; the two must not have been swapped.
+    /// </summary>
+    [Fact]
+    public async Task Carries_at_most_sixty_processes_in_the_snapshot()
+    {
+        var report = await CreateCollector().CollectAsync(CancellationToken.None);
+
+        report.Processes.ShouldNotBeNull();
+        report.Processes!.Count.ShouldBeLessThanOrEqualTo(60);
+        report.Processes.ShouldNotBeEmpty();
+    }
 }

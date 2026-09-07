@@ -36,17 +36,6 @@ public sealed class StopApplicationExecutor(
     IServiceProcessControl control,
     ILogger<StopApplicationExecutor> logger) : ITaskExecutor
 {
-    /// <summary>
-    /// Enough to enumerate everything on a real machine.
-    /// </summary>
-    /// <remarks>
-    /// Inventory asks for a capped, working-set-ordered list because it is a
-    /// summary. Force Stop cannot be: an application's helper process may use
-    /// very little memory, and missing it would leave the application running
-    /// while reporting that it was stopped.
-    /// </remarks>
-    private const int ProcessEnumerationLimit = 10_000;
-
     public string TaskType => "StopApplication";
 
     public async Task<AgentTaskResult> ExecuteAsync(AgentTask task, CancellationToken cancellationToken = default)
@@ -83,12 +72,26 @@ public sealed class StopApplicationExecutor(
                 false, $"'{applicationName}' has no usable install location; nothing was stopped.", null);
         }
 
-        var running = await collector.CollectProcessesAsync(ProcessEnumerationLimit, cancellationToken);
+        // Every process, not the inventory summary. The summary is the largest
+        // few hundred by working set, and a helper that fell below that line
+        // would be left running while the application was reported stopped --
+        // which is what a 10,000 "limit" against a 500-capped method silently
+        // allowed until it was measured on a machine with 541 processes.
+        var running = await collector.CollectAllProcessesAsync(cancellationToken);
 
         var matches = ApplicationProcessMatcher.Match(
             installLocation,
             running.Select(p => new RunningProcess(p.ProcessId, p.Name, p.ExecutablePath)),
             protectedDirectory: AppContext.BaseDirectory);
+
+        // What was seen and what was chosen, before anything is terminated. An
+        // investigation of "stopped, but still running" needs exactly these two
+        // facts and nothing had recorded them. Pids and image names only -- the
+        // same as the per-kill entries -- never executable paths.
+        logger.LogInformation(
+            "Application {Application}: {Enumerated} process(es) enumerated, {Matched} under the install directory: {Pids}",
+            applicationName, running.Count, matches.Count,
+            matches.Count == 0 ? "none" : string.Join(", ", matches.Select(m => $"{m.ProcessId} ({m.ImageName})")));
 
         if (matches.Count == 0)
         {

@@ -76,8 +76,41 @@ public sealed class WindowsServiceProcessProvider(ILogger<WindowsServiceProcessP
             services.OrderBy(s => s.DisplayName, StringComparer.OrdinalIgnoreCase).ToArray());
     }
 
+    /// <summary>
+    /// The most an inventory report may carry. The server refuses a report with
+    /// more, so the summary is clamped here regardless of what a caller asks for.
+    /// </summary>
+    private const int MaxInventoryProcesses = 500;
+
     public ValueTask<IReadOnlyList<InventoryProcess>> CollectProcessesAsync(
         int max, CancellationToken cancellationToken = default)
+    {
+        // The inventory path, unchanged: largest first, bounded by the server's cap.
+        var top = EnumerateAll(cancellationToken)
+            .OrderByDescending(p => p.WorkingSetBytes)
+            .Take(Math.Clamp(max, 1, MaxInventoryProcesses))
+            .ToArray();
+
+        return ValueTask.FromResult<IReadOnlyList<InventoryProcess>>(top);
+    }
+
+    public ValueTask<IReadOnlyList<InventoryProcess>> CollectAllProcessesAsync(
+        CancellationToken cancellationToken = default)
+    {
+        // Pid order rather than working-set order: nothing about this list is a
+        // ranking, and a stable order makes a logged pid list readable.
+        var all = EnumerateAll(cancellationToken)
+            .OrderBy(p => p.ProcessId)
+            .ToArray();
+
+        return ValueTask.FromResult<IReadOnlyList<InventoryProcess>>(all);
+    }
+
+    /// <summary>
+    /// Walks the whole process table once. Both public methods start from this;
+    /// only what they keep differs.
+    /// </summary>
+    private List<InventoryProcess> EnumerateAll(CancellationToken cancellationToken)
     {
         var processes = new List<InventoryProcess>();
 
@@ -111,12 +144,7 @@ public sealed class WindowsServiceProcessProvider(ILogger<WindowsServiceProcessP
             }
         }
 
-        var top = processes
-            .OrderByDescending(p => p.WorkingSetBytes)
-            .Take(Math.Clamp(max, 1, 500))
-            .ToArray();
-
-        return ValueTask.FromResult<IReadOnlyList<InventoryProcess>>(top);
+        return processes;
     }
 
     // --- Control (task-gated, elevation-required) ---------------------------
