@@ -47,8 +47,11 @@ namespace EndpointAgent.Windows;
 [SupportedOSPlatform("windows")]
 public sealed class WindowsSoftwareCollector(
     ILogger<WindowsSoftwareCollector> logger,
-    WindowsInstallLocationResolver installLocationResolver) : ISoftwareCollector
+    WindowsInstallLocationResolver installLocationResolver) : ISoftwareCollector, ISoftwareEvidenceSource
 {
+    /// <inheritdoc />
+    public string SourceName => "UninstallRegistry";
+
     private readonly ILogger<WindowsSoftwareCollector> _logger = logger
         ?? throw new ArgumentNullException(nameof(logger));
 
@@ -58,7 +61,26 @@ public sealed class WindowsSoftwareCollector(
     private const string UninstallPath = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall";
     private const string UninstallPathWow = @"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall";
 
-    public ValueTask<IReadOnlyList<InventorySoftware>> CollectAsync(CancellationToken cancellationToken = default)
+    /// <summary>
+    /// The installed-software list, through the discovery pipeline.
+    /// </summary>
+    /// <remarks>
+    /// Evidence, then identity and classification, then the same normalization
+    /// this collector has always ended with. With only this source reporting, the
+    /// pipeline is a projection: what a machine reports is what it reported before
+    /// the abstraction existed, which <c>SoftwareDiscoveryPipelineTests</c>
+    /// asserts rather than assumes.
+    /// </remarks>
+    public async ValueTask<IReadOnlyList<InventorySoftware>> CollectAsync(CancellationToken cancellationToken = default)
+    {
+        var evidence = await CollectEvidenceAsync(cancellationToken);
+        var applications = ApplicationMerger.Merge(evidence);
+
+        return SoftwareInventoryNormalizer.Normalize(applications.Select(a => a.ToDiscoveredSoftware()));
+    }
+
+    /// <inheritdoc />
+    public ValueTask<IReadOnlyList<SoftwareEvidence>> CollectEvidenceAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -67,17 +89,17 @@ public sealed class WindowsSoftwareCollector(
         // collections would age with the service rather than with the machine.
         _installLocationResolver.BeginCollection();
 
-        var discovered = new List<DiscoveredSoftware>();
+        var evidence = new List<SoftwareEvidence>();
 
-        ReadMachineHive(RegistryView.Registry64, UninstallPath, "x64", discovered);
-        ReadMachineHive(RegistryView.Registry32, UninstallPathWow, "x86", discovered);
-        ReadLoadedUserHives(discovered, cancellationToken);
+        ReadMachineHive(RegistryView.Registry64, UninstallPath, "x64", evidence);
+        ReadMachineHive(RegistryView.Registry32, UninstallPathWow, "x86", evidence);
+        ReadLoadedUserHives(evidence, cancellationToken);
 
-        return ValueTask.FromResult(SoftwareInventoryNormalizer.Normalize(discovered));
+        return ValueTask.FromResult<IReadOnlyList<SoftwareEvidence>>(evidence);
     }
 
     private void ReadMachineHive(
-        RegistryView view, string subKeyPath, string registryView, List<DiscoveredSoftware> accumulator)
+        RegistryView view, string subKeyPath, string registryView, List<SoftwareEvidence> accumulator)
     {
         try
         {
@@ -101,7 +123,7 @@ public sealed class WindowsSoftwareCollector(
     /// them would add noise and, for SYSTEM, re-introduce exactly the empty read
     /// this method replaced.
     /// </remarks>
-    private void ReadLoadedUserHives(List<DiscoveredSoftware> accumulator, CancellationToken cancellationToken)
+    private void ReadLoadedUserHives(List<SoftwareEvidence> accumulator, CancellationToken cancellationToken)
     {
         string[] sids;
         try
@@ -191,7 +213,7 @@ public sealed class WindowsSoftwareCollector(
         string? registryView,
         SoftwareScope scope,
         string? account,
-        List<DiscoveredSoftware> accumulator)
+        List<SoftwareEvidence> accumulator)
     {
         using var uninstallKey = baseKey.OpenSubKey(subKeyPath);
         if (uninstallKey is null)
@@ -246,7 +268,12 @@ public sealed class WindowsSoftwareCollector(
                         productCode, entry.GetValue("DisplayIcon") as string);
                 }
 
-                accumulator.Add(new DiscoveredSoftware(
+                accumulator.Add(new SoftwareEvidence(
+                    // A key named for a product code is a Windows Installer
+                    // product; anything else registered its own uninstaller.
+                    // Both are installation records, so both are authoritative --
+                    // the distinction is which identity they can offer.
+                    productCode is null ? EvidenceSource.UninstallRegistry : EvidenceSource.WindowsInstaller,
                     name,
                     (entry.GetValue("DisplayVersion") as string)?.Trim(),
                     (entry.GetValue("Publisher") as string)?.Trim(),
