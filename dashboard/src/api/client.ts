@@ -77,6 +77,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       Accept: 'application/json',
       // Anti-CSRF: the API refuses cookie-authenticated mutations without this.
       'X-Requested-With': 'XMLHttpRequest',
+      // A string body through this helper is always JSON.stringify output. Without
+      // this header fetch labels it text/plain, and the API's body binding
+      // answers 415 before the endpoint runs -- which is how Force Stop reached
+      // production with a button that had never once created a task. Declared
+      // here, once, so a caller cannot forget it; a caller's own headers still
+      // win, and a non-string body (FormData sets its own boundary) is left alone.
+      ...(typeof init?.body === 'string' ? { 'Content-Type': 'application/json' } : {}),
       ...init?.headers,
     },
   })
