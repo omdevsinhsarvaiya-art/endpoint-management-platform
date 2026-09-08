@@ -19,5 +19,9 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["vite.config.ts"]
+  // tests/ holds the cross-language guards: node-side checks that read repository
+  // source off disk. They belong to this project because it is the one with node
+  // types -- the app project deliberately has none, so nothing in the browser
+  // bundle can reach for a node builtin and still typecheck.
+  "include": ["vite.config.ts", "tests"]
 }

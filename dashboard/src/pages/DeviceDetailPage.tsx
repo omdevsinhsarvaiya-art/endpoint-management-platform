@@ -928,12 +928,15 @@ export function DeviceDetailPage() {
                               {/* Which actions the row supports, and why not, is
                                   decided in softwareView: Force Stop needs an
                                   install path as its only link to a process, and
-                                  Remove needs an installer the agent is allowed to
-                                  drive. An unsupported action stays in the menu,
-                                  disabled, with its reason. */}
+                                  Remove needs both an installer the agent is
+                                  allowed to drive and an agent new enough to have
+                                  the executor — hence the version, which is a
+                                  fact about the device rather than the row. An
+                                  unsupported action stays in the menu, disabled,
+                                  with its reason. */}
                               <RowActionsMenu
                                 label={`Actions for ${sw.name}`}
-                                items={rowActions(sw, { canExecuteTasks, canDeploy }).map((a) => ({
+                                items={rowActions(sw, { canExecuteTasks, canDeploy }, device.agentVersion).map((a) => ({
                                   ...a,
                                   destructive: a.key === 'remove',
                                 }))}

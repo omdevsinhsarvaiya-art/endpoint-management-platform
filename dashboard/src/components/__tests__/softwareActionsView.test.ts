@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
+  MINIMUM_REMOVE_AGENT_VERSION,
   RUNNING_FILTERS,
   emptySoftwareListMessage,
   matchesRunningFilter,
   removability,
+  removeAgentSupport,
   removeMessage,
   removeReasonLabel,
   reportsRunningState,
@@ -40,6 +42,15 @@ function item(overrides: Partial<DeviceSoftwareItem> = {}): DeviceSoftwareItem {
 }
 
 const ANY = { canExecuteTasks: true, canDeploy: true }
+
+/**
+ * The two agent versions this feature turns on, and they are not the same
+ * number. 1.10.0 carries the removal executor; 1.9.0 carries only the
+ * discovery that makes a row *look* removable. A device on 1.9.0 is the case
+ * the console used to get wrong.
+ */
+const CAN_REMOVE = '1.10.0'
+const NO_EXECUTOR = '1.9.0'
 
 describe('row key', () => {
   /**
@@ -238,7 +249,7 @@ describe('remove message', () => {
 
 describe('row actions', () => {
   it('lists Force Stop then Remove, both enabled, for a stoppable removable row', () => {
-    expect(rowActions(item(), ANY)).toEqual([
+    expect(rowActions(item(), ANY, CAN_REMOVE)).toEqual([
       { key: 'force-stop', label: 'Force Stop', enabled: true, reason: null },
       { key: 'remove', label: 'Remove…', enabled: true, reason: null },
     ])
@@ -250,16 +261,16 @@ describe('row actions', () => {
    * reason that is not the real one.
    */
   it('omits an action the operator lacks permission for', () => {
-    expect(rowActions(item(), { canExecuteTasks: true, canDeploy: false }).map((a) => a.key))
+    expect(rowActions(item(), { canExecuteTasks: true, canDeploy: false }, CAN_REMOVE).map((a) => a.key))
       .toEqual(['force-stop'])
-    expect(rowActions(item(), { canExecuteTasks: false, canDeploy: true }).map((a) => a.key))
+    expect(rowActions(item(), { canExecuteTasks: false, canDeploy: true }, CAN_REMOVE).map((a) => a.key))
       .toEqual(['remove'])
-    expect(rowActions(item(), { canExecuteTasks: false, canDeploy: false })).toEqual([])
+    expect(rowActions(item(), { canExecuteTasks: false, canDeploy: false }, CAN_REMOVE)).toEqual([])
   })
 
   /** Force Stop needs an install path; without one it stays listed, disabled, with the reason it always had. */
   it('disables Force Stop with its reason when there is no install location', () => {
-    const [forceStop] = rowActions(item({ installLocation: null }), ANY)
+    const [forceStop] = rowActions(item({ installLocation: null }), ANY, CAN_REMOVE)
 
     expect(forceStop.key).toBe('force-stop')
     expect(forceStop.enabled).toBe(false)
@@ -267,7 +278,7 @@ describe('row actions', () => {
   })
 
   it('disables Remove with the worded reason when the row cannot be removed', () => {
-    const [, remove] = rowActions(item({ identityKind: 'Registered', productCode: null }), ANY)
+    const [, remove] = rowActions(item({ identityKind: 'Registered', productCode: null }), ANY, CAN_REMOVE)
 
     expect(remove.key).toBe('remove')
     expect(remove.enabled).toBe(false)
@@ -276,14 +287,160 @@ describe('row actions', () => {
 
   /** The two decisions are independent: a portable app can be stopped but not removed, and a package removed but not stopped. */
   it('decides each action on its own evidence', () => {
-    const portable = rowActions(item({ identityKind: 'Executable', productCode: null }), ANY)
+    const portable = rowActions(item({ identityKind: 'Executable', productCode: null }), ANY, CAN_REMOVE)
     expect(portable.map((a) => a.enabled)).toEqual([true, false])
 
     const pkg = rowActions(
       item({ identityKind: 'Package', productCode: null, installLocation: null, packageFamilyName: 'A.B_abc123' }),
       ANY,
+      CAN_REMOVE,
     )
     expect(pkg.map((a) => a.enabled)).toEqual([false, true])
+  })
+})
+
+/**
+ * The defect this suite exists for.
+ *
+ * Two different agent boundaries meet on this row and the console used to know
+ * only one of them. 1.9.0 is where application discovery shipped, so it decides
+ * whether the platform can tell what a row *is*; 1.10.0 is where
+ * RemoveApplicationExecutor shipped, so it decides whether the endpoint can do
+ * anything about it. Between them sits a device whose inventory is rich enough
+ * for `removability` to answer "removable" and whose agent cannot remove
+ * anything: Remove was offered as enabled, an operator confirmed a destructive
+ * action, and only then did the server answer NotEligible.
+ *
+ * Every case here is about the disabled state being reached *before* the
+ * confirmation, and about the reason being the true one.
+ */
+describe('remove against the agent that has to carry it out', () => {
+  const remove = (agentVersion: string | null | undefined, overrides: Partial<DeviceSoftwareItem> = {}) => {
+    const [, action] = rowActions(item(overrides), ANY, agentVersion)
+    expect(action.key).toBe('remove')
+    return action
+  }
+
+  /**
+   * The console's copy of the server's gate. It exists as a constant so the
+   * mirror is one line to find and to change; DeviceTaskCatalog's
+   * MinimumAgentVersion for RemoveApplication is the original, and the two have
+   * to move together.
+   */
+  it('mirrors the catalogue’s minimum agent version', () => {
+    expect(MINIMUM_REMOVE_AGENT_VERSION).toBe('1.10.0')
+  })
+
+  it('enables Remove on exactly the minimum', () => {
+    expect(remove(CAN_REMOVE).enabled).toBe(true)
+    expect(remove(CAN_REMOVE).reason).toBeNull()
+  })
+
+  it('enables Remove on every version above the minimum', () => {
+    for (const version of ['1.10.1', '1.11.0', '2.0.0', '10.0.0']) {
+      expect(remove(version).enabled, version).toBe(true)
+    }
+  })
+
+  /**
+   * 1.9.0 is the case the defect was about: rich inventory, no executor. The
+   * row itself is perfectly removable, so nothing about the row can explain
+   * this and the reason has to name the version.
+   */
+  it('disables Remove on an agent that discovers identity but cannot act on it', () => {
+    const action = remove(NO_EXECUTOR)
+
+    expect(action.enabled).toBe(false)
+    expect(action.reason).toMatch(/^Cannot be removed: /)
+    expect(action.reason).toContain('1.10.0')
+    expect(action.reason).toMatch(/agent is older/i)
+  })
+
+  /** "1.9" must never sort above "1.10" — the comparison is numeric, not textual. */
+  it('disables Remove on every version below the minimum', () => {
+    for (const version of ['1.9.9', '1.6.0', '0.9.0', '1.2.3']) {
+      const action = remove(version)
+      expect(action.enabled, version).toBe(false)
+      expect(action.reason, version).toContain('1.10.0')
+    }
+  })
+
+  /**
+   * Fails closed, deliberately. A version the console cannot read is a device
+   * that has not demonstrated it can do the work, and the alternative — assume
+   * it can, offer a destructive action, take a confirmation — is exactly the
+   * failure being fixed. It is worded as unreadable rather than as too old,
+   * because "older than 1.10.0" would be a claim about a version nothing here
+   * managed to parse.
+   */
+  it('disables Remove when the reported version cannot be read', () => {
+    for (const version of ['', '   ', 'unknown', '1.10', '1.10.0.0', 'v1.10.0', '1.10.0-beta.1', null, undefined]) {
+      const action = remove(version)
+
+      expect(action.enabled, String(version)).toBe(false)
+      expect(action.reason, String(version)).toContain('could not be read')
+      expect(action.reason, String(version)).toContain('1.10.0')
+      expect(action.reason, String(version)).not.toMatch(/older than/i)
+    }
+  })
+
+  /**
+   * The row's reason outranks the version's, whatever the version is. It is the
+   * permanent one: no agent update makes a Windows component or another
+   * account's per-user install removable, so leading with the version would
+   * send an operator to do an upgrade that changes nothing for that row.
+   */
+  it('keeps the row’s own reason at every version', () => {
+    const rows = [
+      { overrides: { identityKind: 'Registered', productCode: null }, expected: /does not launch/i },
+      { overrides: { installationScope: 'User', installedForUser: 'PC-001\\alice' }, expected: /per-user|one user/i },
+      { overrides: { name: 'Endpoint Platform Agent' }, expected: /endpoint agent/i },
+      {
+        overrides: {
+          identityKind: 'Package',
+          productCode: null,
+          packageFamilyName: 'Microsoft.Windows.ShellExperienceHost_cw5n1h2txyewy',
+        },
+        expected: /part of Windows/i,
+      },
+    ]
+
+    for (const version of [NO_EXECUTOR, CAN_REMOVE, '2.0.0', 'unknown', null]) {
+      for (const { overrides, expected } of rows) {
+        const action = remove(version, overrides)
+        const where = `${String(version)} / ${JSON.stringify(overrides)}`
+
+        expect(action.enabled, where).toBe(false)
+        expect(action.reason, where).toMatch(expected)
+        expect(action.reason, where).not.toContain('1.10.0')
+      }
+    }
+  })
+
+  /**
+   * Force Stop has its own, older gate (the catalogue puts StopApplication at
+   * 1.6.0) and is not this rule's business. An agent too old to remove software
+   * can still be asked to stop it.
+   */
+  it('does not touch Force Stop', () => {
+    for (const version of [NO_EXECUTOR, CAN_REMOVE, 'unknown', null]) {
+      const [forceStop] = rowActions(item(), ANY, version)
+
+      expect(forceStop.key, String(version)).toBe('force-stop')
+      expect(forceStop.enabled, String(version)).toBe(true)
+      expect(forceStop.reason, String(version)).toBeNull()
+    }
+  })
+
+  /** The three answers the version alone can give, without a row in the way. */
+  it('reads a version as supported, too old, or unreadable', () => {
+    expect(removeAgentSupport('1.10.0')).toBe('supported')
+    expect(removeAgentSupport('2.0.0')).toBe('supported')
+    expect(removeAgentSupport('1.9.0')).toBe('too-old')
+    expect(removeAgentSupport('1.9.11')).toBe('too-old')
+    expect(removeAgentSupport('1.10')).toBe('unreadable')
+    expect(removeAgentSupport(null)).toBe('unreadable')
+    expect(removeAgentSupport(undefined)).toBe('unreadable')
   })
 })
 

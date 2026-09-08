@@ -6,6 +6,7 @@ import type {
   SoftwareInstallation,
   SoftwareTitle,
 } from '../api/client'
+import { compareVersions } from './agentUpdateView'
 
 export type { RunningFilter } from '../api/client'
 
@@ -446,6 +447,85 @@ export function removeReasonLabel(reason: string | null | undefined): string {
 }
 
 /**
+ * The oldest agent that can actually carry out a removal.
+ *
+ * Must match `MinimumAgentVersion` for `RemoveApplication` in
+ * server/Domain/Tasks/DeviceTaskCatalog.cs. That is the gate the server
+ * enforces: below it the endpoint has no RemoveApplicationExecutor, so the
+ * queue request is refused as NotEligible.
+ *
+ * Deliberately NOT 1.9.0, the other agent boundary in this feature, and the two
+ * must never be reconciled into one:
+ *
+ *   - 1.9.0 is where application discovery shipped, so `identityKind`,
+ *     `packageFullName`, `category` and RunningProcess evidence exist only from
+ *     then. Below it the platform cannot tell what a row *is*, which is why
+ *     `removability` answers NoInstallerIdentity and `runningState` answers
+ *     unknown. A fact about the INVENTORY.
+ *   - 1.10.0 is where the executor shipped. A fact about what the endpoint can
+ *     DO, and the only one that decides whether a removal can run.
+ *
+ * A device on 1.9.x sits between them: its inventory is rich enough for
+ * `removability` to say "removable", and it still cannot remove anything. That
+ * device is the whole reason this constant exists — without it the console
+ * offered Remove, took a confirmation for a destructive action, and only then
+ * relayed the server's refusal.
+ */
+export const MINIMUM_REMOVE_AGENT_VERSION = '1.10.0'
+
+/** What the device's reported agent version says about its ability to remove software. */
+export type RemoveAgentSupport = 'supported' | 'too-old' | 'unreadable'
+
+/**
+ * Whether this device's agent can execute a removal.
+ *
+ * Reuses `compareVersions` from agentUpdateView — the console's one mirror of
+ * the server's `AgentVersionNumber` — rather than growing a second comparator
+ * that could drift from it.
+ *
+ * It is stricter than the server's `DeviceTaskCatalog.IsSupportedBy`, which
+ * trims a pre-release or build suffix and then accepts two-, three- or
+ * four-part versions through `Version.TryParse`; `compareVersions` drops a
+ * `+build` suffix and requires exactly three numeric parts, so "1.10", "1.10.0.0"
+ * and "1.10.0-rc.1" are unreadable here and supported there. The divergence
+ * only ever makes the console refuse what the server would have accepted, never
+ * the reverse, which is the safe direction for a destructive action — and the
+ * refusal is worded as "could not be read" rather than as a verdict on the
+ * version, so nothing here claims a fact it has not established.
+ *
+ * Unknown and unparseable both fail closed. An agent that will not say what it
+ * is has not demonstrated it can do the work — the same rule, and the same
+ * reasoning, as the server's gate.
+ */
+export function removeAgentSupport(agentVersion: string | null | undefined): RemoveAgentSupport {
+  if (agentVersion === null || agentVersion === undefined) return 'unreadable'
+
+  const order = compareVersions(agentVersion, MINIMUM_REMOVE_AGENT_VERSION)
+  if (order === null) return 'unreadable'
+
+  return order >= 0 ? 'supported' : 'too-old'
+}
+
+/**
+ * Why the device's agent cannot remove software, in words.
+ *
+ * Names the version and what shipped in it, so the reason cannot be mistaken
+ * for one of the row-based refusals in `removeReasonLabel`: those are facts
+ * about the application and no upgrade changes them, this one is about the
+ * machine and an agent update fixes it for every row at once.
+ */
+export function removeAgentReasonLabel(support: RemoveAgentSupport): string | null {
+  switch (support) {
+    case 'supported':
+      return null
+    case 'too-old':
+      return `the device’s agent is older than ${MINIMUM_REMOVE_AGENT_VERSION}, which is the release that can remove applications`
+    case 'unreadable':
+      return `the device’s agent version could not be read, and removing an application needs ${MINIMUM_REMOVE_AGENT_VERSION} or newer`
+  }
+}
+
+/**
  * What a Remove request did, in words.
  *
  * Queued is worded as queued: the device stops and uninstalls on its next
@@ -492,10 +572,25 @@ export interface RowActionPermissions {
  * across the console, and the server enforces it regardless. An action the row
  * cannot support is listed but disabled, with the reason, so an operator learns
  * why rather than wondering where the item went.
+ *
+ * Remove is decided on two independent facts, and needs both: what the row is
+ * (`removability`, read from the inventory) and whether this device's agent has
+ * the executor (`removeAgentSupport`, MINIMUM_REMOVE_AGENT_VERSION). Deciding
+ * it on the row alone was a real defect — an agent on 1.9.x reports an
+ * inventory rich enough to look removable and cannot remove anything, so the
+ * console offered a destructive action, confirmed it, and only then relayed the
+ * server's NotEligible. A destructive action must not be offered as available
+ * when the platform already knows it cannot run.
+ *
+ * The row's reason is given first when both apply. It is the permanent one:
+ * updating the agent will never make a Windows component or another account's
+ * per-user install removable, so leading with the version would send an
+ * operator to do an upgrade that changes nothing for that row.
  */
 export function rowActions(
   item: RemovabilityInput & Pick<DeviceSoftwareItem, 'installLocation'>,
   perms: RowActionPermissions,
+  agentVersion: string | null | undefined,
 ): RowAction[] {
   const actions: RowAction[] = []
 
@@ -511,11 +606,17 @@ export function rowActions(
 
   if (perms.canDeploy) {
     const { removable, reason } = removability(item)
+    const support = removeAgentSupport(agentVersion)
+
+    const blocked = !removable
+      ? removeReasonLabel(reason)
+      : removeAgentReasonLabel(support)
+
     actions.push({
       key: 'remove',
       label: 'Remove…',
-      enabled: removable,
-      reason: removable ? null : `Cannot be removed: ${removeReasonLabel(reason)}`,
+      enabled: blocked === null,
+      reason: blocked === null ? null : `Cannot be removed: ${blocked}`,
     })
   }
 

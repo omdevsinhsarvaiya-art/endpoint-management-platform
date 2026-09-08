@@ -59,6 +59,17 @@ public static class DeviceTaskCatalog
             // incidental to the uninstall, not the point of it. Gated on the first
             // agent with the executor, for the same reason as StopApplication.
             //
+            // 1.10.0 is the EXECUTION boundary: the release carrying
+            // RemoveApplicationExecutor. It is deliberately not 1.9.0, the
+            // INVENTORY boundary named in SoftwareRemovability.Evaluate, which is
+            // where application discovery shipped and therefore where IdentityKind
+            // and PackageFullName begin to exist. The two answer different
+            // questions -- what a row is, versus what the endpoint can do about it
+            // -- so an agent on 1.9.x reports rows SoftwareRemovability rightly
+            // calls removable and must still be refused here. Do not reconcile
+            // them; the console mirrors this one as MINIMUM_REMOVE_AGENT_VERSION
+            // in dashboard/src/pages/softwareView.ts and must be changed with it.
+            //
             // An hour, and the same hour UpdateAgent uses, for the same reason: the
             // TTL is measured from queue time, and TaskExpirySweeper expires
             // Delivered tasks as well as Queued ones, so the budget has to cover

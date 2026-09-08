@@ -121,6 +121,16 @@ public sealed record SoftwareRemovability(
 
         // Registered (EXE installer), Executable, Observed, or a row an agent
         // older than 1.9.0 reported with no identity at all.
+        //
+        // 1.9.0 is the INVENTORY boundary and belongs only here: application
+        // discovery shipped in it, so IdentityKind, PackageFullName and Category
+        // -- everything this method reads -- exist from 1.9.0 onwards, and below
+        // it no row can be judged as anything but identity-less. It is NOT the
+        // boundary for carrying a removal out: that is DeviceTaskCatalog's
+        // MinimumAgentVersion "1.10.0" for RemoveApplication, the release with
+        // RemoveApplicationExecutor. An agent on 1.9.x reports rows this method
+        // rightly calls removable and still cannot remove them, which is why the
+        // two numbers differ and why neither may be "corrected" to the other.
         return Refuse(NotRemovableReason.NoInstallerIdentity);
     }
 
