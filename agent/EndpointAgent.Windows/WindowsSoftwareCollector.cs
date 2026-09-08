@@ -1,5 +1,4 @@
 using System.Runtime.Versioning;
-using System.Security.Principal;
 using EndpointAgent.Core.Abstractions;
 using EndpointAgent.Core.Inventory;
 using EndpointPlatform.Contracts.Agent;
@@ -47,7 +46,8 @@ namespace EndpointAgent.Windows;
 [SupportedOSPlatform("windows")]
 public sealed class WindowsSoftwareCollector(
     ILogger<WindowsSoftwareCollector> logger,
-    WindowsInstallLocationResolver installLocationResolver) : ISoftwareCollector, ISoftwareEvidenceSource
+    WindowsInstallLocationResolver installLocationResolver,
+    WindowsUpgradeCodeIndex upgradeCodes) : ISoftwareCollector, ISoftwareEvidenceSource
 {
     /// <inheritdoc />
     public string SourceName => "UninstallRegistry";
@@ -57,6 +57,9 @@ public sealed class WindowsSoftwareCollector(
 
     private readonly WindowsInstallLocationResolver _installLocationResolver = installLocationResolver
         ?? throw new ArgumentNullException(nameof(installLocationResolver));
+
+    private readonly WindowsUpgradeCodeIndex _upgradeCodes = upgradeCodes
+        ?? throw new ArgumentNullException(nameof(upgradeCodes));
 
     private const string UninstallPath = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall";
     private const string UninstallPathWow = @"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall";
@@ -71,23 +74,20 @@ public sealed class WindowsSoftwareCollector(
     /// the abstraction existed, which <c>SoftwareDiscoveryPipelineTests</c>
     /// asserts rather than assumes.
     /// </remarks>
-    public async ValueTask<IReadOnlyList<InventorySoftware>> CollectAsync(CancellationToken cancellationToken = default)
-    {
-        var evidence = await CollectEvidenceAsync(cancellationToken);
-        var applications = ApplicationMerger.Merge(evidence);
-
-        return SoftwareInventoryNormalizer.Normalize(applications.Select(a => a.ToDiscoveredSoftware()));
-    }
+    public async ValueTask<IReadOnlyList<InventorySoftware>> CollectAsync(CancellationToken cancellationToken = default) =>
+        SoftwareDiscoveryPipeline.Run(await CollectEvidenceAsync(cancellationToken));
 
     /// <inheritdoc />
     public ValueTask<IReadOnlyList<SoftwareEvidence>> CollectEvidenceAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        // Anything the resolver learned about the machine on a previous run is
-        // discarded here: this collector is a singleton, so a cache kept across
-        // collections would age with the service rather than with the machine.
+        // Anything the resolver or the upgrade-code index learned about the
+        // machine on a previous run is discarded here: both are singletons, so a
+        // cache kept across collections would age with the service rather than
+        // with the machine.
         _installLocationResolver.BeginCollection();
+        _upgradeCodes.BeginCollection();
 
         var evidence = new List<SoftwareEvidence>();
 
@@ -125,30 +125,11 @@ public sealed class WindowsSoftwareCollector(
     /// </remarks>
     private void ReadLoadedUserHives(List<SoftwareEvidence> accumulator, CancellationToken cancellationToken)
     {
-        string[] sids;
-        try
-        {
-            using var users = RegistryKey.OpenBaseKey(RegistryHive.Users, RegistryView.Default);
-            sids = users.GetSubKeyNames();
-        }
-        catch (Exception ex) when (ex is System.Security.SecurityException or UnauthorizedAccessException)
-        {
-            _logger.LogWarning(ex, "Could not enumerate loaded user hives; per-user software is not reported.");
-            return;
-        }
-
         var profiles = 0;
 
-        foreach (var sid in sids)
+        foreach (var (sid, account) in WindowsUserHives.Loaded())
         {
             cancellationToken.ThrowIfCancellationRequested();
-
-            if (!IsRealUserSid(sid))
-            {
-                continue;
-            }
-
-            var account = ResolveAccountName(sid);
 
             try
             {
@@ -175,36 +156,6 @@ public sealed class WindowsSoftwareCollector(
         }
 
         _logger.LogDebug("Read per-user software from {Count} loaded profile hive(s).", profiles);
-    }
-
-    /// <summary>
-    /// Whether this HKEY_USERS subkey is a human's profile hive.
-    /// </summary>
-    /// <remarks>
-    /// Real accounts are S-1-5-21-... (local or domain) or S-1-12-1-... (Entra).
-    /// The well-known service SIDs and the <c>_Classes</c> companions are not.
-    /// </remarks>
-    private static bool IsRealUserSid(string sid) =>
-        !sid.EndsWith("_Classes", StringComparison.OrdinalIgnoreCase)
-        && (sid.StartsWith("S-1-5-21-", StringComparison.OrdinalIgnoreCase)
-            || sid.StartsWith("S-1-12-1-", StringComparison.OrdinalIgnoreCase));
-
-    /// <summary>The account a SID names, falling back to the SID itself.</summary>
-    /// <remarks>
-    /// A deleted or unresolvable account still had software installed, so the SID
-    /// is reported rather than dropping the entry: an unattributed application is
-    /// more useful than a missing one.
-    /// </remarks>
-    private static string ResolveAccountName(string sid)
-    {
-        try
-        {
-            return new SecurityIdentifier(sid).Translate(typeof(NTAccount)).Value;
-        }
-        catch (Exception ex) when (ex is IdentityNotMappedException or SystemException)
-        {
-            return sid;
-        }
     }
 
     private void ReadUninstallKey(
@@ -285,7 +236,12 @@ public sealed class WindowsSoftwareCollector(
                     // An MSI product's uninstall key is named for its product
                     // code, which is what a managed package records too - so this
                     // is the join between "installed" and "approved".
-                    productCode));
+                    productCode,
+                    // The upgrade code is the vendor's statement that two releases
+                    // are one product, and so the identity an update keeps. Null
+                    // for anything that is not a Windows Installer product, and for
+                    // a product whose line Windows has no record of.
+                    UpgradeCode: _upgradeCodes.For(productCode)));
             }
             catch (Exception ex) when (ex is System.Security.SecurityException or UnauthorizedAccessException)
             {

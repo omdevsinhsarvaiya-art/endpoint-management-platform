@@ -1,6 +1,7 @@
 ﻿using System.Runtime.Versioning;
 using EndpointAgent.Core;
 using EndpointAgent.Core.Abstractions;
+using EndpointAgent.Core.Inventory;
 using EndpointAgent.Core.Communication;
 using EndpointAgent.Core.Configuration;
 using EndpointAgent.Core.Enrollment;
@@ -135,7 +136,15 @@ public static class Program
             builder.Services.AddSingleton<IEnrollmentStateStore, DpapiEnrollmentStateStore>();
             builder.Services.AddSingleton<ILocalAccountsCollector, WindowsLocalAccountsCollector>();
             builder.Services.AddSingleton<WindowsInstallLocationResolver>();
-            builder.Services.AddSingleton<ISoftwareCollector, WindowsSoftwareCollector>();
+            builder.Services.AddSingleton<WindowsUpgradeCodeIndex>();
+
+            // Software discovery: every source is read-only and independent; the
+            // composite pools their evidence into one report. Registered in the
+            // order their evidence is pooled, the uninstall registry first.
+            builder.Services.AddSingleton<WindowsSoftwareCollector>();
+            builder.Services.AddSingleton<ISoftwareEvidenceSource>(sp => sp.GetRequiredService<WindowsSoftwareCollector>());
+            builder.Services.AddSingleton<ISoftwareEvidenceSource, WindowsAppPathsEvidenceSource>();
+            builder.Services.AddSingleton<ISoftwareCollector, SoftwareDiscoveryCollector>();
             builder.Services.AddSingleton<WindowsSecurityPostureCollector>();
             builder.Services.AddSingleton<ISecurityPostureCollector>(
                 sp => sp.GetRequiredService<WindowsSecurityPostureCollector>());

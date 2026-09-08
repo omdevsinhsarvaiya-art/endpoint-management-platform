@@ -24,7 +24,8 @@ public sealed class WindowsInventoryCollectorTests
             new WindowsLocalAccountsCollector(NullLogger<WindowsLocalAccountsCollector>.Instance),
             new WindowsSoftwareCollector(
                 NullLogger<WindowsSoftwareCollector>.Instance,
-                new WindowsInstallLocationResolver(NullLogger<WindowsInstallLocationResolver>.Instance)),
+                new WindowsInstallLocationResolver(NullLogger<WindowsInstallLocationResolver>.Instance),
+                new WindowsUpgradeCodeIndex(NullLogger<WindowsUpgradeCodeIndex>.Instance)),
             posture,
             new WindowsServiceProcessProvider(NullLogger<WindowsServiceProcessProvider>.Instance),
             new WindowsUpdateCollector(NullLogger<WindowsUpdateCollector>.Instance),

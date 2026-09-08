@@ -20,7 +20,8 @@ public sealed class WindowsSoftwareCollectorTests
     private static WindowsSoftwareCollector Create() =>
         new(
             NullLogger<WindowsSoftwareCollector>.Instance,
-            new WindowsInstallLocationResolver(NullLogger<WindowsInstallLocationResolver>.Instance));
+            new WindowsInstallLocationResolver(NullLogger<WindowsInstallLocationResolver>.Instance),
+            new WindowsUpgradeCodeIndex(NullLogger<WindowsUpgradeCodeIndex>.Instance));
 
     [Fact]
     public async Task Collects_installed_software_without_throwing()
@@ -182,7 +183,8 @@ public sealed class WindowsSoftwareCollectorTests
         var resolver = new WindowsInstallLocationResolver(
             NullLogger<WindowsInstallLocationResolver>.Instance);
         var collector = new WindowsSoftwareCollector(
-            NullLogger<WindowsSoftwareCollector>.Instance, resolver);
+            NullLogger<WindowsSoftwareCollector>.Instance, resolver,
+            new WindowsUpgradeCodeIndex(NullLogger<WindowsUpgradeCodeIndex>.Instance));
 
         // Force a first walk of the machine, independent of what this machine
         // happens to have installed.
@@ -208,5 +210,29 @@ public sealed class WindowsSoftwareCollectorTests
             p.Name.ShouldNotContain("Secret");
         }
         await Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// The registry source now reads upgrade codes. On a machine with the agent
+    /// installed, its own product carries one -- the identity that survives the
+    /// update from 1.7.0 to 1.8.0 rather than changing with it.
+    /// </summary>
+    [Fact]
+    public async Task Windows_installer_products_carry_their_upgrade_code()
+    {
+        var evidence = await Create().CollectEvidenceAsync(CancellationToken.None);
+
+        var installer = evidence.Where(e => e.Source == EndpointAgent.Core.Inventory.EvidenceSource.WindowsInstaller).ToList();
+        installer.ShouldAllBe(e => e.ProductCode != null);
+
+        var agent = installer.FirstOrDefault(e => e.Name == "Endpoint Platform Agent");
+        if (agent is not null)
+        {
+            agent.UpgradeCode.ShouldBe("{8F3C1D92-6B74-4A5E-9D21-7C4E8B0F5A63}");
+        }
+
+        // Non-installer registrations have neither identifier.
+        evidence.Where(e => e.Source == EndpointAgent.Core.Inventory.EvidenceSource.UninstallRegistry)
+            .ShouldAllBe(e => e.ProductCode == null && e.UpgradeCode == null);
     }
 }
