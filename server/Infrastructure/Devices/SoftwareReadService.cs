@@ -23,6 +23,28 @@ public enum SoftwareView
     All,
 }
 
+/// <summary>
+/// Which installations of a title the drill-down shows, by running state.
+/// </summary>
+/// <remarks>
+/// Running state is the last inventory's evidence, not a live reading, and it
+/// is tri-state: an agent older than 1.9.0 reports no evidence, so its rows
+/// are neither running nor stopped. Those rows appear under <see cref="All"/>
+/// only -- a "Not running" filter that listed them would assert something the
+/// platform never determined.
+/// </remarks>
+public enum SoftwareRunningFilter
+{
+    /// <summary>Every installation, whatever its state or lack of one.</summary>
+    All,
+
+    /// <summary>A process of the application was running at the last inventory.</summary>
+    Running,
+
+    /// <summary>Evidence was reported and none of it was a running process.</summary>
+    Stopped,
+}
+
 public sealed class SoftwareReadService(EndpointPlatformDbContext dbContext)
 {
     private readonly EndpointPlatformDbContext _dbContext = dbContext
@@ -125,6 +147,20 @@ public sealed class SoftwareReadService(EndpointPlatformDbContext dbContext)
         string? publisher,
         int page,
         int pageSize,
+        CancellationToken cancellationToken = default) =>
+        await ListInstallationsAsync(
+            organizationId, scopedDeviceIds, name, version, publisher, page, pageSize,
+            SoftwareRunningFilter.All, cancellationToken);
+
+    public async Task<SoftwareInstallationPage> ListInstallationsAsync(
+        Guid organizationId,
+        IReadOnlyCollection<Guid>? scopedDeviceIds,
+        string name,
+        string? version,
+        string? publisher,
+        int page,
+        int pageSize,
+        SoftwareRunningFilter running,
         CancellationToken cancellationToken = default)
     {
         page = Math.Max(1, page);
@@ -158,12 +194,31 @@ public sealed class SoftwareReadService(EndpointPlatformDbContext dbContext)
                 s.ExecutablePath,
                 s.SignerSubject,
                 s.SignatureStatus,
+                // Two EXISTS probes on the evidence index, not a join: a row has at
+                // most a few dozen witnesses and the page has at most 200 rows.
+                // Evidence arrived with agent 1.9.0, so a row with none at all is
+                // an older agent's -- "not reported", never "not running".
+                HasEvidence = _dbContext.DeviceSoftwareEvidence
+                    .Any(e => e.DeviceSoftwareId == s.Id),
+                IsRunning = _dbContext.DeviceSoftwareEvidence
+                    .Any(e => e.DeviceSoftwareId == s.Id
+                        && e.Source == Domain.Devices.DeviceSoftwareEvidence.RunningProcessSource),
             };
 
         if (scopedDeviceIds is not null)
         {
             query = query.Where(x => scopedDeviceIds.Contains(x.DeviceId));
         }
+
+        // Before the count, so the total and the pages agree with the filter.
+        // "Stopped" requires evidence: a row nobody reported running state for is
+        // unknown, and unknown appears under All only.
+        query = running switch
+        {
+            SoftwareRunningFilter.Running => query.Where(x => x.IsRunning),
+            SoftwareRunningFilter.Stopped => query.Where(x => x.HasEvidence && !x.IsRunning),
+            _ => query,
+        };
 
         var totalCount = await query.CountAsync(cancellationToken);
 
@@ -194,7 +249,8 @@ public sealed class SoftwareReadService(EndpointPlatformDbContext dbContext)
                 r.PackageFamilyName,
                 r.ExecutablePath,
                 r.SignerSubject,
-                r.SignatureStatus))
+                r.SignatureStatus,
+                IsRunning: r.HasEvidence ? r.IsRunning : null))
             .ToList();
 
         return new SoftwareInstallationPage(items, totalCount, page, pageSize);
@@ -245,7 +301,8 @@ public sealed record SoftwareInstallation(
     string? PackageFamilyName = null,
     string? ExecutablePath = null,
     string? SignerSubject = null,
-    string? SignatureStatus = null);
+    string? SignatureStatus = null,
+    bool? IsRunning = null);
 
 public sealed record SoftwareInstallationPage(
     IReadOnlyList<SoftwareInstallation> Items, int TotalCount, int Page, int PageSize);

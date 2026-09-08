@@ -452,28 +452,37 @@ public static class DeviceEndpoints
             .ToDictionary(g => g.Key, g => g.Select(e => new { e.Source, e.Name, e.Detail }).ToList());
 
         var software = softwareRows
-            .Select(sw => new
+            .Select(sw =>
             {
-                sw.Name,
-                sw.Version,
-                sw.Publisher,
-                sw.InstallDate,
-                sw.Architecture,
-                sw.InstallationScope,
-                sw.InstalledForUser,
-                sw.ProductCode,
-                sw.InstallLocation,
-                sw.IdentityKind,
-                sw.StableKey,
-                sw.Confidence,
-                sw.Category,
-                sw.PackageFamilyName,
-                sw.ExecutablePath,
-                sw.SignerSubject,
-                sw.SignatureStatus,
-                Evidence = evidenceBySoftware.TryGetValue(sw.Id, out var witnesses)
-                    ? witnesses
-                    : [],
+                var witnesses = evidenceBySoftware.TryGetValue(sw.Id, out var found) ? found : [];
+
+                return new
+                {
+                    sw.Name,
+                    sw.Version,
+                    sw.Publisher,
+                    sw.InstallDate,
+                    sw.Architecture,
+                    sw.InstallationScope,
+                    sw.InstalledForUser,
+                    sw.ProductCode,
+                    sw.InstallLocation,
+                    sw.IdentityKind,
+                    sw.StableKey,
+                    sw.Confidence,
+                    sw.Category,
+                    sw.PackageFamilyName,
+                    sw.ExecutablePath,
+                    sw.SignerSubject,
+                    sw.SignatureStatus,
+                    Evidence = witnesses,
+                    // Tri-state, from the same evidence: true or false when the
+                    // agent reported witnesses, null when it reported none (older
+                    // than 1.9.0) -- "not reported" is not "not running".
+                    IsRunning = witnesses.Count == 0
+                        ? (bool?)null
+                        : witnesses.Any(e => e.Source == Domain.Devices.DeviceSoftwareEvidence.RunningProcessSource),
+                };
             })
             .ToList();
 

@@ -6,11 +6,28 @@ using EndpointPlatform.Infrastructure.Software;
 
 namespace EndpointPlatform.Api.Endpoints;
 
-/// <summary>Fleet-wide software inventory views (read-only, software.view).</summary>
+/// <summary>
+/// Fleet-wide software inventory views (read-only, software.view), plus the two
+/// actions that name an application across devices: Force Stop and Remove.
+/// </summary>
 public static class SoftwareEndpoints
 {
     /// <summary>Bounds an implausible request before any query runs.</summary>
-    private const int MaxForceStopDevices = 500;
+    private const int MaxTargetedDevices = 500;
+
+    /// <summary>
+    /// The lengths inventory itself stores these narrowing values at:
+    /// <c>DeviceSoftware</c> bounds a publisher to 256 characters and a version
+    /// to 128. A longer string cannot match any row, so accepting one buys the
+    /// caller nothing -- but it does reach the query, and on the Force Stop path
+    /// it is copied verbatim into the queued task's payload and into the
+    /// <c>task.queue</c> audit entry written from it, which is no place for an
+    /// unbounded string a browser supplied.
+    /// </summary>
+    private const int MaxPublisherLength = 256;
+
+    /// <inheritdoc cref="MaxPublisherLength"/>
+    private const int MaxVersionLength = 128;
 
     public static IEndpointRouteBuilder MapSoftwareEndpoints(this IEndpointRouteBuilder endpoints)
     {
@@ -32,7 +49,90 @@ public static class SoftwareEndpoints
             .WithName("ForceStopApplication")
             .RequirePermission(Permissions.Task.Execute);
 
+        group.MapPost("/remove", RemoveAsync)
+            .WithName("RemoveApplication")
+            .RequirePermission(Permissions.Software.Deploy);
+
         return endpoints;
+    }
+
+    /// <summary>
+    /// Removes a named installed application from one or more devices: stopped
+    /// first, then uninstalled, on the endpoint.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Gated on <c>software.deploy</c>, the permission that already decides what
+    /// software a machine runs. Removing is the other half of deploying, and the
+    /// roles trusted with one are the roles trusted with the other.
+    /// </para>
+    /// <para>
+    /// The body names an <em>application</em>. It cannot name a product code, a
+    /// package or a path: the server chooses those from its own inventory, so no
+    /// request from a browser can ask the fleet to uninstall something arbitrary.
+    /// </para>
+    /// </remarks>
+    private static async Task<IResult> RemoveAsync(
+        RemoveApplicationRequest request,
+        ApplicationRemovalService removalService,
+        DeviceScopeAuthorizer scope,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(request.Name) || request.Name.Length > 384)
+        {
+            return Results.Problem("An application name is required.", statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        if (request.Publisher is { Length: > MaxPublisherLength })
+        {
+            return Results.Problem(
+                $"A publisher may be at most {MaxPublisherLength} characters.",
+                statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        if (request.Version is { Length: > MaxVersionLength })
+        {
+            return Results.Problem(
+                $"A version may be at most {MaxVersionLength} characters.",
+                statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        if (request.DeviceIds is not { Count: > 0 })
+        {
+            return Results.Problem("At least one deviceId is required.", statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        if (request.DeviceIds.Count > MaxTargetedDevices)
+        {
+            return Results.Problem(
+                $"At most {MaxTargetedDevices} devices may be targeted at once.",
+                statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        var actor = AdminActor.Required(httpContext.User);
+        var scopedDeviceIds = await scope.ScopedDeviceIdsOrNullAsync(
+            actor.UserId, actor.OrganizationId, cancellationToken);
+
+        var result = await removalService.RemoveAsync(
+            actor.OrganizationId, request.DeviceIds, request.Name.Trim(), request.Publisher, request.Version,
+            scopedDeviceIds, actor.UserId, actor.Email, cancellationToken);
+
+        // Accepted, not Ok: the tasks exist, nothing has been removed yet. The
+        // agent does that on its next poll, and reports what happened.
+        return Results.Accepted("/admin/v1/software", new
+        {
+            result.DevicesQueued,
+            devices = result.Devices.Select(d => new
+            {
+                d.DeviceId,
+                d.Hostname,
+                outcome = d.Outcome.ToString(),
+                reason = d.Reason?.ToString(),
+                method = d.Method?.ToString(),
+                d.TaskId,
+            }),
+        });
     }
 
     /// <summary>
@@ -61,15 +161,22 @@ public static class SoftwareEndpoints
             return Results.Problem("An application name is required.", statusCode: StatusCodes.Status400BadRequest);
         }
 
+        if (request.Publisher is { Length: > MaxPublisherLength })
+        {
+            return Results.Problem(
+                $"A publisher may be at most {MaxPublisherLength} characters.",
+                statusCode: StatusCodes.Status400BadRequest);
+        }
+
         if (request.DeviceIds is not { Count: > 0 })
         {
             return Results.Problem("At least one deviceId is required.", statusCode: StatusCodes.Status400BadRequest);
         }
 
-        if (request.DeviceIds.Count > MaxForceStopDevices)
+        if (request.DeviceIds.Count > MaxTargetedDevices)
         {
             return Results.Problem(
-                $"At most {MaxForceStopDevices} devices may be targeted at once.",
+                $"At most {MaxTargetedDevices} devices may be targeted at once.",
                 statusCode: StatusCodes.Status400BadRequest);
         }
 
@@ -105,6 +212,11 @@ public static class SoftwareEndpoints
     /// is narrowed rather than refused, so scope never reveals that a device it
     /// excludes exists.
     /// </remarks>
+    /// <param name="running">
+    /// <c>all</c> (the default), <c>running</c> or <c>stopped</c>, judged from
+    /// the last inventory's evidence. Rows whose agent reported no evidence have
+    /// no state and appear under <c>all</c> only.
+    /// </param>
     private static async Task<IResult> InstallationsAsync(
         SoftwareReadService softwareReadService,
         DeviceScopeAuthorizer scope,
@@ -114,11 +226,28 @@ public static class SoftwareEndpoints
         string? publisher,
         CancellationToken cancellationToken,
         int page = 1,
-        int pageSize = 50)
+        int pageSize = 50,
+        string? running = null)
     {
         if (string.IsNullOrWhiteSpace(name))
         {
             return Results.Problem("name is required.", statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        SoftwareRunningFilter runningFilter;
+        switch (running?.Trim().ToLowerInvariant())
+        {
+            case null or "" or "all":
+                runningFilter = SoftwareRunningFilter.All;
+                break;
+            case "running":
+                runningFilter = SoftwareRunningFilter.Running;
+                break;
+            case "stopped":
+                runningFilter = SoftwareRunningFilter.Stopped;
+                break;
+            default:
+                return Results.Problem("running must be 'all', 'running' or 'stopped'.", statusCode: StatusCodes.Status400BadRequest);
         }
 
         var actor = AdminActor.Required(httpContext.User);
@@ -126,7 +255,8 @@ public static class SoftwareEndpoints
             actor.UserId, actor.OrganizationId, cancellationToken);
 
         var result = await softwareReadService.ListInstallationsAsync(
-            actor.OrganizationId, scopedDeviceIds, name, version, publisher, page, pageSize, cancellationToken);
+            actor.OrganizationId, scopedDeviceIds, name, version, publisher, page, pageSize,
+            runningFilter, cancellationToken);
 
         return Results.Ok(result);
     }
@@ -184,3 +314,28 @@ public static class SoftwareEndpoints
 /// </remarks>
 public sealed record ForceStopRequest(
     IReadOnlyList<Guid>? DeviceIds, string? Name, string? Publisher);
+
+/// <summary>
+/// A Remove request: an application, and the devices to remove it from.
+/// </summary>
+/// <remarks>
+/// Deliberately has no field for a product code, a package full name or a
+/// method. The server chooses those from inventory, so the browser cannot ask
+/// for an arbitrary product to be uninstalled.
+/// </remarks>
+/// <param name="Publisher">
+/// Narrows which inventory row is matched, and goes no further: the task the
+/// endpoint receives carries the chosen row's own publisher, never this one.
+/// Bounded to the length inventory stores a publisher at; longer is refused.
+/// </param>
+/// <param name="Version">
+/// A pin, not a search. When given, only rows with exactly that version match.
+/// <b>When absent, the request means "any version of this application on the
+/// device"</b> -- not "the row that has no version" -- and the server still
+/// chooses exactly one row, by a defined order that prefers the machine-wide
+/// install and then the newest build. The console omits it when it is offering
+/// the application rather than one build of it. Bounded to the length inventory
+/// stores a version at; longer is refused.
+/// </param>
+public sealed record RemoveApplicationRequest(
+    IReadOnlyList<Guid>? DeviceIds, string? Name, string? Publisher, string? Version);

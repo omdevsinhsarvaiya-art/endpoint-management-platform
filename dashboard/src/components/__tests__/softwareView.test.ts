@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   activeInstallations,
   installationSummary,
+  installationsSummary,
+  installedFootprint,
   isSameTitle,
   registryViewLabel,
   scopeLabel,
@@ -124,6 +126,104 @@ describe('installation summary', () => {
 
   it('reports an empty result rather than rendering a zero', () => {
     expect(installationSummary([], 0)).toBe('Not installed on any device in scope')
+  })
+})
+
+describe('installed footprint', () => {
+  /**
+   * The title's own count is a count of devices, not of copies: the server
+   * groups the fleet by (name, version, publisher) and counts the distinct
+   * devices behind each group. Wording it as installations would overstate a
+   * title that is installed once per user on a shared machine.
+   */
+  it('counts devices and says so', () => {
+    expect(installedFootprint(10)).toBe('Installed on 10 devices')
+    expect(installedFootprint(1)).toBe('Installed on 1 device')
+    expect(installedFootprint(10)).not.toMatch(/installation/i)
+  })
+
+  it('reports nothing installed rather than rendering a zero', () => {
+    expect(installedFootprint(0)).toBe('Not installed on any device in scope')
+  })
+})
+
+describe('the drill-down installations line', () => {
+  const title = (installCount: number) => ({ installCount })
+
+  /**
+   * The defect this exists for. The device list under the header is filtered on
+   * the server *before* it is counted, so under "Running" its total is a count
+   * of running installations. Reading the header off that total announced a
+   * title installed on ten machines as installed on two — and one running
+   * nowhere as "Not installed on any device in scope", which is the sentence
+   * that closes a ticket that is still open.
+   */
+  it('keeps the installed footprint when the running filter matches nothing', () => {
+    const line = installationsSummary(title(10), 'running', { items: [], totalCount: 0 })
+
+    expect(line).toMatch(/^Installed on 10 devices/)
+    expect(line).not.toMatch(/not installed/i)
+    expect(line).toMatch(/no installation was reported running at the last inventory/)
+  })
+
+  it('does not shrink the footprint to the number of rows the filter kept', () => {
+    const line = installationsSummary(title(10), 'running', {
+      items: [install({ deviceId: 'd1' }), install({ deviceId: 'd2' })],
+      totalCount: 2,
+    })
+
+    expect(line).toBe(
+      'Installed on 10 devices — 2 installations were reported running at the last inventory',
+    )
+  })
+
+  /**
+   * Both numbers are named, because they count different populations: ten
+   * devices and two installations. "2 of 10" would be arithmetic across two
+   * units, and wrong on any title with per-user copies.
+   */
+  it('names what each number counts', () => {
+    const line = installationsSummary(title(4), 'stopped', { items: [], totalCount: 1 })
+
+    expect(line).toBe(
+      'Installed on 4 devices — 1 installation was reported not running at the last inventory',
+    )
+  })
+
+  /**
+   * Running and not-running are both claims that need evidence, and a row from
+   * an agent that reported none is in neither count. Dropping "reported" would
+   * fold those silent rows into the number.
+   */
+  it('presents a running state as something the inventory reported', () => {
+    expect(installationsSummary(title(3), 'running', { items: [], totalCount: 2 }))
+      .toMatch(/were reported running at the last inventory/)
+    expect(installationsSummary(title(3), 'stopped', { items: [], totalCount: 2 }))
+      .toMatch(/were reported not running at the last inventory/)
+  })
+
+  /** Unfiltered, the loaded list is richer: it can tell copies and devices apart. */
+  it('summarises the list itself when no filter is applied', () => {
+    const rows = [
+      install({ deviceId: 'd1', installedForUser: 'a' }),
+      install({ deviceId: 'd1', installedForUser: 'b' }),
+      install({ deviceId: 'd2' }),
+    ]
+
+    expect(installationsSummary(title(2), 'all', { items: rows, totalCount: 3 }))
+      .toBe('3 installations across 2 devices')
+  })
+
+  /** Before the list lands there is still something true to say. */
+  it('falls back to the title’s own count while the list is loading', () => {
+    expect(installationsSummary(title(3), 'running', null)).toBe('Installed on 3 devices')
+    expect(installationsSummary(title(0), 'all', null)).toBe('Not installed on any device in scope')
+  })
+
+  /** Nothing installed needs no qualifier: there are no installations to be in any state. */
+  it('says nothing more about a title no device has', () => {
+    expect(installationsSummary(title(0), 'running', { items: [], totalCount: 0 }))
+      .toBe('Not installed on any device in scope')
   })
 })
 

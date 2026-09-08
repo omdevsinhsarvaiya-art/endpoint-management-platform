@@ -583,6 +583,13 @@ export interface DeviceSoftwareItem {
   signatureStatus?: string | null
   /** Why the endpoint believes the application exists. Empty from older agents. */
   evidence?: SoftwareEvidence[]
+  /**
+   * Whether the last inventory saw a process of this application running: a
+   * `RunningProcess` evidence entry. Null when the row carries no evidence at
+   * all, which is an agent older than 1.9.0 saying nothing rather than saying
+   * "not running". Absent from a server that predates the field.
+   */
+  isRunning?: boolean | null
 }
 
 /** What Force Stop did on one device. */
@@ -613,6 +620,61 @@ export function forceStopApplication(
     body: JSON.stringify({ deviceIds, name, publisher }),
   })
 }
+
+/** How a device uninstalls an application: the Windows Installer service, or the AppX deployment engine. */
+export type RemoveMethod = 'WindowsInstaller' | 'Package'
+
+/**
+ * Why a device will not remove an application. `PerUserInstall`: the agent runs
+ * as SYSTEM and cannot see another account's per-user product. `SystemComponent`:
+ * part of Windows. `ProtectedAgent`: the endpoint agent itself. `NoInstallerIdentity`:
+ * its uninstaller is a program, which the agent does not launch.
+ */
+export type RemoveReason = 'PerUserInstall' | 'SystemComponent' | 'ProtectedAgent' | 'NoInstallerIdentity'
+
+/** What Remove did on one device. */
+export interface RemoveDeviceOutcome {
+  deviceId: string
+  hostname: string
+  outcome: 'Queued' | 'NotInstalled' | 'NotRemovable' | 'NotEligible'
+  /** Set only when the outcome is NotRemovable. */
+  reason: RemoveReason | string | null
+  /** Set only when a task was queued. */
+  method: RemoveMethod | string | null
+  /** The queued task, so the page can follow it to its result. */
+  taskId: string | null
+}
+
+export interface RemoveResult {
+  devicesQueued: number
+  devices: RemoveDeviceOutcome[]
+}
+
+/**
+ * Removes a named installed application from the given devices: the device
+ * stops it if it is running, then uninstalls it, as one task.
+ *
+ * Like Force Stop this sends an application, never a product code, package name
+ * or path: the server resolves those from its own inventory and decides whether
+ * the row is one the agent can remove at all. `version` pins the request to one
+ * row when the same application is installed at two versions.
+ */
+export function removeApplication(
+  deviceIds: string[], name: string, publisher: string | null, version: string | null,
+): Promise<RemoveResult> {
+  return request<RemoveResult>('/admin/v1/software/remove', {
+    method: 'POST',
+    body: JSON.stringify({ deviceIds, name, publisher, version }),
+  })
+}
+
+/**
+ * Which installations to list by running state, as the last inventory saw it:
+ * `all` (the default), `running`, or `stopped` — which means the row has
+ * evidence and none of it is a running process, so rows from agents too old
+ * to report evidence are in neither `running` nor `stopped`.
+ */
+export type RunningFilter = 'all' | 'running' | 'stopped'
 
 /**
  * Which titles to list: `applications` (the default) hides frameworks, inbox
@@ -810,6 +872,8 @@ export interface SoftwareInstallation {
   executablePath?: string | null
   signerSubject?: string | null
   signatureStatus?: string | null
+  /** Whether that device's last inventory saw it running; null when the row has no evidence at all. */
+  isRunning?: boolean | null
 }
 
 export interface SoftwareInstallationPage {
@@ -825,6 +889,9 @@ export interface SoftwareInstallationPage {
  * Version and publisher are part of the title's identity, including when absent:
  * a title with no recorded version is a distinct title, not a wildcard, so the
  * absent case is sent explicitly rather than omitted.
+ *
+ * `running` is the opposite: `all` is the absence of a filter, so it is omitted
+ * rather than sent as a literal the server would have to know.
  */
 export function getSoftwareInstallations(
   name: string,
@@ -832,10 +899,12 @@ export function getSoftwareInstallations(
   publisher: string | null,
   page: number,
   pageSize: number,
+  running: RunningFilter = 'all',
 ): Promise<SoftwareInstallationPage> {
   const params = new URLSearchParams({ name, page: String(page), pageSize: String(pageSize) })
   if (version !== null) params.set('version', version)
   if (publisher !== null) params.set('publisher', publisher)
+  if (running !== 'all') params.set('running', running)
   return request<SoftwareInstallationPage>(`/admin/v1/software/installations?${params}`)
 }
 

@@ -12,15 +12,17 @@ import {
 } from '../api/client'
 import { Icon } from '../components/Icon'
 import {
+  RUNNING_FILTERS,
   categoryLabel,
   confidenceLabel,
   confidenceTone,
-  installationSummary,
+  installationsSummary,
   isSameTitle,
   registryViewLabel,
   scopeLabel,
   signerLabel,
   titleKey,
+  type RunningFilter,
 } from './softwareView'
 
 const PAGE_SIZE = 30
@@ -55,6 +57,9 @@ export function SoftwarePage() {
   const [installs, setInstalls] = useState<SoftwareInstallationPage | null>(null)
   const [installsError, setInstallsError] = useState<string | null>(null)
   const [installsLoading, setInstallsLoading] = useState(false)
+  // Applied on the server, like the other filters, so the count and the page
+  // stay honest; "all" is the absence of a filter and is not sent.
+  const [runningFilter, setRunningFilter] = useState<RunningFilter>('all')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -91,7 +96,9 @@ export function SoftwarePage() {
     setInstallsLoading(true)
     setInstallsError(null)
 
-    getSoftwareInstallations(selected.name, selected.version, selected.publisher, 1, DEVICE_PAGE_SIZE)
+    getSoftwareInstallations(
+      selected.name, selected.version, selected.publisher, 1, DEVICE_PAGE_SIZE, runningFilter,
+    )
       .then((result) => {
         // A slower earlier request must not overwrite a newer selection.
         if (!cancelled) setInstalls(result)
@@ -106,7 +113,7 @@ export function SoftwarePage() {
     return () => {
       cancelled = true
     }
-  }, [selected])
+  }, [selected, runningFilter])
 
   const totalPages = data ? Math.max(1, Math.ceil(data.totalCount / PAGE_SIZE)) : 1
 
@@ -309,7 +316,12 @@ export function SoftwarePage() {
             </div>
             <div>
               <dt>Installations</dt>
-              <dd>{installs ? installationSummary(installs.items, installs.totalCount) : '—'}</dd>
+              {/* Deliberately not read off the list below: that list is
+                  filtered on the server before it is counted, so under
+                  "Running" its total is a count of running installations and
+                  not of the installed footprint. The wording of both halves
+                  lives in softwareView. */}
+              <dd>{installationsSummary(selected, runningFilter, installs)}</dd>
             </div>
             <div>
               <dt>Type</dt>
@@ -325,6 +337,27 @@ export function SoftwarePage() {
             </div>
           </dl>
 
+          {/* A select rather than a tab strip: the section switch above is
+              already one, and two of them on a page would read as nested
+              sections rather than a filter on a list. */}
+          <div className="toolbar">
+            <select
+              aria-label="Filter by running state"
+              style={{ width: 'auto', minWidth: 150 }}
+              value={runningFilter}
+              onChange={(e) => setRunningFilter(e.target.value as RunningFilter)}
+            >
+              {RUNNING_FILTERS.map((f) => (
+                <option key={f.key} value={f.key}>
+                  {f.label}
+                </option>
+              ))}
+            </select>
+            <span className="muted" style={{ fontSize: 12 }}>
+              Running state is as of each device’s last inventory.
+            </span>
+          </div>
+
           {installsError && (
             <div className="error-banner" role="alert">
               <Icon name="alert" size={15} />
@@ -337,9 +370,13 @@ export function SoftwarePage() {
           {installs && installs.items.length === 0 && !installsError && (
             <div className="empty-state">
               <Icon name="devices" size={40} strokeWidth={1.25} className="icon" />
-              <div className="title">No devices in scope</div>
+              <div className="title">
+                {runningFilter === 'all' ? 'No devices in scope' : 'No devices match this filter'}
+              </div>
               <div>
-                This application is not installed on any device you have access to.
+                {runningFilter === 'all'
+                  ? 'This application is not installed on any device you have access to.'
+                  : 'No device in scope reported this application in that state at its last inventory.'}
               </div>
             </div>
           )}
@@ -366,6 +403,14 @@ export function SoftwarePage() {
                       <tr key={`${i.deviceId}|${i.installedForUser ?? ''}`}>
                         <td>
                           <Link to={`/devices/${i.deviceId}`}>{i.displayName ?? i.hostname}</Link>
+                          {/* Only the positive is badged: "not running" is the
+                              absence of a process at one moment, and a badge
+                              would make it look like a finding. */}
+                          {i.isRunning === true && (
+                            <span className="badge warn" style={{ marginLeft: 8 }}>
+                              Running
+                            </span>
+                          )}
                         </td>
                         <td>
                           <span

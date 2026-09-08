@@ -14,6 +14,14 @@ namespace EndpointPlatform.Domain.Devices;
 /// </remarks>
 public sealed class DeviceSoftwareEvidence : AuditableEntity
 {
+    /// <summary>
+    /// The source that means "a process of this application was running when
+    /// inventory was collected". It is the only running signal the server holds,
+    /// and it is a snapshot: absent evidence of any kind means an agent too old
+    /// to report it (before 1.9.0), not an application that is stopped.
+    /// </summary>
+    public const string RunningProcessSource = "RunningProcess";
+
     private DeviceSoftwareEvidence()
     {
         Source = null!;

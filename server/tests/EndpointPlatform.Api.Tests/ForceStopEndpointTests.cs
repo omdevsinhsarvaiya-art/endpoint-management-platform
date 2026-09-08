@@ -297,6 +297,34 @@ public sealed class ForceStopEndpointTests(AdminApiPostgresFixture fixture)
             .StatusCode.ShouldBe(HttpStatusCode.BadRequest);
     }
 
+    /// <summary>
+    /// A publisher longer than inventory can hold is refused at the edge.
+    /// </summary>
+    /// <remarks>
+    /// The publisher only narrows which inventory row is matched, and inventory
+    /// bounds it to 256 characters -- but this endpoint then copies the
+    /// requested publisher straight into the queued task's payload and into the
+    /// <c>task.queue</c> audit entry written from it. An unbounded string a
+    /// browser supplied has no business reaching either, and it cannot match a
+    /// row in any case.
+    /// </remarks>
+    [Fact]
+    public async Task A_publisher_longer_than_inventory_can_hold_is_refused()
+    {
+        using var client = await AdminAsync();
+        var device = await SeedAsync("FS-BOUNDS");
+
+        (await client.PostAsJsonAsync(ForceStop, Body([device], publisher: new string('p', 257))))
+            .StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+
+        // The bound is inventory's own, not an arbitrary one: a publisher at the
+        // limit is still a legitimate request, and fails only by matching no row.
+        (await client.PostAsJsonAsync(ForceStop, Body([device], publisher: new string('p', 256))))
+            .StatusCode.ShouldBe(HttpStatusCode.Accepted);
+
+        (await StopTasksAsync(_fixture, device)).ShouldBeEmpty();
+    }
+
     [Fact]
     public async Task An_unauthenticated_caller_cannot_force_stop_anything()
     {

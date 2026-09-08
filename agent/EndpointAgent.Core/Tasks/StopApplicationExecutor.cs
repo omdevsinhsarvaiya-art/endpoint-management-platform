@@ -30,12 +30,21 @@ namespace EndpointAgent.Core.Tasks;
 /// and the image-name re-check at kill time both still apply. This adds a way to
 /// decide <em>which</em> pids; it does not add a way to kill.
 /// </para>
+/// <para>
+/// The looking and the stopping are <see cref="ApplicationStopper"/>, shared
+/// with <see cref="RemoveApplicationExecutor"/> so that "stop" means one thing
+/// wherever it is promised. What this executor owns is the meaning of the
+/// report: "not running" is the state the operator wanted, and "nothing could
+/// be stopped" is a failure.
+/// </para>
 /// </remarks>
 public sealed class StopApplicationExecutor(
     IServiceProcessCollector collector,
     IServiceProcessControl control,
     ILogger<StopApplicationExecutor> logger) : ITaskExecutor
 {
+    private readonly ApplicationStopper _stopper = new(collector, control, logger);
+
     public string TaskType => "StopApplication";
 
     public async Task<AgentTaskResult> ExecuteAsync(AgentTask task, CancellationToken cancellationToken = default)
@@ -72,28 +81,9 @@ public sealed class StopApplicationExecutor(
                 false, $"'{applicationName}' has no usable install location; nothing was stopped.", null);
         }
 
-        // Every process, not the inventory summary. The summary is the largest
-        // few hundred by working set, and a helper that fell below that line
-        // would be left running while the application was reported stopped --
-        // which is what a 10,000 "limit" against a 500-capped method silently
-        // allowed until it was measured on a machine with 541 processes.
-        var running = await collector.CollectAllProcessesAsync(cancellationToken);
+        var report = await _stopper.StopAsync(applicationName, installLocation, cancellationToken);
 
-        var matches = ApplicationProcessMatcher.Match(
-            installLocation,
-            running.Select(p => new RunningProcess(p.ProcessId, p.Name, p.ExecutablePath)),
-            protectedDirectory: AppContext.BaseDirectory);
-
-        // What was seen and what was chosen, before anything is terminated. An
-        // investigation of "stopped, but still running" needs exactly these two
-        // facts and nothing had recorded them. Pids and image names only -- the
-        // same as the per-kill entries -- never executable paths.
-        logger.LogInformation(
-            "Application {Application}: {Enumerated} process(es) enumerated, {Matched} under the install directory: {Pids}",
-            applicationName, running.Count, matches.Count,
-            matches.Count == 0 ? "none" : string.Join(", ", matches.Select(m => $"{m.ProcessId} ({m.ImageName})")));
-
-        if (matches.Count == 0)
+        if (report.WasNotRunning)
         {
             // Not a failure. The application is installed but not running, which
             // is the state the operator wanted; saying so beats reporting an
@@ -101,36 +91,7 @@ public sealed class StopApplicationExecutor(
             return new AgentTaskResult(true, $"'{applicationName}' is not running.", null);
         }
 
-        var stopped = 0;
-        var failures = new List<string>();
-
-        foreach (var match in matches)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            try
-            {
-                // Terminates every process the application owns. An application
-                // is not one process -- a browser is a parent and many children --
-                // and stopping only the first would leave it running while
-                // reporting success.
-                await control.TerminateProcessAsync(match.ProcessId, match.ImageName, cancellationToken);
-                stopped++;
-            }
-            catch (Exception ex) when (ex is InvalidOperationException or ArgumentException)
-            {
-                // Expected and benign: the process exited between enumeration and
-                // termination, or its pid was reused and the image guard refused.
-                // Both mean "not that process any more", not "the machine is
-                // broken", so the rest of the application is still stopped.
-                logger.LogInformation(
-                    "Process {Pid} ({Image}) was not terminated: {Reason}",
-                    match.ProcessId, match.ImageName, ex.Message);
-                failures.Add(match.ImageName);
-            }
-        }
-
-        if (stopped == 0)
+        if (report.Stopped == 0)
         {
             return new AgentTaskResult(
                 false,
@@ -138,12 +99,8 @@ public sealed class StopApplicationExecutor(
                 null);
         }
 
-        logger.LogWarning(
-            "Application {Application}: {Stopped} process(es) terminated by an authorized task.",
-            applicationName, stopped);
-
-        var suffix = failures.Count > 0 ? $" {failures.Count} had already ended." : "";
+        var suffix = report.NotTerminated.Count > 0 ? $" {report.NotTerminated.Count} had already ended." : "";
         return new AgentTaskResult(
-            true, $"'{applicationName}' stopped: {stopped} process(es) terminated.{suffix}", null);
+            true, $"'{applicationName}' stopped: {report.Stopped} process(es) terminated.{suffix}", null);
     }
 }

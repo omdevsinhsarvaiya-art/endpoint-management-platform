@@ -4,6 +4,7 @@ import {
   getBitLockerEscrows,
   getDeviceBitLockerReadiness,
   getDeviceBitLockerVolumes,
+  getSoftwareInstallations,
   resetEscrowAttempts,
 } from '../../api/client'
 
@@ -121,5 +122,33 @@ describe('API paths carry exactly one /api prefix', () => {
     await getBitLockerEscrowAttempts(DEVICE).catch(() => null)
 
     expect(urls[0]).toBe(`/api/admin/v1/devices/${DEVICE}/bitlocker-escrow-attempts`)
+  })
+})
+
+describe('the installations running filter', () => {
+  /**
+   * "All" is the absence of a filter, not a value: the same shape as the device
+   * list's lifecycle filter, and the same quiet failure if it were sent — a
+   * server that did not know the literal would answer an empty page that reads
+   * as "installed nowhere".
+   */
+  it('is omitted for all and sent for the two real states', async () => {
+    const { urls } = captureUrl()
+
+    await getSoftwareInstallations('Google Chrome', '152.0.1', 'Google LLC', 1, 50).catch(() => null)
+    await getSoftwareInstallations('Google Chrome', '152.0.1', 'Google LLC', 1, 50, 'all').catch(() => null)
+    await getSoftwareInstallations('Google Chrome', '152.0.1', 'Google LLC', 1, 50, 'running').catch(() => null)
+    await getSoftwareInstallations('Google Chrome', '152.0.1', 'Google LLC', 1, 50, 'stopped').catch(() => null)
+
+    const params = urls.map((u) => new URL(u, 'http://console').searchParams)
+    expect(urls.every((u) => u.startsWith('/api/admin/v1/software/installations?'))).toBe(true)
+    expect(params[0].get('running')).toBeNull()
+    expect(params[1].get('running')).toBeNull()
+    expect(params[2].get('running')).toBe('running')
+    expect(params[3].get('running')).toBe('stopped')
+    // The identity of the title is still sent in full alongside it.
+    expect(params[2].get('name')).toBe('Google Chrome')
+    expect(params[2].get('version')).toBe('152.0.1')
+    expect(params[2].get('publisher')).toBe('Google LLC')
   })
 })

@@ -2,19 +2,28 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { signingLabel, upgradeTargets } from './agentUpdateView'
 import {
-  canForceStop,
+  RUNNING_FILTERS,
   categoryLabel,
   confidenceLabel,
   confidenceTone,
+  emptySoftwareListMessage,
   evidenceSourceLabel,
   forceStopMessage,
   isApplicationRow,
+  matchesRunningFilter,
   registryViewLabel,
+  removability,
+  removeMessage,
+  reportsRunningState,
+  rowActions,
   scopeLabel,
   signerLabel,
+  softwareRowKey,
+  type RunningFilter,
 } from './softwareView'
-import { forceStopApplication } from '../api/client'
+import { forceStopApplication, removeApplication, type DeviceSoftwareItem } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
+import { RowActionsMenu } from '../components/RowActionsMenu'
 import { DeviceUsersPanel } from './DeviceUsersPanel'
 import { DeviceGroupsPanel } from './DeviceGroupsPanel'
 import { DeviceServicesPanel } from './DeviceServicesPanel'
@@ -141,7 +150,13 @@ export function DeviceDetailPage() {
   // by the endpoint, and hidden here by default: the count in the tab is the
   // number the device reported, the list is what an operator manages.
   const [showSystemSoftware, setShowSystemSoftware] = useState(false)
-  const [stopping, setStopping] = useState<string | null>(null)
+  // Running state is what the last inventory saw, so "Not running" is a claim
+  // about that inventory and not about now — the footnote by the control says so.
+  const [runningFilter, setRunningFilter] = useState<RunningFilter>('all')
+  // The row whose request is in flight, by row key rather than name: the same
+  // application installed for two users is two rows, and only one is busy.
+  const [busy, setBusy] = useState<{ key: string; label: string } | null>(null)
+  const [removeTarget, setRemoveTarget] = useState<DeviceSoftwareItem | null>(null)
 
   // The published agent release, for the "update agent" affordance. Fetched
   // once per page visit: releases change rarely, and the compare is cheap.
@@ -335,6 +350,32 @@ export function DeviceDetailPage() {
   // Force Stop terminates a process, so it needs the same permission as doing
   // that directly rather than a weaker software-view one.
   const canExecuteTasks = hasPermission('task.execute')
+  // Remove changes what is installed, which is what deploying does, so it takes
+  // that permission. The Actions column exists when either action could.
+  const showSoftwareActions = canExecuteTasks || canDeploy
+
+  // The software table's rows, filtered once. Doing it inside the <tbody> left
+  // nothing else able to tell whether any row survived, so the three controls
+  // could empty the table and still render a header over nothing; a second copy
+  // of these predicates elsewhere is how a table and its empty state start
+  // disagreeing about what exists.
+  const softwareTerm = softwareSearch.trim().toLowerCase()
+  const visibleSoftware = device.software
+    .filter((sw) => showSystemSoftware || isApplicationRow(sw.category))
+    .filter((sw) => matchesRunningFilter(sw, runningFilter))
+    .filter((sw) =>
+      softwareTerm === ''
+      || sw.name.toLowerCase().includes(softwareTerm)
+      || (sw.publisher ?? '').toLowerCase().includes(softwareTerm))
+  // Asked of the whole inventory, not the filtered rows: whether this agent
+  // reports running state at all is what separates "nothing is running" from
+  // "nothing here can ever be shown as running".
+  const softwareEmpty = emptySoftwareListMessage({
+    filter: runningFilter,
+    searching: softwareTerm !== '',
+    hidingSystem: !showSystemSoftware,
+    reportsRunningState: reportsRunningState(device.software),
+  })
 
   /**
    * Asks the server to stop an application by name.
@@ -343,10 +384,10 @@ export function DeviceDetailPage() {
    * process ids from its own inventory, so this cannot ask for an arbitrary
    * process to be terminated.
    */
-  async function onForceStop(name: string, publisher: string | null) {
+  async function onForceStop(rowKey: string, name: string, publisher: string | null) {
     if (!device) return
 
-    setStopping(name)
+    setBusy({ key: rowKey, label: 'Stopping…' })
     setActionMsg(null)
     try {
       const result = await forceStopApplication([device.id], name, publisher)
@@ -358,7 +399,46 @@ export function DeviceDetailPage() {
     } catch {
       setActionMsg(`${name} could not be stopped.`)
     } finally {
-      setStopping(null)
+      setBusy(null)
+    }
+  }
+
+  /**
+   * Asks the server to remove an application: stop it if it is running, then
+   * uninstall it, as one task on the device.
+   *
+   * Name, publisher and version are all that is sent, the same as Force Stop;
+   * the server decides from its own inventory whether the row is one the agent
+   * can remove. A queued task is tracked to its result like any other
+   * inventory-changing task, so the table only says the application is gone
+   * once the device has reported that it is. Every other outcome is a refusal
+   * with no task behind it, and goes to the banner.
+   */
+  async function onRemove(sw: DeviceSoftwareItem) {
+    if (!device) return
+
+    setRemoveTarget(null)
+    setBusy({ key: softwareRowKey(sw), label: 'Removing…' })
+    setActionMsg(null)
+    try {
+      const result = await removeApplication([device.id], sw.name, sw.publisher, sw.version)
+      const outcome = result.devices[0]
+
+      if (outcome?.outcome === 'Queued' && outcome.taskId) {
+        track(outcome.taskId, `Remove ${sw.name}`, { syncInventory: true })
+      } else {
+        setActionMsg(outcome
+          ? removeMessage(sw.name, outcome.outcome, outcome.reason)
+          : `${sw.name} could not be removed.`)
+      }
+    } catch (e) {
+      // The server's own reason when it gave one — a validation refusal names
+      // what was wrong — rather than a guess.
+      setActionMsg(e instanceof ApiError && e.detail
+        ? `${sw.name} could not be removed: ${e.detail}`
+        : `${sw.name} could not be removed.`)
+    } finally {
+      setBusy(null)
     }
   }
 
@@ -456,6 +536,29 @@ export function DeviceDetailPage() {
             This queues a <strong className="secondary">{confirm}</strong> task for{' '}
             <strong className="secondary">{device.hostname}</strong>. The device performs it on its
             next check-in. This action is audited.
+          </>
+        </ConfirmDialog>
+      )}
+
+      {removeTarget && (
+        <ConfirmDialog
+          title={`Remove ${removeTarget.name}?`}
+          confirmLabel="Yes, remove"
+          onCancel={() => setRemoveTarget(null)}
+          onConfirm={() => void onRemove(removeTarget)}
+        >
+          <>
+            This stops <strong className="secondary">{removeTarget.name}</strong> on{' '}
+            <strong className="secondary">{deviceName(device)}</strong> if it is running, then
+            uninstalls it
+            {/* A package is removed for everyone: the deployment engine takes no
+                account, and saying so here is the difference between removing
+                one person's copy and removing the application from the machine. */}
+            {removability(removeTarget).method === 'Package'
+              ? ' for all users of the device'
+              : ''}
+            . Unsaved work in it is lost. This cannot be undone from the console — reinstalling
+            it is a new deployment. This action is audited.
           </>
         </ConfirmDialog>
       )}
@@ -696,6 +799,10 @@ export function DeviceDetailPage() {
           {!device.software.length && <InventoryEmpty title="No software inventory yet" />}
           {!!device.software.length && (
             <div className="card">
+              {/* A Remove is a task like a service stop: the banner stays in its
+                  pending style until the device has reported fresh inventory,
+                  so a green Succeeded never sits above a row that is still there. */}
+              <TaskProgress tasks={tracked} onDismiss={dismiss} />
               <div className="card-header">
                 <h2>Installed applications</h2>
                 <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
@@ -719,97 +826,135 @@ export function DeviceDetailPage() {
                   </div>
                 </div>
               </div>
-              <div className="scroll-y table-wrap">
-                <table className="table">
-                  <thead>
-                    <tr>
-                      <th>Application</th>
-                      <th>Version</th>
-                      <th>Publisher</th>
-                      <th>Type</th>
-                      <th>Installed for</th>
-                      <th>Signer</th>
-                      <th>Found in</th>
-                      {canExecuteTasks && <th style={{ textAlign: 'right' }}>Actions</th>}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {device.software
-                      .filter((sw) => showSystemSoftware || isApplicationRow(sw.category))
-                      .filter((sw) =>
-                        softwareSearch.trim() === ''
-                        || sw.name.toLowerCase().includes(softwareSearch.trim().toLowerCase())
-                        || (sw.publisher ?? '').toLowerCase().includes(softwareSearch.trim().toLowerCase()))
-                      .map((sw) => (
-                      // Keyed by user as well as name and version: one machine
-                      // legitimately holds the same application once per user,
-                      // and keying without the user collides on exactly those
-                      // rows.
-                      <tr key={`${sw.name}|${sw.version}|${sw.installedForUser ?? ''}`}>
-                        <td>
-                          {sw.name}
-                          {sw.confidence === 'Observed' && (
-                            <span className={`badge ${confidenceTone(sw.confidence)}`} style={{ marginLeft: 8 }}>
-                              {confidenceLabel(sw.confidence)}
-                            </span>
-                          )}
-                          {/* Why the endpoint believes this application exists,
-                              in the order it reported: installation records
-                              first, then what attached to them. Collapsed, so
-                              the list stays a list. */}
-                          {sw.evidence && sw.evidence.length > 0 && (
-                            <details className="evidence">
-                              <summary className="muted">
-                                {sw.evidence.length} piece{sw.evidence.length === 1 ? '' : 's'} of evidence
-                              </summary>
-                              <ul className="evidence-list">
-                                {sw.evidence.map((e, index) => (
-                                  <li key={`${e.source}|${e.detail ?? ''}|${index}`}>
-                                    <strong>{evidenceSourceLabel(e.source)}</strong>
-                                    {e.name ? ` — ${e.name}` : ''}
-                                    {e.detail ? <span className="muted"> ({e.detail})</span> : null}
-                                  </li>
-                                ))}
-                              </ul>
-                            </details>
-                          )}
-                        </td>
-                        <td>{sw.version ?? '—'}</td>
-                        <td>{sw.publisher ?? '—'}</td>
-                        <td>{categoryLabel(sw.category)}</td>
-                        <td>{scopeLabel(sw)}</td>
-                        {/* Presence of a signature, not trust in it. */}
-                        <td title={sw.signerSubject ?? undefined}>{signerLabel(sw.signerSubject, sw.signatureStatus)}</td>
-                        {/* Not the binary's architecture: 64-bit products
-                            routinely register under WOW6432Node. */}
-                        <td>{registryViewLabel(sw.architecture)}</td>
-                        {canExecuteTasks && (
-                          <td style={{ textAlign: 'right' }}>
-                            {/* Offered only where the application reports an
-                                install path, because that is the only evidence
-                                linking it to a process. Without it the action
-                                would be a guess, so it is not offered at all. */}
-                            {canForceStop(sw.installLocation) ? (
-                              <button
-                                type="button"
-                                className="btn-sm"
-                                disabled={stopping !== null}
-                                onClick={() => void onForceStop(sw.name, sw.publisher)}
-                              >
-                                {stopping === sw.name ? 'Stopping…' : 'Force Stop'}
-                              </button>
-                            ) : (
-                              <span className="muted" title="No install location was reported for this application">
-                                Unavailable
+              {/* Running is what the last inventory saw, not what is true now,
+                  and the control says so next to the choice rather than in a
+                  tooltip: "Not running" is otherwise read as a live fact. Rows
+                  the inventory could not judge appear only under All. */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
+                <div
+                  className="segmented"
+                  role="tablist"
+                  aria-label="Filter by running state"
+                  style={{ marginBottom: 0 }}
+                >
+                  {RUNNING_FILTERS.map((f) => (
+                    <button
+                      key={f.key}
+                      type="button"
+                      role="tab"
+                      aria-selected={runningFilter === f.key}
+                      className={runningFilter === f.key ? 'active' : undefined}
+                      onClick={() => setRunningFilter(f.key)}
+                    >
+                      {f.label}
+                    </button>
+                  ))}
+                </div>
+                <span className="muted" style={{ fontSize: 12 }}>
+                  Running state is as of the last inventory ({formatTimestamp(device.inventoryCollectedAt)}).
+                </span>
+              </div>
+              {/* Either the table or a reason it is empty, never a header over
+                  nothing: on a device whose agent predates process evidence,
+                  both filtered views match no row at all, and a bare header
+                  reads as a page that failed to load. */}
+              {visibleSoftware.length === 0 ? (
+                <div className="empty-state">
+                  <Icon name="inbox" size={40} strokeWidth={1.25} className="icon" />
+                  <div className="title">{softwareEmpty.title}</div>
+                  <div>{softwareEmpty.detail}</div>
+                </div>
+              ) : (
+                <div className="scroll-y table-wrap">
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>Application</th>
+                        <th>Version</th>
+                        <th>Publisher</th>
+                        <th>Type</th>
+                        <th>Installed for</th>
+                        <th>Signer</th>
+                        <th>Found in</th>
+                        {showSoftwareActions && <th style={{ textAlign: 'right' }}>Actions</th>}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {visibleSoftware.map((sw) => (
+                        // Keyed by user as well as name and version: one machine
+                        // legitimately holds the same application once per user,
+                        // and keying without the user collides on exactly those
+                        // rows.
+                        <tr key={softwareRowKey(sw)}>
+                          <td>
+                            {sw.name}
+                            {sw.confidence === 'Observed' && (
+                              <span className={`badge ${confidenceTone(sw.confidence)}`} style={{ marginLeft: 8 }}>
+                                {confidenceLabel(sw.confidence)}
                               </span>
                             )}
+                            {/* Why the endpoint believes this application exists,
+                                in the order it reported: installation records
+                                first, then what attached to them. Collapsed, so
+                                the list stays a list. */}
+                            {sw.evidence && sw.evidence.length > 0 && (
+                              <details className="evidence">
+                                <summary className="muted">
+                                  {sw.evidence.length} piece{sw.evidence.length === 1 ? '' : 's'} of evidence
+                                </summary>
+                                <ul className="evidence-list">
+                                  {sw.evidence.map((e, index) => (
+                                    <li key={`${e.source}|${e.detail ?? ''}|${index}`}>
+                                      <strong>{evidenceSourceLabel(e.source)}</strong>
+                                      {e.name ? ` — ${e.name}` : ''}
+                                      {e.detail ? <span className="muted"> ({e.detail})</span> : null}
+                                    </li>
+                                  ))}
+                                </ul>
+                              </details>
+                            )}
                           </td>
-                        )}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                          <td>{sw.version ?? '—'}</td>
+                          <td>{sw.publisher ?? '—'}</td>
+                          <td>{categoryLabel(sw.category)}</td>
+                          <td>{scopeLabel(sw)}</td>
+                          {/* Presence of a signature, not trust in it. */}
+                          <td title={sw.signerSubject ?? undefined}>{signerLabel(sw.signerSubject, sw.signatureStatus)}</td>
+                          {/* Not the binary's architecture: 64-bit products
+                              routinely register under WOW6432Node. */}
+                          <td>{registryViewLabel(sw.architecture)}</td>
+                          {showSoftwareActions && (
+                            <td style={{ textAlign: 'right' }}>
+                              {/* Which actions the row supports, and why not, is
+                                  decided in softwareView: Force Stop needs an
+                                  install path as its only link to a process, and
+                                  Remove needs an installer the agent is allowed to
+                                  drive. An unsupported action stays in the menu,
+                                  disabled, with its reason. */}
+                              <RowActionsMenu
+                                label={`Actions for ${sw.name}`}
+                                items={rowActions(sw, { canExecuteTasks, canDeploy }).map((a) => ({
+                                  ...a,
+                                  destructive: a.key === 'remove',
+                                }))}
+                                triggerLabel={busy?.key === softwareRowKey(sw) ? busy.label : 'Actions'}
+                                disabled={busy !== null}
+                                onSelect={(key) => {
+                                  if (key === 'force-stop') {
+                                    void onForceStop(softwareRowKey(sw), sw.name, sw.publisher)
+                                  } else {
+                                    setRemoveTarget(sw)
+                                  }
+                                }}
+                              />
+                            </td>
+                          )}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           )}
         </>

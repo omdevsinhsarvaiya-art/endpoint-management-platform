@@ -1,4 +1,13 @@
-import type { SoftwareInstallation, SoftwareTitle } from '../api/client'
+import type {
+  DeviceSoftwareItem,
+  RemoveMethod,
+  RemoveReason,
+  RunningFilter,
+  SoftwareInstallation,
+  SoftwareTitle,
+} from '../api/client'
+
+export type { RunningFilter } from '../api/client'
 
 /**
  * Pure view logic for the software inventory browser.
@@ -100,6 +109,77 @@ export function installationSummary(
 }
 
 /**
+ * How many machines have a title, from the count the titles list already
+ * carries.
+ *
+ * `installCount` is a count of distinct devices, not of installations: the
+ * server groups the fleet by (name, version, publisher) and counts the devices
+ * behind each group, so this may never be worded as a number of copies. It is
+ * also the one count that no view filter touches, which is why the header
+ * leans on it.
+ */
+export function installedFootprint(installCount: number): string {
+  if (installCount === 0) return 'Not installed on any device in scope'
+  return `Installed on ${installCount} device${installCount === 1 ? '' : 's'}`
+}
+
+/**
+ * The "Installations" line of the software drill-down header.
+ *
+ * The header describes the title; the table under it describes one view of the
+ * title. Those came apart when the running filter moved to the server: the
+ * device list is now filtered before it is counted, so its total is the number
+ * of installations in that state and nothing else. Reading the header off that
+ * total shrank the installed footprint every time an operator chose "Running",
+ * and a title installed on ten machines but running on none was announced as
+ * "Not installed on any device in scope" — the one sentence that would send
+ * someone to close a ticket that is still open.
+ *
+ * So the footprint comes from the title's own count, which no filter touches,
+ * and the filtered number is added as what it actually is. The two are named
+ * separately — devices and installations — because they are counts of different
+ * things: a title with per-user copies has more of the second than the first,
+ * and "2 of 10" across those units would be arithmetic on two different
+ * populations.
+ */
+export function installationsSummary(
+  title: Pick<SoftwareTitle, 'installCount'>,
+  filter: RunningFilter,
+  installations: { items: readonly SoftwareInstallation[]; totalCount: number } | null,
+): string {
+  if (filter === 'all') {
+    // Unfiltered, the loaded list is the better source: it can tell three
+    // installations across two devices apart, which a device count cannot.
+    // Before it lands, the title's own count is already true.
+    return installations === null
+      ? installedFootprint(title.installCount)
+      : installationSummary(installations.items, installations.totalCount)
+  }
+
+  const footprint = installedFootprint(title.installCount)
+
+  // Nothing to qualify: no installations exist, so no filtered count of them
+  // says anything the footprint has not already said.
+  if (installations === null || title.installCount === 0) return footprint
+
+  return `${footprint} — ${runningStateCount(filter, installations.totalCount)}`
+}
+
+/**
+ * How many installations the last inventory put in one running state.
+ *
+ * "Reported" is load-bearing in both directions. Running and not-running are
+ * both claims that need evidence, and a row from an agent that sent none is in
+ * neither count; saying "were not running" without "reported" would quietly
+ * fold those silent rows into the stopped number.
+ */
+function runningStateCount(filter: Exclude<RunningFilter, 'all'>, count: number): string {
+  const state = filter === 'running' ? 'running' : 'not running'
+  if (count === 0) return `no installation was reported ${state} at the last inventory`
+  return `${count} installation${count === 1 ? ' was' : 's were'} reported ${state} at the last inventory`
+}
+
+/**
  * Whether Force Stop can be offered for an installed application.
  *
  * Force Stop resolves an application to its running processes by install path,
@@ -139,6 +219,307 @@ export function forceStopMessage(application: string, outcome: string): string {
     default:
       return `${application} could not be stopped.`
   }
+}
+
+/**
+ * The identity of one row on a device's software list.
+ *
+ * Name, version and user together: one machine legitimately holds the same
+ * application once per user, and anything keyed by name alone — a busy flag,
+ * an open menu — would light up every duplicate when one of them is acted on.
+ */
+export function softwareRowKey(
+  item: Pick<DeviceSoftwareItem, 'name' | 'version' | 'installedForUser'>,
+): string {
+  return `${item.name}|${item.version ?? ''}|${item.installedForUser ?? ''}`
+}
+
+/** What the last inventory could say about whether an application was running. */
+export type RunningState = 'running' | 'stopped' | 'unknown'
+
+/**
+ * Whether the application was running when the device last reported.
+ *
+ * The server's `isRunning` is the answer when it is present: true and false are
+ * what the evidence said, null is the server saying the row has no evidence at
+ * all — an agent older than 1.9.0 — and that is "unknown", not "stopped". A
+ * server that predates the field sends nothing, and then the evidence list it
+ * does send is read the same way it would have been on the server.
+ */
+export function runningState(item: Pick<DeviceSoftwareItem, 'isRunning' | 'evidence'>): RunningState {
+  if (item.isRunning === true) return 'running'
+  if (item.isRunning === false) return 'stopped'
+  if (item.isRunning === null) return 'unknown'
+
+  if (!item.evidence || item.evidence.length === 0) return 'unknown'
+  return item.evidence.some((e) => e.source === 'RunningProcess') ? 'running' : 'stopped'
+}
+
+/** The three views of a software list, in the order they are offered. */
+export const RUNNING_FILTERS: readonly { key: RunningFilter; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'running', label: 'Running' },
+  { key: 'stopped', label: 'Not running' },
+]
+
+/**
+ * Whether a row belongs under a running-state filter.
+ *
+ * A row whose state is unknown appears only under All: "Not running" is a
+ * claim, and listing an older agent's silence there would make it one the
+ * platform has not earned.
+ */
+export function matchesRunningFilter(
+  item: Pick<DeviceSoftwareItem, 'isRunning' | 'evidence'>,
+  filter: RunningFilter,
+): boolean {
+  if (filter === 'all') return true
+  return runningState(item) === filter
+}
+
+/**
+ * Whether this device's inventory can answer the running-state question at all.
+ *
+ * Process evidence arrived with agent 1.9.0. An older agent reports what is
+ * installed and nothing about what was running, so every one of its rows is
+ * unknown and both filtered views are empty for a reason that has nothing to do
+ * with the software on the machine.
+ *
+ * Asked of the whole list rather than the filtered one on purpose: the agent
+ * either reports running state or it does not, and a search that happens to
+ * select only silent rows is a different fact that must not be described as an
+ * old agent.
+ */
+export function reportsRunningState(
+  items: readonly Pick<DeviceSoftwareItem, 'isRunning' | 'evidence'>[],
+): boolean {
+  return items.some((item) => runningState(item) !== 'unknown')
+}
+
+/** Why a device's software table has no rows to show. */
+export interface EmptySoftwareListMessage {
+  title: string
+  detail: string
+}
+
+/** What narrowed a device's software list down to nothing. */
+export interface EmptySoftwareListInput {
+  filter: RunningFilter
+  /** Whether a search term is also narrowing the list. */
+  searching: boolean
+  /** Whether Windows components are being hidden. */
+  hidingSystem: boolean
+  /** Whether the device reported running state for any application at all. */
+  reportsRunningState: boolean
+}
+
+/**
+ * What to say when every row has been filtered away.
+ *
+ * A table header over nothing is the worst of the possible answers: it looks
+ * like a load that failed, and it leaves the operator to guess which of three
+ * controls emptied it. The cause is knowable in each case, so it is said.
+ *
+ * The old-agent case is checked first and outranks the others because it is the
+ * only one the operator cannot act on by changing a control: on such a device
+ * "Running" and "Not running" can never match anything, whatever else is typed
+ * in the search box. It is worded as an observation about the inventory with
+ * the likely cause named, not as a verdict on the agent's version — a 1.9.0
+ * agent whose evidence collection found nothing looks identical from here.
+ */
+export function emptySoftwareListMessage(input: EmptySoftwareListInput): EmptySoftwareListMessage {
+  if (input.filter !== 'all' && !input.reportsRunningState) {
+    return {
+      title: 'This device does not report running state',
+      detail:
+        'Nothing in its last inventory says which applications were running — agents older than 1.9.0 do not report it — so no application here can appear under Running or Not running. They are all still listed under All.',
+    }
+  }
+
+  if (input.searching) {
+    return {
+      title: 'No applications match your search',
+      detail: input.filter === 'all'
+        ? 'Nothing in this device’s inventory matches the search.'
+        : 'Nothing in this device’s inventory matches both the search and this running-state filter.',
+    }
+  }
+
+  if (input.filter !== 'all') {
+    const state = input.filter === 'running' ? 'running' : 'not running'
+    return {
+      title: 'No applications match this filter',
+      detail: `No application on this device was reported ${state} at its last inventory.`,
+    }
+  }
+
+  if (input.hidingSystem) {
+    return {
+      title: 'Only Windows components were reported',
+      detail:
+        'Every entry in this device’s inventory is a framework, inbox app or system component. Turn on “Show Windows components” to see them.',
+    }
+  }
+
+  return {
+    title: 'No applications to show',
+    detail: 'Nothing in this device’s inventory matches the current view.',
+  }
+}
+
+/** The client-side hint of whether Remove can be offered, and why not when it cannot. */
+export interface Removability {
+  removable: boolean
+  method: RemoveMethod | null
+  reason: RemoveReason | null
+}
+
+/** The fields removability is decided on; the same ones the server reads. */
+export type RemovabilityInput = Pick<
+  DeviceSoftwareItem,
+  'name' | 'identityKind' | 'productCode' | 'installationScope' | 'packageFamilyName' | 'category'
+>
+
+/** The display name the agent installs under. Refused on both sides; this side only stops offering it. */
+const AGENT_PRODUCT_NAME = 'Endpoint Platform Agent'
+
+/** The publisher id every Windows inbox package family ends in. */
+const WINDOWS_INBOX_PUBLISHER_ID = 'cw5n1h2txyewy'
+
+/**
+ * Whether the agent has a way to uninstall this row, mirroring the server's
+ * table. A hint only: the server re-evaluates and is the authority. This
+ * exists so the menu can say why Remove is unavailable instead of offering an
+ * action that is certain to be refused.
+ *
+ * The agent removes exactly two kinds of thing: a machine-scope Windows
+ * Installer product, through the Windows Installer service, and an MSIX/AppX
+ * package, through the deployment engine. A per-user product is invisible to a
+ * service running as SYSTEM; an inbox or system package is Windows itself; the
+ * agent must not remove the agent; and everything else — an EXE installer's
+ * registration, a portable executable, an observed process — has an
+ * uninstaller that is a program, which the agent does not launch (ADR-0005).
+ */
+export function removability(item: RemovabilityInput): Removability {
+  if (item.name === AGENT_PRODUCT_NAME) {
+    return { removable: false, method: null, reason: 'ProtectedAgent' }
+  }
+
+  if (item.identityKind === 'WindowsInstaller' && item.productCode) {
+    return item.installationScope === 'Machine'
+      ? { removable: true, method: 'WindowsInstaller', reason: null }
+      : { removable: false, method: null, reason: 'PerUserInstall' }
+  }
+
+  if (item.identityKind === 'Package') {
+    const inbox = (item.packageFamilyName ?? '').endsWith(`_${WINDOWS_INBOX_PUBLISHER_ID}`)
+    const system = item.category !== null && item.category !== undefined && SYSTEM_CATEGORIES.includes(item.category)
+    return inbox || system
+      ? { removable: false, method: null, reason: 'SystemComponent' }
+      : { removable: true, method: 'Package', reason: null }
+  }
+
+  return { removable: false, method: null, reason: 'NoInstallerIdentity' }
+}
+
+/**
+ * Why an application cannot be removed, in words. A reason the console does
+ * not know is shown as itself rather than swallowed: a newer server's refusal
+ * is still information.
+ */
+export function removeReasonLabel(reason: string | null | undefined): string {
+  switch (reason) {
+    case 'PerUserInstall':
+      return 'it was installed for one user, and the agent cannot uninstall another account’s per-user software'
+    case 'SystemComponent':
+      return 'it is part of Windows'
+    case 'ProtectedAgent':
+      return 'it is the endpoint agent'
+    case 'NoInstallerIdentity':
+      return 'its uninstaller is a program, which the agent does not launch'
+    case null:
+    case undefined:
+      return 'no reason was given'
+    default:
+      return reason
+  }
+}
+
+/**
+ * What a Remove request did, in words.
+ *
+ * Queued is worded as queued: the device stops and uninstalls on its next
+ * check-in and reports back through the task, so nothing here may claim the
+ * application is gone. NotRemovable carries the server's reason, because that
+ * is the one outcome an operator can do nothing about from this page.
+ */
+export function removeMessage(application: string, outcome: string, reason: string | null): string {
+  switch (outcome) {
+    case 'Queued':
+      return `Removal of ${application} was queued. The device stops it if it is running, then uninstalls it.`
+    case 'NotInstalled':
+      return `${application} is not installed on this device.`
+    case 'NotRemovable':
+      return `${application} cannot be removed: ${removeReasonLabel(reason)}.`
+    case 'NotEligible':
+      return `${application} could not be removed: the device is retired or its agent is too old.`
+    default:
+      return `${application} could not be removed.`
+  }
+}
+
+/** One entry in a software row's Actions menu. */
+export interface RowAction {
+  key: 'force-stop' | 'remove'
+  label: string
+  enabled: boolean
+  /** Why the action is unavailable, when it is; shown on the disabled item. */
+  reason: string | null
+}
+
+/** The permissions that decide which actions a row offers at all. */
+export interface RowActionPermissions {
+  /** `task.execute`: Force Stop terminates processes, so it needs that, not a software permission. */
+  canExecuteTasks: boolean
+  /** `software.deploy`: Remove changes what is installed, the same as deploying does. */
+  canDeploy: boolean
+}
+
+/**
+ * The actions a software row offers, in menu order.
+ *
+ * An action the operator lacks permission for is not listed — the convention
+ * across the console, and the server enforces it regardless. An action the row
+ * cannot support is listed but disabled, with the reason, so an operator learns
+ * why rather than wondering where the item went.
+ */
+export function rowActions(
+  item: RemovabilityInput & Pick<DeviceSoftwareItem, 'installLocation'>,
+  perms: RowActionPermissions,
+): RowAction[] {
+  const actions: RowAction[] = []
+
+  if (perms.canExecuteTasks) {
+    const enabled = canForceStop(item.installLocation)
+    actions.push({
+      key: 'force-stop',
+      label: 'Force Stop',
+      enabled,
+      reason: enabled ? null : 'No install location was reported for this application',
+    })
+  }
+
+  if (perms.canDeploy) {
+    const { removable, reason } = removability(item)
+    actions.push({
+      key: 'remove',
+      label: 'Remove…',
+      enabled: removable,
+      reason: removable ? null : `Cannot be removed: ${removeReasonLabel(reason)}`,
+    })
+  }
+
+  return actions
 }
 
 /** Devices that can be acted on: a retired device is not a deployment target. */
