@@ -11,4 +11,9 @@
     <ProjectReference Include="..\..\EndpointAgent.Core\EndpointAgent.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Real files in their real formats: a shortcut Windows wrote, for the parser. -->
+    <None Include="Fixtures\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

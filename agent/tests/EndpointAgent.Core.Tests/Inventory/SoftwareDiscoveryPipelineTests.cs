@@ -456,8 +456,8 @@ public sealed class SoftwareDiscoveryPipelineTests
     }
 
     /// <summary>
-    /// Identity is computed for every registry finding, so the later phases have
-    /// something to fold on -- but it does not yet decide what is reported.
+    /// Identity is computed for every registry finding, and records that were
+    /// always one row are one application -- without changing the report.
     /// </summary>
     [Fact]
     public void Every_registry_finding_gets_an_identity_without_changing_the_report()
@@ -467,11 +467,17 @@ public sealed class SoftwareDiscoveryPipelineTests
         applications.ShouldAllBe(a => a.Identity.StableKey.Length > 0);
         applications.ShouldAllBe(a => a.Confidence == DiscoveryConfidence.Installed);
         applications.Count(a => a.Identity.Kind == IdentityKind.WindowsInstaller).ShouldBe(2);
-        applications.Count(a => a.Identity.Kind == IdentityKind.Registered).ShouldBe(11);
+
+        // Twelve registered records; Chrome's two registry views were always one
+        // row and are now one application carrying both records as evidence.
+        applications.Count(a => a.Identity.Kind == IdentityKind.Registered).ShouldBe(10);
+        applications.Single(a => a.Name == "Google Chrome").Evidence.Count.ShouldBe(2);
 
         // The two Contoso Suite versions share a stable key and are still two
-        // applications at this stage: folding is not this phase's job.
-        applications.Where(a => a.Name == "Contoso Suite")
-            .Select(a => a.Identity.StableKey).Distinct().Count().ShouldBe(1);
+        // applications: the row identity includes the version, and folding an
+        // update into its predecessor is not this merger's job.
+        var contoso = applications.Where(a => a.Name == "Contoso Suite").ToList();
+        contoso.Count.ShouldBe(2);
+        contoso.Select(a => a.Identity.StableKey).Distinct().Count().ShouldBe(1);
     }
 }

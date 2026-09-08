@@ -5,30 +5,36 @@ namespace EndpointAgent.Core.Inventory;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Each piece of evidence is identified (<see cref="ApplicationIdentity"/>),
-/// classified (<see cref="ApplicationCategory"/>) and given a confidence
-/// (<see cref="DiscoveryConfidence"/>). What survives is a
-/// <see cref="DiscoveredApplication"/> carrying the evidence that produced it, so
-/// "why does Techsara believe this application exists?" has an answer that is
-/// data rather than inference.
+/// Three stages, in order of how much each piece of evidence is allowed to claim.
 /// </para>
 /// <para>
-/// <b>What this deliberately does not do yet.</b> It does not fold several
-/// sources' evidence into one application. Folding means keying applications on
-/// <see cref="ApplicationIdentity.StableKey"/>, and that key excludes the version
-/// on purpose -- an update must replace a row, not add one. The pipeline's final
-/// step, <see cref="SoftwareInventoryNormalizer"/>, keys on
-/// (name, version, publisher, scope, user) and therefore keeps two installed
-/// versions of one product visible. Both rules are right for their own job, and
-/// reconciling them changes what a machine reports.
+/// <b>Installations.</b> Authoritative evidence -- an installation record --
+/// becomes an application. Several records that would have been one inventory
+/// row are one application with several pieces of evidence: the key is exactly
+/// the row identity the normalizer has always used (name, version, publisher,
+/// scope, account) plus the stable key, so this stage can never fold two rows
+/// the inventory kept apart, and the first record's descriptive fields win
+/// exactly as they did before. Two installed versions of one product therefore
+/// stay two applications. Recognising an update as a replacement is a later
+/// concern, and keying on the version here is what keeps that decision out of
+/// this one.
 /// </para>
 /// <para>
-/// So the reconciliation happens in the phase that needs it -- when a second
-/// source starts describing an application the first source already found -- with
-/// its own tests and its own measured before/after on a real machine. Until then
-/// this is a one-to-one projection, and the inventory a machine reports is
-/// byte-for-byte what it reported before the abstraction existed. That property is
-/// asserted, not assumed.
+/// <b>Attachment.</b> Supplementary evidence -- an alias, a shortcut, a file's own
+/// metadata, a process -- names an executable. It attaches to the one
+/// installation whose directory contains that executable; when several do, to
+/// the one named like it, and otherwise to none. An installation with no known
+/// directory may adopt one from a shortcut or a file named exactly like it,
+/// published by the same publisher when both say, recorded for the same account,
+/// and unambiguous. An adopted directory must be one Force Stop could act on,
+/// and a second, different directory for the same application withdraws the
+/// adoption rather than choosing between them.
+/// </para>
+/// <para>
+/// <b>References.</b> What attaches to nothing is grouped by the executable it
+/// names and becomes an application of its own: Observed when a process is among
+/// its evidence, Referenced otherwise. Neither is an installation, and only the
+/// first is a row.
 /// </para>
 /// </remarks>
 public static class ApplicationMerger
@@ -61,8 +67,11 @@ public static class ApplicationMerger
         "language pack",
     ];
 
+    /// <summary>The same separator the normalizer and the identity use, for the same reason.</summary>
+    private const char KeySeparator = (char)0x1F;
+
     /// <summary>
-    /// One application per piece of evidence, identified and classified.
+    /// Everything the sources found, as applications.
     /// </summary>
     /// <remarks>
     /// Evidence that identifies nothing is dropped rather than becoming a row with
@@ -73,15 +82,24 @@ public static class ApplicationMerger
     {
         ArgumentNullException.ThrowIfNull(evidence);
 
-        var applications = new List<DiscoveredApplication>();
+        var items = evidence.Where(e => e is not null).ToList();
 
-        foreach (var item in evidence)
+        var installations = MergeInstallations(items.Where(e => e.IsAuthoritative));
+        var unattached = Attach(installations, items.Where(e => !e.IsAuthoritative));
+        var references = MergeReferences(unattached);
+
+        return [.. installations.Select(i => i.Build()), .. references];
+    }
+
+    // ---- stage 1: installations ------------------------------------------------------
+
+    private static List<Installation> MergeInstallations(IEnumerable<SoftwareEvidence> authoritative)
+    {
+        var byKey = new Dictionary<string, Installation>(StringComparer.OrdinalIgnoreCase);
+        var installations = new List<Installation>();
+
+        foreach (var item in authoritative)
         {
-            if (item is null)
-            {
-                continue;
-            }
-
             var identity = ApplicationIdentity.Derive(item);
             if (identity is null)
             {
@@ -93,71 +111,223 @@ public static class ApplicationMerger
             {
                 // Nothing to call it. The uninstall reader already skips entries
                 // with no DisplayName; this is the same rule applied to every
-                // source that will follow.
+                // source.
                 continue;
             }
 
-            applications.Add(new DiscoveredApplication(
-                identity,
-                name,
-                item.Version,
-                item.Publisher,
-                item.InstallDate,
-                item.InstallLocation,
-                item.RegistryView,
-                item.Scope,
-                item.InstalledForUser,
-                item.ProductCode,
-                ConfidenceOf(item),
-                CategoryOf(item, name),
-                [item]));
+            var key = string.Join(KeySeparator, RowKey(name, item), identity.StableKey);
+            if (byKey.TryGetValue(key, out var existing))
+            {
+                existing.Absorb(item);
+                continue;
+            }
+
+            var installation = new Installation(identity, name, item);
+            byKey.Add(key, installation);
+            installations.Add(installation);
+        }
+
+        return installations;
+    }
+
+    /// <summary>
+    /// The identity the normalizer keys rows on, computed the same way, so that
+    /// nothing folds here that would not have folded there.
+    /// </summary>
+    private static string RowKey(string name, SoftwareEvidence item) =>
+        string.Join(
+            KeySeparator,
+            name.Trim(),
+            Trimmed(item.Version),
+            Trimmed(item.Publisher),
+            item.Scope == SoftwareScope.User ? "User" : "Machine",
+            item.Scope == SoftwareScope.User ? Trimmed(item.InstalledForUser) : string.Empty);
+
+    // ---- stage 2: attachment ----------------------------------------------------------
+
+    /// <summary>Attaches what can be attached; returns what cannot.</summary>
+    private static List<SoftwareEvidence> Attach(List<Installation> installations, IEnumerable<SoftwareEvidence> supplementary)
+    {
+        var unattached = new List<SoftwareEvidence>();
+
+        foreach (var item in supplementary)
+        {
+            var path = ExecutablePath.Normalize(item.ExecutablePath);
+            if (path is null)
+            {
+                unattached.Add(item);
+                continue;
+            }
+
+            var containing = installations.Where(i => ExecutablePath.IsUnder(path, i.InstallLocation)).ToList();
+            if (containing.Count == 1)
+            {
+                containing[0].Attach(item, path);
+                continue;
+            }
+
+            if (containing.Count > 1)
+            {
+                // Several installations share the directory (an office suite does
+                // this). The one named like the evidence takes it; if none or
+                // several are, nothing does.
+                var named = containing.Where(i => i.IsNamed(item.Name)).ToList();
+                if (named.Count == 1)
+                {
+                    named[0].Attach(item, path);
+                    continue;
+                }
+
+                unattached.Add(item);
+                continue;
+            }
+
+            if (!string.IsNullOrWhiteSpace(item.Name))
+            {
+                var adopters = installations
+                    .Where(i => !i.HasRecordedLocation && i.IsNamed(item.Name) && i.PublisherAgrees(item) && i.IsRecordedFor(item))
+                    .ToList();
+
+                if (adopters.Count == 1)
+                {
+                    adopters[0].Adopt(item, path);
+                    continue;
+                }
+            }
+
+            unattached.Add(item);
+        }
+
+        return unattached;
+    }
+
+    // ---- stage 3: references ----------------------------------------------------------
+
+    private static List<DiscoveredApplication> MergeReferences(List<SoftwareEvidence> unattached)
+    {
+        var groups = new Dictionary<string, List<SoftwareEvidence>>(StringComparer.OrdinalIgnoreCase);
+        var ordered = new List<List<SoftwareEvidence>>();
+
+        foreach (var item in unattached)
+        {
+            // One application per executable. Evidence naming no executable stands
+            // alone; it cannot be shown to be about the same thing as anything else.
+            var key = ExecutablePath.Normalize(item.ExecutablePath) ?? $"{KeySeparator}{ordered.Count}";
+
+            if (!groups.TryGetValue(key, out var group))
+            {
+                group = [];
+                groups.Add(key, group);
+                ordered.Add(group);
+            }
+
+            group.Add(item);
+        }
+
+        var applications = new List<DiscoveredApplication>();
+        foreach (var group in ordered)
+        {
+            if (BuildReference(group) is { } application)
+            {
+                applications.Add(application);
+            }
         }
 
         return applications;
     }
 
-    /// <summary>What to call the application, from what this evidence knows.</summary>
-    private static string? DisplayName(SoftwareEvidence evidence)
-    {
-        if (!string.IsNullOrWhiteSpace(evidence.Name))
-        {
-            return evidence.Name.Trim();
-        }
-
-        // A source that found only an executable still names something: the file.
-        // Better than dropping a running application because nothing declared a
-        // display name for it.
-        if (!string.IsNullOrWhiteSpace(evidence.ExecutablePath))
-        {
-            try
-            {
-                var file = Path.GetFileNameWithoutExtension(evidence.ExecutablePath.Trim());
-                return string.IsNullOrWhiteSpace(file) ? null : file;
-            }
-            catch (ArgumentException)
-            {
-                return null;
-            }
-        }
-
-        return null;
-    }
-
     /// <summary>
-    /// What this evidence supports claiming.
+    /// One application from everything that named one executable and attached to
+    /// no installation.
     /// </summary>
     /// <remarks>
-    /// An installation record makes an application installed. A process makes it
-    /// present. A shortcut or an execution alias makes it referenced -- something
-    /// points at it, which is not the same as it being there, and is exactly what
-    /// a shortcut left behind by an uninstall looks like.
+    /// What to call it, in order: the shortcut that points at it, which is what
+    /// a person sees; the product name its own version resource declares; whatever
+    /// else named it; and finally the file itself. Version, publisher and signer
+    /// come from the file's metadata when it was read.
     /// </remarks>
-    private static DiscoveryConfidence ConfidenceOf(SoftwareEvidence evidence) => evidence switch
+    private static DiscoveredApplication? BuildReference(List<SoftwareEvidence> group)
     {
-        { IsAuthoritative: true } => DiscoveryConfidence.Installed,
-        { Source: EvidenceSource.RunningProcess } => DiscoveryConfidence.Observed,
-        _ => DiscoveryConfidence.Referenced,
-    };
+        var metadata = group.FirstOrDefault(e => e.Source == EvidenceSource.ExecutableMetadata);
+        var anchor = group.FirstOrDefault(e => e.Source != EvidenceSource.ExecutableMetadata) ?? group[0];
+        var process = group.FirstOrDefault(e => e.Source == EvidenceSource.RunningProcess);
+        var path = ExecutablePath.Normalize(anchor.ExecutablePath) ?? ExecutablePath.Normalize(metadata?.ExecutablePath);
+
+        var name = Value(group.FirstOrDefault(e => e.Source == EvidenceSource.StartMenuShortcut)?.Name)
+            ?? Value(metadata?.Name)
+            ?? group.Select(e => Value(e.Name)).FirstOrDefault(n => n is not null)
+            ?? FileName(path);
+
+        if (name is null)
+        {
+            return null;
+        }
+
+        var composite = new SoftwareEvidence(
+            process?.Source ?? anchor.Source,
+            name,
+            Value(metadata?.Version) ?? group.Select(e => Value(e.Version)).FirstOrDefault(v => v is not null),
+            Value(metadata?.Publisher) ?? group.Select(e => Value(e.Publisher)).FirstOrDefault(p => p is not null),
+            Scope: anchor.Scope,
+            InstalledForUser: anchor.InstalledForUser,
+            ExecutablePath: path,
+            SignerSubject: Value(metadata?.SignerSubject),
+            SignatureStatus: Value(metadata?.SignatureStatus));
+
+        var identity = ApplicationIdentity.Derive(composite);
+        if (identity is null)
+        {
+            return null;
+        }
+
+        return new DiscoveredApplication(
+            identity,
+            name,
+            composite.Version,
+            composite.Publisher,
+            InstallDate: null,
+            InstallLocation: null,
+            RegistryView: null,
+            composite.Scope,
+            composite.InstalledForUser,
+            ProductCode: null,
+            process is not null ? DiscoveryConfidence.Observed : DiscoveryConfidence.Referenced,
+            CategoryOf(composite, name),
+            group)
+        {
+            ExecutablePath = path,
+            SignerSubject = composite.SignerSubject,
+            SignatureStatus = composite.SignatureStatus,
+        };
+    }
+
+    // ---- shared -------------------------------------------------------------------------
+
+    /// <summary>What to call the application, from what this evidence knows.</summary>
+    private static string? DisplayName(SoftwareEvidence evidence) =>
+        Value(evidence.Name) ?? FileName(evidence.ExecutablePath);
+
+    /// <summary>
+    /// A source that found only an executable still names something: the file.
+    /// Better than dropping an application because nothing declared a display
+    /// name for it.
+    /// </summary>
+    private static string? FileName(string? executablePath)
+    {
+        if (string.IsNullOrWhiteSpace(executablePath))
+        {
+            return null;
+        }
+
+        try
+        {
+            return Value(Path.GetFileNameWithoutExtension(executablePath.Trim()));
+        }
+        catch (ArgumentException)
+        {
+            return null;
+        }
+    }
 
     private static ApplicationCategory CategoryOf(SoftwareEvidence evidence, string name)
     {
@@ -176,5 +346,155 @@ public static class ApplicationMerger
         return RuntimeMarkers.Any(m => lowered.Contains(m, StringComparison.Ordinal))
             ? ApplicationCategory.RuntimeOrSdk
             : ApplicationCategory.Application;
+    }
+
+    private static string? Value(string? raw) => string.IsNullOrWhiteSpace(raw) ? null : raw.Trim();
+
+    private static string Trimmed(string? value) => value?.Trim() ?? string.Empty;
+
+    private static bool NamesEqual(string? left, string? right) =>
+        Value(left) is { } l && Value(right) is { } r && string.Equals(l, r, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// One installation as it accumulates evidence. The first record's fields are
+    /// the row's fields, exactly as the normalizer's first-wins rule always made
+    /// them; later records add evidence and nothing else.
+    /// </summary>
+    private sealed class Installation
+    {
+        private readonly SoftwareEvidence _first;
+        private readonly List<SoftwareEvidence> _evidence;
+        private readonly List<(SoftwareEvidence Evidence, string Path)> _attached = [];
+        private string? _adoptedDirectory;
+        private bool _adoptionWithdrawn;
+
+        public Installation(ApplicationIdentity identity, string name, SoftwareEvidence first)
+        {
+            Identity = identity;
+            Name = name;
+            _first = first;
+            _evidence = [first];
+            InstallLocation = first.InstallLocation;
+            HasRecordedLocation = !string.IsNullOrWhiteSpace(first.InstallLocation);
+            UpgradeCode = Value(first.UpgradeCode);
+        }
+
+        public ApplicationIdentity Identity { get; }
+
+        public string Name { get; }
+
+        public string? InstallLocation { get; private set; }
+
+        /// <summary>Whether the installation record itself said where the application is.</summary>
+        public bool HasRecordedLocation { get; }
+
+        public string? UpgradeCode { get; private set; }
+
+        public bool IsNamed(string? name) => NamesEqual(Name, name);
+
+        /// <summary>The publishers agree, or one of them did not say.</summary>
+        public bool PublisherAgrees(SoftwareEvidence item) =>
+            Value(_first.Publisher) is null || Value(item.Publisher) is null || NamesEqual(_first.Publisher, item.Publisher);
+
+        /// <summary>Recorded in the same scope, and for the same account when per-user.</summary>
+        public bool IsRecordedFor(SoftwareEvidence item) =>
+            _first.Scope == item.Scope
+            && (_first.Scope != SoftwareScope.User || NamesEqual(_first.InstalledForUser, item.InstalledForUser));
+
+        /// <summary>A second installation record for the same row.</summary>
+        public void Absorb(SoftwareEvidence item)
+        {
+            _evidence.Add(item);
+            UpgradeCode ??= Value(item.UpgradeCode);
+        }
+
+        /// <summary>Supplementary evidence about an executable inside this installation.</summary>
+        public void Attach(SoftwareEvidence item, string path)
+        {
+            _evidence.Add(item);
+            _attached.Add((item, path));
+        }
+
+        /// <summary>
+        /// Supplementary evidence named like this installation, which has no
+        /// recorded directory: take the executable's, if it is one Force Stop
+        /// could act on, and only while every such piece of evidence agrees.
+        /// </summary>
+        public void Adopt(SoftwareEvidence item, string path)
+        {
+            Attach(item, path);
+
+            var directory = ExecutablePath.DirectoryOf(path);
+            if (directory is null || _adoptionWithdrawn || !ApplicationProcessMatcher.CanResolve(directory))
+            {
+                return;
+            }
+
+            if (_adoptedDirectory is null)
+            {
+                _adoptedDirectory = directory;
+                InstallLocation = directory;
+                return;
+            }
+
+            if (!string.Equals(_adoptedDirectory, directory, StringComparison.OrdinalIgnoreCase))
+            {
+                // Two directories for one application is a disagreement, and a
+                // location Force Stop acts on is not something to settle by guessing.
+                _adoptionWithdrawn = true;
+                _adoptedDirectory = null;
+                InstallLocation = null;
+            }
+        }
+
+        public DiscoveredApplication Build()
+        {
+            var primary = PrimaryExecutable();
+            var metadata = _attached
+                .Select(a => a.Evidence)
+                .Where(e => e.Source == EvidenceSource.ExecutableMetadata)
+                .OrderBy(e => string.Equals(ExecutablePath.Normalize(e.ExecutablePath), primary, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+                .FirstOrDefault();
+
+            return new DiscoveredApplication(
+                Identity,
+                Name,
+                _first.Version,
+                _first.Publisher,
+                _first.InstallDate,
+                InstallLocation,
+                _first.RegistryView,
+                _first.Scope,
+                _first.InstalledForUser,
+                _first.ProductCode,
+                DiscoveryConfidence.Installed,
+                CategoryOf(_first, Name),
+                _evidence)
+            {
+                UpgradeCode = UpgradeCode,
+                ExecutablePath = primary,
+                SignerSubject = Value(metadata?.SignerSubject),
+                SignatureStatus = Value(metadata?.SignatureStatus),
+            };
+        }
+
+        /// <summary>
+        /// The executable that best stands for the application: a shortcut named
+        /// like it, then an execution alias, then any shortcut, then a process.
+        /// Among equals, the first found.
+        /// </summary>
+        private string? PrimaryExecutable()
+        {
+            int Rank(SoftwareEvidence e) => e.Source switch
+            {
+                EvidenceSource.StartMenuShortcut when IsNamed(e.Name) => 0,
+                EvidenceSource.AppPaths => 1,
+                EvidenceSource.StartMenuShortcut => 2,
+                EvidenceSource.RunningProcess => 3,
+                _ => 4,
+            };
+
+            return _attached.OrderBy(a => Rank(a.Evidence)).Select(a => a.Path).FirstOrDefault();
+        }
     }
 }

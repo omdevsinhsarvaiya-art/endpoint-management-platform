@@ -5,31 +5,50 @@ using Microsoft.Extensions.Logging;
 namespace EndpointAgent.Core.Inventory;
 
 /// <summary>
-/// The installed-software collector: every discovery source, one report.
+/// The software collector the service runs: every discovery source, pooled,
+/// through one pipeline.
 /// </summary>
 /// <remarks>
 /// <para>
-/// Runs each <see cref="ISoftwareEvidenceSource"/> in the order registered, pools
-/// what they found, and hands the pool to <see cref="SoftwareDiscoveryPipeline"/>.
-/// Sources are independent by design -- none knows another exists -- so this is
-/// the only place the whole picture is assembled.
+/// Sources are independent and read-only, and one failing must cost its own
+/// evidence and nothing else: a package repository that cannot be read must not
+/// blank the uninstall registry's answer. Cancellation is the exception -- it is
+/// the host's instruction, not a source's failure -- and is honoured rather than
+/// swallowed.
 /// </para>
 /// <para>
-/// One source failing must not cost the inventory. A source that throws is logged
-/// and its evidence omitted; the report is built from the rest. That is the same
-/// rule every other collector follows, and it matters more here because several
-/// of these sources read places -- package roots, shortcut files, the process
-/// table -- that are routinely half-readable.
+/// After the sources have reported, every executable a supplementary source named
+/// is asked what it says about itself -- once per distinct file, bounded, and
+/// through the one abstraction that opens executables. That evidence joins the
+/// pool under its own source, so the merger sees a file's product name and signer
+/// as one more witness rather than as something a shortcut or alias asserted.
 /// </para>
 /// </remarks>
 public sealed class SoftwareDiscoveryCollector(
     IEnumerable<ISoftwareEvidenceSource> sources,
-    ILogger<SoftwareDiscoveryCollector> logger) : ISoftwareCollector
+    ILogger<SoftwareDiscoveryCollector> logger,
+    IExecutableMetadataReader? executables = null) : ISoftwareCollector
 {
-    private readonly IReadOnlyList<ISoftwareEvidenceSource> _sources = (sources ?? throw new ArgumentNullException(nameof(sources))).ToArray();
+    /// <summary>
+    /// The most executables described in one collection. A machine referencing
+    /// more than this from its shortcuts, aliases and processes has something
+    /// wrong with it, and the bound keeps the cost of a hostile machine finite.
+    /// </summary>
+    public const int MaxExecutables = 2_000;
+
+    private readonly IReadOnlyList<ISoftwareEvidenceSource> _sources =
+        (sources ?? throw new ArgumentNullException(nameof(sources))).ToArray();
+
     private readonly ILogger<SoftwareDiscoveryCollector> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
-    public async ValueTask<IReadOnlyList<InventorySoftware>> CollectAsync(CancellationToken cancellationToken = default)
+    private readonly IExecutableMetadataReader? _executables = executables;
+
+    /// <inheritdoc />
+    public async ValueTask<IReadOnlyList<InventorySoftware>> CollectAsync(CancellationToken cancellationToken = default) =>
+        SoftwareDiscoveryPipeline.Run(await CollectEvidenceAsync(cancellationToken));
+
+    /// <summary>Everything the sources found, plus what their executables say about themselves.</summary>
+    public async ValueTask<IReadOnlyList<SoftwareEvidence>> CollectEvidenceAsync(CancellationToken cancellationToken = default)
     {
         var evidence = new List<SoftwareEvidence>();
 
@@ -53,6 +72,67 @@ public sealed class SoftwareDiscoveryCollector(
             }
         }
 
-        return SoftwareDiscoveryPipeline.Run(evidence);
+        if (_executables is not null)
+        {
+            evidence.AddRange(DescribeExecutables(evidence, cancellationToken));
+        }
+
+        return evidence;
+    }
+
+    /// <summary>One piece of evidence per distinct executable the supplementary sources named.</summary>
+    private List<SoftwareEvidence> DescribeExecutables(List<SoftwareEvidence> evidence, CancellationToken cancellationToken)
+    {
+        var paths = evidence
+            .Where(e => !e.IsAuthoritative)
+            .Select(e => ExecutablePath.Normalize(e.ExecutablePath))
+            .Where(p => p is not null)
+            .Select(p => p!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (paths.Count > MaxExecutables)
+        {
+            _logger.LogWarning(
+                "Discovery referenced {Count} distinct executables; only the first {Max} are described.",
+                paths.Count, MaxExecutables);
+            paths = paths.Take(MaxExecutables).ToList();
+        }
+
+        var described = new List<SoftwareEvidence>(paths.Count);
+
+        foreach (var path in paths)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            ExecutableMetadata? metadata;
+            try
+            {
+                metadata = _executables!.Read(path);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogDebug(ex, "Could not read executable metadata for {Path}.", path);
+                continue;
+            }
+
+            if (metadata is null)
+            {
+                continue;
+            }
+
+            described.Add(new SoftwareEvidence(
+                EvidenceSource.ExecutableMetadata,
+                Name: metadata.ProductName,
+                Version: metadata.FileVersion,
+                Publisher: metadata.CompanyName,
+                ExecutablePath: path,
+                SignerSubject: metadata.SignerSubject,
+                SignatureStatus: metadata.SignatureStatus.ToString(),
+                FileDescription: metadata.FileDescription));
+        }
+
+        _logger.LogDebug("Described {Count} of {Referenced} referenced executable(s).", described.Count, paths.Count);
+        return described;
     }
 }

@@ -144,6 +144,8 @@ public static class Program
             builder.Services.AddSingleton<WindowsSoftwareCollector>();
             builder.Services.AddSingleton<ISoftwareEvidenceSource>(sp => sp.GetRequiredService<WindowsSoftwareCollector>());
             builder.Services.AddSingleton<ISoftwareEvidenceSource, WindowsAppPathsEvidenceSource>();
+            builder.Services.AddSingleton<ISoftwareEvidenceSource, WindowsStartMenuEvidenceSource>();
+            builder.Services.AddSingleton<IExecutableMetadataReader, WindowsExecutableMetadataReader>();
             builder.Services.AddSingleton<ISoftwareCollector, SoftwareDiscoveryCollector>();
             builder.Services.AddSingleton<WindowsSecurityPostureCollector>();
             builder.Services.AddSingleton<ISecurityPostureCollector>(

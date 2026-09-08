@@ -33,6 +33,22 @@ public sealed record DiscoveredApplication(
     ApplicationCategory Category,
     IReadOnlyList<SoftwareEvidence> Evidence)
 {
+    /// <summary>The Windows Installer upgrade code, when the product has one.</summary>
+    public string? UpgradeCode { get; init; }
+
+    /// <summary>
+    /// The application's primary executable, when a supplementary source named
+    /// one. Informational: the location Force Stop acts on is still
+    /// <see cref="InstallLocation"/>.
+    /// </summary>
+    public string? ExecutablePath { get; init; }
+
+    /// <summary>The subject the primary executable's embedded signature names, as a claim.</summary>
+    public string? SignerSubject { get; init; }
+
+    /// <summary>Whether the primary executable carries an embedded signature; see <see cref="ExecutableSignatureStatus"/>.</summary>
+    public string? SignatureStatus { get; init; }
+
     /// <summary>
     /// The shape the existing inventory pipeline consumes.
     /// </summary>

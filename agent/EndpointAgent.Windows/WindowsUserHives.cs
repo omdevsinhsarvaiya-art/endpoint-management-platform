@@ -1,5 +1,6 @@
 using System.Runtime.Versioning;
 using System.Security.Principal;
+using EndpointAgent.Core.Inventory;
 using Microsoft.Win32;
 
 namespace EndpointAgent.Windows;
@@ -31,6 +32,9 @@ public readonly record struct LoadedUserHive(string Sid, string Account);
 [SupportedOSPlatform("windows")]
 internal static class WindowsUserHives
 {
+    private const string ProfileList = @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList";
+    private const string ShellFolders = @"Software\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders";
+
     /// <summary>
     /// Every mounted hive that belongs to a person.
     /// </summary>
@@ -106,4 +110,64 @@ internal static class WindowsUserHives
             return null;
         }
     }
+
+    /// <summary>
+    /// The user's profile directory, from the machine's profile list, or null
+    /// when it is unknown or not a local directory.
+    /// </summary>
+    /// <remarks>
+    /// Read from HKLM rather than from the user's own hive: the profile list is
+    /// what Windows itself consults, and it is readable by the service for every
+    /// account whether or not that account is signed in.
+    /// </remarks>
+    public static string? ProfilePath(string sid)
+    {
+        if (string.IsNullOrWhiteSpace(sid) || sid.Contains('\\'))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var baseKey = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
+            using var profile = baseKey.OpenSubKey(ProfileList + "\\" + sid);
+            return LocalDirectory(profile?.GetValue("ProfileImagePath") as string);
+        }
+        catch (Exception ex) when (ex is System.Security.SecurityException or UnauthorizedAccessException or IOException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// The user's own Start Menu Programs folder: where the shell was told it is,
+    /// if that is a local directory, otherwise the profile default.
+    /// </summary>
+    /// <remarks>
+    /// A redirected folder on a network share is refused rather than walked: the
+    /// service must not reach for a share on a user's behalf.
+    /// </remarks>
+    public static string? StartMenuPrograms(string sid)
+    {
+        try
+        {
+            using var shellFolders = OpenUserSubKey(sid, ShellFolders);
+            if (LocalDirectory(shellFolders?.GetValue("Programs") as string) is { } redirected)
+            {
+                return redirected;
+            }
+        }
+        catch (Exception ex) when (ex is System.Security.SecurityException or UnauthorizedAccessException or IOException)
+        {
+            // Fall through to the default.
+        }
+
+        var profile = ProfilePath(sid);
+        return profile is null
+            ? null
+            : Path.Combine(profile, "AppData", "Roaming", "Microsoft", "Windows", "Start Menu", "Programs");
+    }
+
+    /// <summary>An absolute local directory with no traversal, or null. The same rule executables get.</summary>
+    private static string? LocalDirectory(string? raw) => ExecutablePath.Normalize(raw);
 }
