@@ -79,7 +79,8 @@ public sealed record SoftwareEvidence(
     string? ExecutablePath = null,
     string? SignerSubject = null,
     string? SignatureStatus = null,
-    string? FileDescription = null)
+    string? FileDescription = null,
+    ApplicationCategory? Category = null)
 {
     /// <summary>
     /// Whether this evidence is an installation record rather than a hint.

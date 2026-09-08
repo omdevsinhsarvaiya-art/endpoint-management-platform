@@ -329,11 +329,21 @@ public static class ApplicationMerger
         }
     }
 
+    /// <summary>
+    /// What kind of software this is: what the source declared when it knew (a
+    /// package manifest says outright that it is a framework), otherwise what
+    /// the name suggests.
+    /// </summary>
     private static ApplicationCategory CategoryOf(SoftwareEvidence evidence, string name)
     {
         if (evidence.Source == EvidenceSource.RunningProcess)
         {
             return ApplicationCategory.Observed;
+        }
+
+        if (evidence.Category is { } declared)
+        {
+            return declared;
         }
 
         var lowered = name.ToLowerInvariant();
@@ -450,11 +460,16 @@ public static class ApplicationMerger
         public DiscoveredApplication Build()
         {
             var primary = PrimaryExecutable();
-            var metadata = _attached
-                .Select(a => a.Evidence)
-                .Where(e => e.Source == EvidenceSource.ExecutableMetadata)
-                .OrderBy(e => string.Equals(ExecutablePath.Normalize(e.ExecutablePath), primary, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
-                .FirstOrDefault();
+
+            // The signer: what the installation record itself says first -- a
+            // package's publisher is the subject Windows verified its signature
+            // against -- and only then what a file's own signature claims.
+            var signed = _evidence.FirstOrDefault(e => e.IsAuthoritative && Value(e.SignerSubject) is not null)
+                ?? _attached
+                    .Select(a => a.Evidence)
+                    .Where(e => e.Source == EvidenceSource.ExecutableMetadata)
+                    .OrderBy(e => string.Equals(ExecutablePath.Normalize(e.ExecutablePath), primary, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+                    .FirstOrDefault();
 
             return new DiscoveredApplication(
                 Identity,
@@ -473,18 +488,29 @@ public static class ApplicationMerger
             {
                 UpgradeCode = UpgradeCode,
                 ExecutablePath = primary,
-                SignerSubject = Value(metadata?.SignerSubject),
-                SignatureStatus = Value(metadata?.SignatureStatus),
+                SignerSubject = Value(signed?.SignerSubject),
+                SignatureStatus = Value(signed?.SignatureStatus),
             };
         }
 
         /// <summary>
-        /// The executable that best stands for the application: a shortcut named
-        /// like it, then an execution alias, then any shortcut, then a process.
-        /// Among equals, the first found.
+        /// The executable that best stands for the application: the one its
+        /// installation record declares (a package manifest names its
+        /// application's executable), then a shortcut named like it, then an
+        /// execution alias, then any shortcut, then a process. Among equals, the
+        /// first found.
         /// </summary>
         private string? PrimaryExecutable()
         {
+            var declared = _evidence
+                .Where(e => e.IsAuthoritative)
+                .Select(e => ExecutablePath.Normalize(e.ExecutablePath))
+                .FirstOrDefault(p => p is not null);
+            if (declared is not null)
+            {
+                return declared;
+            }
+
             int Rank(SoftwareEvidence e) => e.Source switch
             {
                 EvidenceSource.StartMenuShortcut when IsNamed(e.Name) => 0,

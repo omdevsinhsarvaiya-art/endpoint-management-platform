@@ -425,6 +425,43 @@ public sealed class ApplicationMergerAttachmentTests
         app.SignatureStatus.ShouldBe("Signed");
     }
 
+    /// <summary>
+    /// A package registration declares its own executable and carries the
+    /// publisher Windows verified. Neither needs a shortcut to be known.
+    /// </summary>
+    [Fact]
+    public void An_installation_record_that_declares_its_executable_and_signer_keeps_them()
+    {
+        const string root = @"C:\Program Files\WindowsApps\Claude_1.30096.5.0_x64__pzs8sxrjxfjjc";
+        var package = new SoftwareEvidence(EvidenceSource.PackageRegistration, "Claude", "1.30096.5.0", "Anthropic, PBC",
+            InstallLocation: root, Scope: SoftwareScope.User, InstalledForUser: User,
+            PackageFamilyName: "Claude_pzs8sxrjxfjjc", PackageFullName: "Claude_1.30096.5.0_x64__pzs8sxrjxfjjc",
+            ExecutablePath: root + @"\Claude.exe", SignerSubject: "CN=Anthropic, PBC, O=Anthropic, PBC", SignatureStatus: "Signed");
+
+        var app = ApplicationMerger.Merge([package]).ShouldHaveSingleItem();
+
+        app.ExecutablePath.ShouldBe(root + @"\Claude.exe");
+        app.SignerSubject.ShouldBe("CN=Anthropic, PBC, O=Anthropic, PBC");
+        app.SignatureStatus.ShouldBe("Signed");
+    }
+
+    /// <summary>What Windows verified outranks what a file claims about itself.</summary>
+    [Fact]
+    public void The_installation_records_signer_outranks_file_metadata()
+    {
+        const string root = @"C:\Program Files\WindowsApps\Contoso.App_1.0.0.0_x64__abc";
+        var package = new SoftwareEvidence(EvidenceSource.PackageRegistration, "Contoso App", "1.0.0.0", "Contoso",
+            InstallLocation: root, PackageFamilyName: "Contoso.App_abc", ExecutablePath: root + @"\app.exe",
+            SignerSubject: "CN=Contoso Ltd (verified)", SignatureStatus: "Signed");
+        var claim = Metadata(root + @"\app.exe", signer: "CN=Contoso Ltd (claimed)");
+        var shortcut = Shortcut("Contoso App", root + @"\launcher.exe");
+
+        var app = ApplicationMerger.Merge([package, shortcut, claim]).ShouldHaveSingleItem();
+
+        app.SignerSubject.ShouldBe("CN=Contoso Ltd (verified)");
+        app.ExecutablePath.ShouldBe(root + @"\app.exe", "the declared executable outranks a same-named shortcut");
+    }
+
     [Fact]
     public void An_installation_with_no_attached_executable_has_no_signer()
     {
@@ -433,6 +470,60 @@ public sealed class ApplicationMergerAttachmentTests
         app.ExecutablePath.ShouldBeNull();
         app.SignerSubject.ShouldBeNull();
         app.SignatureStatus.ShouldBeNull();
+    }
+
+    // ---- category and packages ---------------------------------------------------------
+
+    /// <summary>A source that knows what a thing is says so; the name heuristic is for the ones that cannot.</summary>
+    [Fact]
+    public void A_declared_category_wins_over_the_name_heuristic()
+    {
+        var framework = new SoftwareEvidence(EvidenceSource.PackageRegistration, "Contoso Application Suite", "1.0", "Contoso",
+            InstallLocation: @"C:\Program Files\WindowsApps\Contoso.Suite_1.0.0.0_x64__abc", PackageFamilyName: "Contoso.Suite_abc",
+            Category: ApplicationCategory.FrameworkOrResource);
+        var inbox = new SoftwareEvidence(EvidenceSource.PackageRegistration, "Runtime Broker", "10.0", "Microsoft",
+            InstallLocation: @"C:\Windows\SystemApps\Microsoft.Windows.X_cw5n1h2txyewy", PackageFamilyName: "Microsoft.Windows.X_cw5n1h2txyewy",
+            Category: ApplicationCategory.InboxApp);
+        var undeclared = new SoftwareEvidence(EvidenceSource.PackageRegistration, "Contoso Runtime", "1.0", "Contoso",
+            InstallLocation: @"C:\Program Files\WindowsApps\Contoso.Runtime_1.0.0.0_x64__abc", PackageFamilyName: "Contoso.Runtime_abc");
+
+        var apps = ApplicationMerger.Merge([framework, inbox, undeclared]);
+
+        apps[0].Category.ShouldBe(ApplicationCategory.FrameworkOrResource);
+        apps[1].Category.ShouldBe(ApplicationCategory.InboxApp);
+        apps[2].Category.ShouldBe(ApplicationCategory.RuntimeOrSdk, "no declaration, so the name decides");
+    }
+
+    [Fact]
+    public void A_declared_category_never_drops_the_row()
+    {
+        var framework = new SoftwareEvidence(EvidenceSource.PackageRegistration, "Microsoft.VCLibs.140.00", "14.0.33728.0", "Microsoft Corporation",
+            InstallLocation: @"C:\Program Files\WindowsApps\Microsoft.VCLibs.140.00_14.0.33728.0_x64__8wekyb3d8bbwe",
+            PackageFamilyName: "Microsoft.VCLibs.140.00_8wekyb3d8bbwe", Category: ApplicationCategory.FrameworkOrResource);
+
+        SoftwareDiscoveryPipeline.Run([framework]).ShouldHaveSingleItem().Name.ShouldBe("Microsoft.VCLibs.140.00");
+    }
+
+    [Fact]
+    public void A_packaged_application_attaches_the_shortcut_that_points_into_its_root()
+    {
+        const string root = @"C:\Program Files\WindowsApps\com.tinyspeck.slackdesktop_4.52.155.0_x64__8yrtsj140pw4g";
+        var slack = new SoftwareEvidence(EvidenceSource.PackageRegistration, "Slack", "4.52.155.0", "Slack Technologies Inc.",
+            InstallLocation: root, Scope: SoftwareScope.User, InstalledForUser: User,
+            PackageFamilyName: "com.tinyspeck.slackdesktop_8yrtsj140pw4g",
+            PackageFullName: "com.tinyspeck.slackdesktop_4.52.155.0_x64__8yrtsj140pw4g",
+            ExecutablePath: root + @"\app\Slack.exe");
+        var shortcut = Shortcut("Slack", root + @"\app\Slack.exe", SoftwareScope.User, User);
+
+        var app = ApplicationMerger.Merge([slack, shortcut]).ShouldHaveSingleItem();
+
+        app.Identity.Kind.ShouldBe(IdentityKind.Package);
+        app.Identity.StableKey.ShouldBe("com.tinyspeck.slackdesktop_8yrtsj140pw4g");
+        app.Identity.VersionKey.ShouldBe("com.tinyspeck.slackdesktop_4.52.155.0_x64__8yrtsj140pw4g");
+        app.Confidence.ShouldBe(DiscoveryConfidence.Installed);
+        app.Evidence.Count.ShouldBe(2);
+        app.ExecutablePath.ShouldEndWith(@"\app\Slack.exe");
+        app.ToDiscoveredSoftware().InstallLocation.ShouldBe(root);
     }
 
     // ---- ordering -------------------------------------------------------------------------

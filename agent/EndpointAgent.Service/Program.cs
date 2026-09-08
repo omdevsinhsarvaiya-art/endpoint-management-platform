@@ -140,9 +140,12 @@ public static class Program
 
             // Software discovery: every source is read-only and independent; the
             // composite pools their evidence into one report. Registered in the
-            // order their evidence is pooled, the uninstall registry first.
+            // order their evidence is pooled: installation records first (the
+            // uninstall registry, then package registrations), then the
+            // supplementary sources.
             builder.Services.AddSingleton<WindowsSoftwareCollector>();
             builder.Services.AddSingleton<ISoftwareEvidenceSource>(sp => sp.GetRequiredService<WindowsSoftwareCollector>());
+            builder.Services.AddSingleton<ISoftwareEvidenceSource, WindowsPackageRegistrationEvidenceSource>();
             builder.Services.AddSingleton<ISoftwareEvidenceSource, WindowsAppPathsEvidenceSource>();
             builder.Services.AddSingleton<ISoftwareEvidenceSource, WindowsStartMenuEvidenceSource>();
             builder.Services.AddSingleton<IExecutableMetadataReader, WindowsExecutableMetadataReader>();
