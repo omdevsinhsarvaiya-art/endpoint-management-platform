@@ -1,7 +1,18 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { signingLabel, upgradeTargets } from './agentUpdateView'
-import { canForceStop, forceStopMessage, registryViewLabel, scopeLabel } from './softwareView'
+import {
+  canForceStop,
+  categoryLabel,
+  confidenceLabel,
+  confidenceTone,
+  evidenceSourceLabel,
+  forceStopMessage,
+  isApplicationRow,
+  registryViewLabel,
+  scopeLabel,
+  signerLabel,
+} from './softwareView'
 import { forceStopApplication } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import { DeviceUsersPanel } from './DeviceUsersPanel'
@@ -126,6 +137,10 @@ export function DeviceDetailPage() {
   const [releases, setReleases] = useState<AgentReleaseRow[]>([])
   const [targetReleaseId, setTargetReleaseId] = useState<string>('')
   const [softwareSearch, setSoftwareSearch] = useState('')
+  // Frameworks, inbox apps and system components are reported and categorised
+  // by the endpoint, and hidden here by default: the count in the tab is the
+  // number the device reported, the list is what an operator manages.
+  const [showSystemSoftware, setShowSystemSoftware] = useState(false)
   const [stopping, setStopping] = useState<string | null>(null)
 
   // The published agent release, for the "update agent" affordance. Fetched
@@ -683,15 +698,25 @@ export function DeviceDetailPage() {
             <div className="card">
               <div className="card-header">
                 <h2>Installed applications</h2>
-                <div className="input-search" style={{ maxWidth: 260 }}>
-                  <Icon name="search" size={15} className="search-icon" />
-                  <input
-                    type="search"
-                    placeholder="Search applications…"
-                    aria-label="Search installed applications"
-                    value={softwareSearch}
-                    onChange={(e) => setSoftwareSearch(e.target.value)}
-                  />
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                  <label className="checkbox-inline">
+                    <input
+                      type="checkbox"
+                      checked={showSystemSoftware}
+                      onChange={(e) => setShowSystemSoftware(e.target.checked)}
+                    />
+                    Show Windows components
+                  </label>
+                  <div className="input-search" style={{ maxWidth: 260 }}>
+                    <Icon name="search" size={15} className="search-icon" />
+                    <input
+                      type="search"
+                      placeholder="Search applications…"
+                      aria-label="Search installed applications"
+                      value={softwareSearch}
+                      onChange={(e) => setSoftwareSearch(e.target.value)}
+                    />
+                  </div>
                 </div>
               </div>
               <div className="scroll-y table-wrap">
@@ -701,13 +726,16 @@ export function DeviceDetailPage() {
                       <th>Application</th>
                       <th>Version</th>
                       <th>Publisher</th>
+                      <th>Type</th>
                       <th>Installed for</th>
+                      <th>Signer</th>
                       <th>Found in</th>
                       {canExecuteTasks && <th style={{ textAlign: 'right' }}>Actions</th>}
                     </tr>
                   </thead>
                   <tbody>
                     {device.software
+                      .filter((sw) => showSystemSoftware || isApplicationRow(sw.category))
                       .filter((sw) =>
                         softwareSearch.trim() === ''
                         || sw.name.toLowerCase().includes(softwareSearch.trim().toLowerCase())
@@ -718,10 +746,40 @@ export function DeviceDetailPage() {
                       // and keying without the user collides on exactly those
                       // rows.
                       <tr key={`${sw.name}|${sw.version}|${sw.installedForUser ?? ''}`}>
-                        <td>{sw.name}</td>
+                        <td>
+                          {sw.name}
+                          {sw.confidence === 'Observed' && (
+                            <span className={`badge ${confidenceTone(sw.confidence)}`} style={{ marginLeft: 8 }}>
+                              {confidenceLabel(sw.confidence)}
+                            </span>
+                          )}
+                          {/* Why the endpoint believes this application exists,
+                              in the order it reported: installation records
+                              first, then what attached to them. Collapsed, so
+                              the list stays a list. */}
+                          {sw.evidence && sw.evidence.length > 0 && (
+                            <details className="evidence">
+                              <summary className="muted">
+                                {sw.evidence.length} piece{sw.evidence.length === 1 ? '' : 's'} of evidence
+                              </summary>
+                              <ul className="evidence-list">
+                                {sw.evidence.map((e, index) => (
+                                  <li key={`${e.source}|${e.detail ?? ''}|${index}`}>
+                                    <strong>{evidenceSourceLabel(e.source)}</strong>
+                                    {e.name ? ` — ${e.name}` : ''}
+                                    {e.detail ? <span className="muted"> ({e.detail})</span> : null}
+                                  </li>
+                                ))}
+                              </ul>
+                            </details>
+                          )}
+                        </td>
                         <td>{sw.version ?? '—'}</td>
                         <td>{sw.publisher ?? '—'}</td>
+                        <td>{categoryLabel(sw.category)}</td>
                         <td>{scopeLabel(sw)}</td>
+                        {/* Presence of a signature, not trust in it. */}
+                        <td title={sw.signerSubject ?? undefined}>{signerLabel(sw.signerSubject, sw.signatureStatus)}</td>
                         {/* Not the binary's architecture: 64-bit products
                             routinely register under WOW6432Node. */}
                         <td>{registryViewLabel(sw.architecture)}</td>

@@ -148,6 +148,10 @@ public static class Program
             builder.Services.AddSingleton<ISoftwareEvidenceSource, WindowsPackageRegistrationEvidenceSource>();
             builder.Services.AddSingleton<ISoftwareEvidenceSource, WindowsAppPathsEvidenceSource>();
             builder.Services.AddSingleton<ISoftwareEvidenceSource, WindowsStartMenuEvidenceSource>();
+            // Last: what is running now. An observed executable is a row only
+            // because the wire now carries its confidence, so the console can
+            // show it for what it is rather than as an installation.
+            builder.Services.AddSingleton<ISoftwareEvidenceSource, WindowsRunningProcessEvidenceSource>();
             builder.Services.AddSingleton<IExecutableMetadataReader, WindowsExecutableMetadataReader>();
             builder.Services.AddSingleton<ISoftwareCollector, SoftwareDiscoveryCollector>();
             builder.Services.AddSingleton<WindowsSecurityPostureCollector>();

@@ -131,6 +131,10 @@ public static class SoftwareEndpoints
         return Results.Ok(result);
     }
 
+    /// <param name="view">
+    /// <c>applications</c> (the default) hides frameworks, inbox apps and
+    /// components; <c>all</c> shows everything the endpoints reported.
+    /// </param>
     private static async Task<IResult> ListAsync(
         SoftwareReadService softwareReadService,
         HttpContext httpContext,
@@ -138,11 +142,25 @@ public static class SoftwareEndpoints
         string? publisher,
         CancellationToken cancellationToken,
         int page = 1,
-        int pageSize = 50)
+        int pageSize = 50,
+        string? view = null)
     {
+        SoftwareView softwareView;
+        switch (view?.Trim().ToLowerInvariant())
+        {
+            case null or "" or "applications":
+                softwareView = SoftwareView.Applications;
+                break;
+            case "all":
+                softwareView = SoftwareView.All;
+                break;
+            default:
+                return Results.Problem("view must be 'applications' or 'all'.", statusCode: StatusCodes.Status400BadRequest);
+        }
+
         var organizationId = AdminActor.Required(httpContext.User).OrganizationId;
         var result = await softwareReadService.ListTitlesAsync(
-            organizationId, page, pageSize, search, publisher, cancellationToken);
+            organizationId, page, pageSize, search, publisher, softwareView, cancellationToken);
         return Results.Ok(result);
     }
 

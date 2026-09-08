@@ -501,11 +501,45 @@ export function getRecentTasks(
   return request<FleetTaskPage>(`/admin/v1/tasks?${params}`)
 }
 
+/**
+ * What kind of software a row is, decided on the endpoint. Null from agents
+ * older than 1.9.0. `FrameworkOrResource`, `InboxApp` and `Component` are the
+ * categories the default view hides.
+ */
+export type SoftwareCategory =
+  | 'Application'
+  | 'InboxApp'
+  | 'RuntimeOrSdk'
+  | 'FrameworkOrResource'
+  | 'Component'
+  | 'Observed'
+  | 'Transient'
+
+/**
+ * How sure the endpoint is that an application is present. `Installed` means an
+ * installation record vouches for it; `Observed` means only a running process
+ * does — a portable application. Null from agents older than 1.9.0, for which
+ * every row was an installation record.
+ */
+export type SoftwareConfidence = 'Installed' | 'Observed'
+
+/** One reason an endpoint believes an application exists. */
+export interface SoftwareEvidence {
+  /** WindowsInstaller, UninstallRegistry, PackageRegistration, AppPaths, StartMenuShortcut, ExecutableMetadata or RunningProcess. */
+  source: string
+  /** What that source called it: a shortcut's name, a file's product name, a process name. */
+  name: string | null
+  /** What it pointed at: a product code, a package full name, or an executable path. */
+  detail: string | null
+}
+
 export interface SoftwareTitle {
   name: string
   version: string | null
   publisher: string | null
   installCount: number
+  category?: SoftwareCategory | string | null
+  confidence?: SoftwareConfidence | string | null
 }
 export interface SoftwareTitlePage {
   items: SoftwareTitle[]
@@ -534,6 +568,21 @@ export interface DeviceSoftwareItem {
    * stopped — the server is still the authority on that.
    */
   installLocation: string | null
+  /** Package, WindowsInstaller, Registered or Executable; null from agents older than 1.9.0. */
+  identityKind?: string | null
+  /** The identity that survives an update. */
+  stableKey?: string | null
+  confidence?: SoftwareConfidence | string | null
+  category?: SoftwareCategory | string | null
+  packageFamilyName?: string | null
+  /** The primary executable, when a source named one. Informational; Force Stop acts on installLocation. */
+  executablePath?: string | null
+  /** The signer the endpoint read: verified by Windows for a package, a claim for a file. */
+  signerSubject?: string | null
+  /** Signed, Unsigned or Unreadable. */
+  signatureStatus?: string | null
+  /** Why the endpoint believes the application exists. Empty from older agents. */
+  evidence?: SoftwareEvidence[]
 }
 
 /** What Force Stop did on one device. */
@@ -565,10 +614,23 @@ export function forceStopApplication(
   })
 }
 
-export function getSoftwareTitles(page: number, pageSize: number, search: string, publisher: string): Promise<SoftwareTitlePage> {
+/**
+ * Which titles to list: `applications` (the default) hides frameworks, inbox
+ * apps and components; `all` shows everything the endpoints reported.
+ */
+export type SoftwareTitleView = 'applications' | 'all'
+
+export function getSoftwareTitles(
+  page: number,
+  pageSize: number,
+  search: string,
+  publisher: string,
+  view: SoftwareTitleView = 'applications',
+): Promise<SoftwareTitlePage> {
   const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) })
   if (search.trim()) params.set('search', search.trim())
   if (publisher) params.set('publisher', publisher)
+  if (view !== 'applications') params.set('view', view)
   return request<SoftwareTitlePage>(`/admin/v1/software?${params}`)
 }
 export function getSoftwarePublishers(): Promise<string[]> {
@@ -740,6 +802,14 @@ export interface SoftwareInstallation {
   installLocation: string | null
   productCode: string | null
   collectedAt: string
+  identityKind?: string | null
+  stableKey?: string | null
+  confidence?: SoftwareConfidence | string | null
+  category?: SoftwareCategory | string | null
+  packageFamilyName?: string | null
+  executablePath?: string | null
+  signerSubject?: string | null
+  signatureStatus?: string | null
 }
 
 export interface SoftwareInstallationPage {

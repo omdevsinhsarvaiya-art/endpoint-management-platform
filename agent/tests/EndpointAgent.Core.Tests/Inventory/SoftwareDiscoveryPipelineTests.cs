@@ -409,6 +409,11 @@ public sealed class SoftwareDiscoveryPipelineTests
             e.Name, e.Version, e.Publisher, e.InstallDate, e.InstallLocation,
             e.RegistryView, e.Scope, e.InstalledForUser, e.ProductCode));
 
+    /// <summary>The nine fields the report has always carried, and nothing else.</summary>
+    private static EndpointPlatform.Contracts.Agent.InventorySoftware Legacy(EndpointPlatform.Contracts.Agent.InventorySoftware s) => new(
+        s.Name, s.Version, s.Publisher, s.InstallDate, s.InstallLocation, s.Architecture,
+        s.InstallationScope, s.InstalledForUser, s.ProductCode);
+
     [Fact]
     public void The_pipeline_reports_what_the_collector_reported_before_it_existed()
     {
@@ -418,7 +423,15 @@ public sealed class SoftwareDiscoveryPipelineTests
         var after = SoftwareInventoryNormalizer.Normalize(
             ApplicationMerger.Merge(evidence).Select(a => a.ToDiscoveredSoftware()));
 
-        after.ShouldBe(before);
+        // Row for row, the fields the report always carried are what they were.
+        after.Select(Legacy).ShouldBe(before.Select(Legacy));
+
+        // What discovery adds rides alongside, on every row.
+        after.ShouldAllBe(s => s.IdentityKind != null && s.StableKey != null && s.Confidence == "Installed" && s.Category != null);
+        after.ShouldAllBe(s => s.Evidence != null && s.Evidence.Count > 0);
+        after.Single(s => s.Name == "Google Chrome").Evidence!.Count.ShouldBe(2);
+        after.Single(s => s.Name == "WireGuard").IdentityKind.ShouldBe("WindowsInstaller");
+        after.Single(s => s.Name == "WireGuard").Evidence!.Single().Detail.ShouldBe("{11111111-2222-3333-4444-555555555555}");
     }
 
     /// <summary>

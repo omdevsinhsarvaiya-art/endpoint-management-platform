@@ -19,6 +19,9 @@ public enum SoftwareScope
 /// Deliberately a plain record with no Windows types: it is what the platform
 /// layer produces and what the tests construct, so the normalization rules below
 /// can be exercised with fixtures instead of a real machine's registry.
+/// The nine leading fields are the ones the inventory has always carried; the
+/// rest arrived with application discovery and are optional, so every existing
+/// caller and fixture is unchanged.
 /// </remarks>
 /// <param name="RegistryView">
 /// <c>x64</c>, <c>x86</c>, or null. Where the entry was found, not what the
@@ -33,7 +36,19 @@ public sealed record DiscoveredSoftware(
     string? RegistryView = null,
     SoftwareScope Scope = SoftwareScope.Machine,
     string? InstalledForUser = null,
-    string? ProductCode = null);
+    string? ProductCode = null,
+    string? IdentityKind = null,
+    string? StableKey = null,
+    string? VersionKey = null,
+    string? Confidence = null,
+    string? Category = null,
+    string? PackageFamilyName = null,
+    string? PackageFullName = null,
+    string? UpgradeCode = null,
+    string? ExecutablePath = null,
+    string? SignerSubject = null,
+    string? SignatureStatus = null,
+    IReadOnlyList<InventorySoftwareEvidence>? Evidence = null);
 
 /// <summary>
 /// Turns everything the discovery sources found into the list the server will
@@ -71,6 +86,18 @@ public static class SoftwareInventoryNormalizer
     private const int MaxUser = 256;
     private const int MaxProductCode = 64;
 
+    // The application-discovery fields, at the limits InventorySoftware documents.
+    private const int MaxIdentityKind = InventorySoftware.MaxIdentityKind;
+    private const int MaxStableKey = InventorySoftware.MaxStableKey;
+    private const int MaxVersionKey = InventorySoftware.MaxVersionKey;
+    private const int MaxConfidence = InventorySoftware.MaxConfidence;
+    private const int MaxCategory = InventorySoftware.MaxCategory;
+    private const int MaxPackageName = InventorySoftware.MaxPackageName;
+    private const int MaxUpgradeCode = InventorySoftware.MaxUpgradeCode;
+    private const int MaxExecutablePath = InventorySoftware.MaxExecutablePath;
+    private const int MaxSignerSubject = InventorySoftware.MaxSignerSubject;
+    private const int MaxSignatureStatus = InventorySoftware.MaxSignatureStatus;
+
     /// <summary>
     /// ASCII Unit Separator, joining the identity fields.
     /// </summary>
@@ -82,22 +109,24 @@ public static class SoftwareInventoryNormalizer
     private const char IdentitySeparator = (char)0x1F;
 
     /// <summary>
-    /// Collapses duplicates and produces the reportable list, ordered by name.
+    /// Produces the wire-ready list.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The identity of an installation is (name, version, publisher, scope, user).
-    /// Name alone is too coarse -- two publishers ship a "Setup" -- and including
-    /// version keeps a genuine side-by-side install visible rather than silently
-    /// picking one.
+    /// The identity of an installation is (name, version, publisher, scope,
+    /// account). Scope and account are part of it because the same product
+    /// installed for two people is two installations - uninstalling one leaves
+    /// the other running - and folding them would hide that. The same product
+    /// under both registry views of one machine-wide install, however, is one
+    /// installation, and the first occurrence wins.
     /// </para>
     /// <para>
-    /// Scope and user are part of the key because the same product installed for
-    /// two people is two installations, not a duplicate: uninstalling one leaves
-    /// the other running. Machine-wide and per-user copies of the same product are
-    /// likewise both real. What this does collapse is the same entry seen twice
-    /// through different registry views, which is the actual duplication Windows
-    /// produces.
+    /// Comparison is case-insensitive, matching what Windows does for registry
+    /// key names and what an administrator would expect. The clamp-then-compare
+    /// order matters: two names that differ only past the limit are the same
+    /// after truncation, and treating them as distinct would produce two rows
+    /// with identical text -- exactly the duplicate-looking output the rule
+    /// exists to prevent. The tests assert the order, not the intent.
     /// </para>
     /// </remarks>
     public static IReadOnlyList<InventorySoftware> Normalize(IEnumerable<DiscoveredSoftware> discovered)
@@ -136,7 +165,19 @@ public static class SoftwareInventoryNormalizer
                 Clamp(raw.RegistryView, MaxScope),
                 Clamp(scope, MaxScope),
                 user,
-                Clamp(raw.ProductCode, MaxProductCode)));
+                Clamp(raw.ProductCode, MaxProductCode),
+                Clamp(raw.IdentityKind, MaxIdentityKind),
+                Clamp(raw.StableKey, MaxStableKey),
+                Clamp(raw.VersionKey, MaxVersionKey),
+                Clamp(raw.Confidence, MaxConfidence),
+                Clamp(raw.Category, MaxCategory),
+                Clamp(raw.PackageFamilyName, MaxPackageName),
+                Clamp(raw.PackageFullName, MaxPackageName),
+                Clamp(raw.UpgradeCode, MaxUpgradeCode),
+                Clamp(raw.ExecutablePath, MaxExecutablePath),
+                Clamp(raw.SignerSubject, MaxSignerSubject),
+                Clamp(raw.SignatureStatus, MaxSignatureStatus),
+                ClampEvidence(raw.Evidence)));
         }
 
         return byIdentity.Values
@@ -147,7 +188,7 @@ public static class SoftwareInventoryNormalizer
             .ToArray();
     }
 
-    /// <summary>Trims, treats blank as absent, and truncates to the wire limit.</summary>
+    /// <summary>Trims and truncates; null for anything blank.</summary>
     private static string? Clamp(string? value, int maxLength)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -157,5 +198,39 @@ public static class SoftwareInventoryNormalizer
 
         var trimmed = value.Trim();
         return trimmed.Length <= maxLength ? trimmed : trimmed[..maxLength];
+    }
+
+    /// <summary>
+    /// The evidence list, bounded and clamped, or null when there is none. An
+    /// entry with no source is not evidence of anything and is dropped.
+    /// </summary>
+    private static IReadOnlyList<InventorySoftwareEvidence>? ClampEvidence(IReadOnlyList<InventorySoftwareEvidence>? evidence)
+    {
+        if (evidence is null || evidence.Count == 0)
+        {
+            return null;
+        }
+
+        var kept = new List<InventorySoftwareEvidence>(Math.Min(evidence.Count, InventorySoftware.MaxEvidence));
+
+        foreach (var item in evidence)
+        {
+            if (item is null || Clamp(item.Source, InventorySoftwareEvidence.MaxSource) is not { } source)
+            {
+                continue;
+            }
+
+            kept.Add(new InventorySoftwareEvidence(
+                source,
+                Clamp(item.Name, InventorySoftwareEvidence.MaxName),
+                Clamp(item.Detail, InventorySoftwareEvidence.MaxDetail)));
+
+            if (kept.Count >= InventorySoftware.MaxEvidence)
+            {
+                break;
+            }
+        }
+
+        return kept.Count == 0 ? null : kept;
     }
 }

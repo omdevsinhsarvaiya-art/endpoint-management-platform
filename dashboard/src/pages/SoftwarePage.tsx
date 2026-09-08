@@ -12,10 +12,14 @@ import {
 } from '../api/client'
 import { Icon } from '../components/Icon'
 import {
+  categoryLabel,
+  confidenceLabel,
+  confidenceTone,
   installationSummary,
   isSameTitle,
   registryViewLabel,
   scopeLabel,
+  signerLabel,
   titleKey,
 } from './softwareView'
 
@@ -38,6 +42,11 @@ export function SoftwarePage() {
   const [page, setPage] = useState(1)
   const [search, setSearch] = useState('')
   const [publisher, setPublisher] = useState('')
+  // Frameworks, inbox apps and system components are collected and categorised
+  // on the endpoint but hidden here by default: they are not what an operator
+  // scrolls a software list for. The server applies the same rule, so paging
+  // stays correct.
+  const [showSystem, setShowSystem] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -50,14 +59,14 @@ export function SoftwarePage() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      setData(await getSoftwareTitles(page, PAGE_SIZE, search, publisher))
+      setData(await getSoftwareTitles(page, PAGE_SIZE, search, publisher, showSystem ? 'all' : 'applications'))
       setError(null)
     } catch {
       setError('Could not load software inventory.')
     } finally {
       setLoading(false)
     }
-  }, [page, search, publisher])
+  }, [page, search, publisher, showSystem])
 
   useEffect(() => {
     void load()
@@ -171,6 +180,17 @@ export function SoftwarePage() {
               </option>
             ))}
           </select>
+          <label className="checkbox-inline">
+            <input
+              type="checkbox"
+              checked={showSystem}
+              onChange={(e) => {
+                setPage(1)
+                setShowSystem(e.target.checked)
+              }}
+            />
+            Show Windows components
+          </label>
         </div>
 
         {loading && !data && <div className="loading">Loading software…</div>}
@@ -195,6 +215,7 @@ export function SoftwarePage() {
                     <th>Application</th>
                     <th>Version</th>
                     <th>Publisher</th>
+                    <th>Type</th>
                     <th>Installs</th>
                   </tr>
                 </thead>
@@ -216,9 +237,18 @@ export function SoftwarePage() {
                         >
                           {t.name}
                         </button>
+                        {/* Said next to the name, because it changes what the
+                            name means: nothing installed this, a process is the
+                            only witness, and it may be gone at the next inventory. */}
+                        {t.confidence === 'Observed' && (
+                          <span className="badge warn" style={{ marginLeft: 8 }}>
+                            {confidenceLabel(t.confidence)}
+                          </span>
+                        )}
                       </td>
                       <td>{t.version ?? '—'}</td>
                       <td>{t.publisher ?? '—'}</td>
+                      <td>{categoryLabel(t.category)}</td>
                       <td>
                         {/* A count, not a state — square marker keeps it from
                             reading as a status pill. */}
@@ -281,6 +311,18 @@ export function SoftwarePage() {
               <dt>Installations</dt>
               <dd>{installs ? installationSummary(installs.items, installs.totalCount) : '—'}</dd>
             </div>
+            <div>
+              <dt>Type</dt>
+              <dd>{categoryLabel(selected.category)}</dd>
+            </div>
+            <div>
+              <dt>Presence</dt>
+              <dd>
+                <span className={`badge ${confidenceTone(selected.confidence)}`}>
+                  {confidenceLabel(selected.confidence)}
+                </span>
+              </dd>
+            </div>
           </dl>
 
           {installsError && (
@@ -311,6 +353,8 @@ export function SoftwarePage() {
                       <th>Device</th>
                       <th>Status</th>
                       <th>Installed for</th>
+                      <th>Presence</th>
+                      <th>Signer</th>
                       <th>Found in</th>
                       <th>Reported</th>
                     </tr>
@@ -331,6 +375,14 @@ export function SoftwarePage() {
                           </span>
                         </td>
                         <td>{scopeLabel(i)}</td>
+                        <td>
+                          <span className={`badge ${confidenceTone(i.confidence)}`}>
+                            {confidenceLabel(i.confidence)}
+                          </span>
+                        </td>
+                        {/* Presence of a signature, not trust in it: the label
+                            names who signed, and says nothing about the chain. */}
+                        <td title={i.signerSubject ?? undefined}>{signerLabel(i.signerSubject, i.signatureStatus)}</td>
                         <td>{registryViewLabel(i.architecture)}</td>
                         <td>{new Date(i.collectedAt).toLocaleString()}</td>
                       </tr>

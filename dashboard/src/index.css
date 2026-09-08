@@ -1720,3 +1720,47 @@ code, .mono {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Application discovery: an inline toggle in a toolbar, and the collapsed
+   evidence list under an application name on the device page. */
+.checkbox-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.9em;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+details.evidence {
+  margin-top: 4px;
+  font-size: 0.85em;
+}
+
+details.evidence > summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+details.evidence > summary::-webkit-details-marker {
+  display: none;
+}
+
+details.evidence > summary::before {
+  content: "▸ ";
+}
+
+details.evidence[open] > summary::before {
+  content: "▾ ";
+}
+
+.evidence-list {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+
+.evidence-list li {
+  margin: 2px 0;
+  word-break: break-all;
+}

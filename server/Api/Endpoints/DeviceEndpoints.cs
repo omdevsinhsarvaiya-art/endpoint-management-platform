@@ -403,7 +403,7 @@ public static class DeviceEndpoints
             .OrderBy(g => g.Name)
             .ToListAsync(cancellationToken);
 
-        var software = await dbContext.DeviceSoftware
+        var softwareRows = await dbContext.DeviceSoftware
             .AsNoTracking()
             .Where(sw => sw.DeviceId == deviceId)
             .OrderBy(sw => sw.Name)
@@ -412,6 +412,7 @@ public static class DeviceEndpoints
             // application are two users' installs rather than a duplicate.
             .Select(sw => new
             {
+                sw.Id,
                 sw.Name,
                 sw.Version,
                 sw.Publisher,
@@ -425,8 +426,56 @@ public static class DeviceEndpoints
                 // an application without it cannot be stopped and should say so
                 // rather than offering a button that will not work.
                 sw.InstallLocation,
+                // Application discovery: null from agents older than 1.9.0.
+                sw.IdentityKind,
+                sw.StableKey,
+                sw.Confidence,
+                sw.Category,
+                sw.PackageFamilyName,
+                sw.ExecutablePath,
+                sw.SignerSubject,
+                sw.SignatureStatus,
             })
             .ToListAsync(cancellationToken);
+
+        // Why the endpoint believes each application exists, in the order it
+        // reported: one query for the whole page, grouped here.
+        var softwareIds = softwareRows.Select(sw => sw.Id).ToList();
+        var evidenceRows = await dbContext.DeviceSoftwareEvidence
+            .AsNoTracking()
+            .Where(e => softwareIds.Contains(e.DeviceSoftwareId))
+            .OrderBy(e => e.Ordinal)
+            .Select(e => new { e.DeviceSoftwareId, e.Source, e.Name, e.Detail })
+            .ToListAsync(cancellationToken);
+        var evidenceBySoftware = evidenceRows
+            .GroupBy(e => e.DeviceSoftwareId)
+            .ToDictionary(g => g.Key, g => g.Select(e => new { e.Source, e.Name, e.Detail }).ToList());
+
+        var software = softwareRows
+            .Select(sw => new
+            {
+                sw.Name,
+                sw.Version,
+                sw.Publisher,
+                sw.InstallDate,
+                sw.Architecture,
+                sw.InstallationScope,
+                sw.InstalledForUser,
+                sw.ProductCode,
+                sw.InstallLocation,
+                sw.IdentityKind,
+                sw.StableKey,
+                sw.Confidence,
+                sw.Category,
+                sw.PackageFamilyName,
+                sw.ExecutablePath,
+                sw.SignerSubject,
+                sw.SignatureStatus,
+                Evidence = evidenceBySoftware.TryGetValue(sw.Id, out var witnesses)
+                    ? witnesses
+                    : [],
+            })
+            .ToList();
 
         var posture = await dbContext.DeviceSecurityPosture
             .AsNoTracking()

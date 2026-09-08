@@ -831,6 +831,40 @@ public static class AgentEndpoints
             {
                 return "A software entry is malformed.";
             }
+
+            // Application discovery (agent 1.9.0). Absent is fine -- an older
+            // agent -- but a value must be one the contract names, at its length.
+            if (app.IdentityKind is { } kind && !InventorySoftware.IdentityKinds.Contains(kind)
+                || app.Confidence is { } confidence && !InventorySoftware.Confidences.Contains(confidence)
+                || app.Category is { } category && !InventorySoftware.Categories.Contains(category)
+                || app.SignatureStatus is { } status && !InventorySoftware.SignatureStatuses.Contains(status)
+                || app.StableKey is { Length: > InventorySoftware.MaxStableKey }
+                || app.VersionKey is { Length: > InventorySoftware.MaxVersionKey }
+                || app.PackageFamilyName is { Length: > InventorySoftware.MaxPackageName }
+                || app.PackageFullName is { Length: > InventorySoftware.MaxPackageName }
+                || app.UpgradeCode is { Length: > InventorySoftware.MaxUpgradeCode }
+                || app.ExecutablePath is { Length: > InventorySoftware.MaxExecutablePath }
+                || app.SignerSubject is { Length: > InventorySoftware.MaxSignerSubject })
+            {
+                return "A software entry is malformed.";
+            }
+
+            if (app.Evidence is { Count: > InventorySoftware.MaxEvidence })
+            {
+                return "A software entry carries too much evidence.";
+            }
+
+            foreach (var witness in app.Evidence ?? [])
+            {
+                if (witness is null
+                    || string.IsNullOrWhiteSpace(witness.Source)
+                    || !InventorySoftwareEvidence.Sources.Contains(witness.Source)
+                    || witness.Name is { Length: > InventorySoftwareEvidence.MaxName }
+                    || witness.Detail is { Length: > InventorySoftwareEvidence.MaxDetail })
+                {
+                    return "A software evidence entry is malformed.";
+                }
+            }
         }
 
         if (report.SecurityPosture is { } posture)

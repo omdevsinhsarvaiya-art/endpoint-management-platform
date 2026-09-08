@@ -33,7 +33,15 @@ public sealed class ApplicationMergerObservationTests
         var running = ApplicationMerger.Merge([chrome, process]).ShouldHaveSingleItem();
 
         running.Evidence.ShouldBe([chrome, process]);
-        running.ToDiscoveredSoftware().ShouldBe(alone.ToDiscoveredSoftware());
+        // The row -- the nine fields the report always carried -- is unchanged;
+        // what discovery adds (the evidence, the executable) is not the row.
+        SoftwareDiscoveryPipeline.Run([chrome, process]).Single()
+            .ShouldSatisfyAllConditions(
+                r => r.InstallLocation.ShouldBe(alone.InstallLocation),
+                r => r.Name.ShouldBe(alone.Name),
+                r => r.Version.ShouldBe(alone.Version),
+                r => r.Publisher.ShouldBe(alone.Publisher),
+                r => r.Evidence!.Count.ShouldBe(2));
         running.Confidence.ShouldBe(DiscoveryConfidence.Installed);
     }
 

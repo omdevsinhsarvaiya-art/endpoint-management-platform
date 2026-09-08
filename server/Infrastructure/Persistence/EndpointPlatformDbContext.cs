@@ -63,6 +63,8 @@ public sealed class EndpointPlatformDbContext(DbContextOptions<EndpointPlatformD
 
     public DbSet<DeviceSoftware> DeviceSoftware => Set<DeviceSoftware>();
 
+    public DbSet<DeviceSoftwareEvidence> DeviceSoftwareEvidence => Set<DeviceSoftwareEvidence>();
+
     public DbSet<DeviceDriver> DeviceDrivers => Set<DeviceDriver>();
 
     public DbSet<DeviceBitLockerStatus> DeviceBitLockerStatus => Set<DeviceBitLockerStatus>();

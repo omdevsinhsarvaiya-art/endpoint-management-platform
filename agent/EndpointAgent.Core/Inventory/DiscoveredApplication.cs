@@ -1,3 +1,5 @@
+using EndpointPlatform.Contracts.Agent;
+
 namespace EndpointAgent.Core.Inventory;
 
 /// <summary>
@@ -50,14 +52,14 @@ public sealed record DiscoveredApplication(
     public string? SignatureStatus { get; init; }
 
     /// <summary>
-    /// The shape the existing inventory pipeline consumes.
+    /// The shape the inventory pipeline consumes.
     /// </summary>
     /// <remarks>
-    /// Deliberately lossy, and deliberately unchanged: the wire contract this
-    /// eventually reaches carries the nine fields it has always carried, and the
-    /// richer identity and evidence are appended to it in a later phase rather
-    /// than reshaping what already works. Until then this projection is what keeps
-    /// the new pipeline's output identical to the old one's.
+    /// The nine fields the report has always carried are projected exactly as
+    /// before -- the row a server sees is unchanged in every one of them -- and
+    /// the identity, confidence, category, package, signer and evidence fields
+    /// discovery adds ride alongside as optional additions. The normalizer clamps
+    /// each to its wire limit.
     /// </remarks>
     public DiscoveredSoftware ToDiscoveredSoftware() => new(
         Name,
@@ -68,5 +70,34 @@ public sealed record DiscoveredApplication(
         RegistryView,
         Scope,
         InstalledForUser,
-        ProductCode);
+        ProductCode,
+        IdentityKind: Identity.Kind.ToString(),
+        StableKey: Identity.StableKey,
+        VersionKey: Identity.VersionKey,
+        Confidence: Confidence.ToString(),
+        Category: Category.ToString(),
+        PackageFamilyName: Evidence.Select(e => e.PackageFamilyName).FirstOrDefault(p => !string.IsNullOrWhiteSpace(p)),
+        PackageFullName: Evidence.Select(e => e.PackageFullName).FirstOrDefault(p => !string.IsNullOrWhiteSpace(p)),
+        UpgradeCode: UpgradeCode,
+        ExecutablePath: ExecutablePath,
+        SignerSubject: SignerSubject,
+        SignatureStatus: SignatureStatus,
+        Evidence: Evidence.Select(Witness).ToArray());
+
+    /// <summary>
+    /// One piece of evidence as the wire carries it: the source, what that
+    /// source called the thing, and what it pointed at -- a product code, a
+    /// package full name, or an executable. Never a registry path or anything
+    /// a source did not itself report.
+    /// </summary>
+    private static InventorySoftwareEvidence Witness(SoftwareEvidence evidence) => new(
+        evidence.Source.ToString(),
+        evidence.Name,
+        evidence.Source switch
+        {
+            EvidenceSource.WindowsInstaller => evidence.ProductCode ?? evidence.InstallLocation,
+            EvidenceSource.UninstallRegistry => evidence.InstallLocation,
+            EvidenceSource.PackageRegistration => evidence.PackageFullName ?? evidence.InstallLocation,
+            _ => evidence.ExecutablePath,
+        });
 }

@@ -4,13 +4,32 @@ using Microsoft.EntityFrameworkCore;
 namespace EndpointPlatform.Infrastructure.Devices;
 
 /// <summary>
-/// Fleet-wide software inventory queries: the distinct installed titles across the
-/// organization, with per-title install counts, searchable and publisher-filtered.
+/// Which software titles the console shows by default.
 /// </summary>
+/// <remarks>
+/// The endpoint collects and categorises everything -- frameworks, inbox apps,
+/// servicing components -- because "what runtimes are on this fleet" is a real
+/// question. What an administrator wants to scroll through is applications, so
+/// the default view hides the categories that are not, and an explicit request
+/// shows all of them. A row an older agent reported has no category, and is
+/// shown in either view rather than hidden by a label it never had.
+/// </remarks>
+public enum SoftwareView
+{
+    /// <summary>Applications: everything but frameworks, inbox apps and components.</summary>
+    Applications,
+
+    /// <summary>Everything the endpoints reported.</summary>
+    All,
+}
+
 public sealed class SoftwareReadService(EndpointPlatformDbContext dbContext)
 {
     private readonly EndpointPlatformDbContext _dbContext = dbContext
         ?? throw new ArgumentNullException(nameof(dbContext));
+
+    /// <summary>The categories the Applications view leaves out.</summary>
+    public static readonly IReadOnlyList<string> SystemCategories = ["FrameworkOrResource", "InboxApp", "Component"];
 
     public async Task<SoftwareTitlePage> ListTitlesAsync(
         Guid organizationId,
@@ -18,6 +37,16 @@ public sealed class SoftwareReadService(EndpointPlatformDbContext dbContext)
         int pageSize,
         string? search,
         string? publisher,
+        CancellationToken cancellationToken = default) =>
+        await ListTitlesAsync(organizationId, page, pageSize, search, publisher, SoftwareView.Applications, cancellationToken);
+
+    public async Task<SoftwareTitlePage> ListTitlesAsync(
+        Guid organizationId,
+        int page,
+        int pageSize,
+        string? search,
+        string? publisher,
+        SoftwareView view,
         CancellationToken cancellationToken = default)
     {
         page = Math.Max(1, page);
@@ -28,7 +57,7 @@ public sealed class SoftwareReadService(EndpointPlatformDbContext dbContext)
             from s in _dbContext.DeviceSoftware.AsNoTracking()
             join d in _dbContext.Devices.AsNoTracking() on s.DeviceId equals d.Id
             where d.OrganizationId == organizationId
-            select new { s.Name, s.Version, s.Publisher, s.DeviceId };
+            select new { s.Name, s.Version, s.Publisher, s.DeviceId, s.Category, s.Confidence };
 
         if (!string.IsNullOrWhiteSpace(search))
         {
@@ -43,12 +72,23 @@ public sealed class SoftwareReadService(EndpointPlatformDbContext dbContext)
             query = query.Where(x => x.Publisher == p);
         }
 
+        if (view == SoftwareView.Applications)
+        {
+            var hidden = SystemCategories;
+            query = query.Where(x => x.Category == null || !hidden.Contains(x.Category));
+        }
+
         // Counted over DISTINCT devices, not rows. A device can legitimately hold
         // several rows for one (name, version, publisher): since 1.5.0 per-user
         // installs are collected, so the same product installed for three people
         // on one machine is three rows - three real installations. Counting rows
         // would report that machine three times and overstate fleet coverage,
         // which is the number an administrator makes decisions on.
+        //
+        // Category and confidence are per application, so every row of a title
+        // normally agrees; Min picks the strongest claim where they differ (an
+        // Installed row outranks an Observed one, an Application label a label
+        // that hides), which is the honest summary for a title.
         var grouped = query
             .GroupBy(x => new { x.Name, x.Version, x.Publisher })
             .Select(g => new
@@ -57,6 +97,8 @@ public sealed class SoftwareReadService(EndpointPlatformDbContext dbContext)
                 g.Key.Version,
                 g.Key.Publisher,
                 InstallCount = g.Select(x => x.DeviceId).Distinct().Count(),
+                Category = g.Min(x => x.Category),
+                Confidence = g.Min(x => x.Confidence),
             });
 
         var totalCount = await grouped.CountAsync(cancellationToken);
@@ -69,35 +111,12 @@ public sealed class SoftwareReadService(EndpointPlatformDbContext dbContext)
             .ToListAsync(cancellationToken);
 
         var items = rows
-            .Select(r => new SoftwareTitle(r.Name, r.Version, r.Publisher, r.InstallCount))
+            .Select(r => new SoftwareTitle(r.Name, r.Version, r.Publisher, r.InstallCount, r.Category, r.Confidence))
             .ToList();
 
         return new SoftwareTitlePage(items, totalCount, page, pageSize);
     }
 
-    /// <summary>
-    /// The devices a given title is installed on, for the inventory drill-down.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// Device-scoped, unlike the title aggregate above: a count discloses nothing
-    /// about which machines an administrator may not see, but a list of hostnames
-    /// does. <paramref name="scopedDeviceIds"/> is null for an unrestricted
-    /// administrator and otherwise the exact set they may see, so scope narrows
-    /// the result rather than revealing that a device exists.
-    /// </para>
-    /// <para>
-    /// A title is identified by the same triple the aggregate groups on. Version
-    /// and publisher are matched including their absence -- a null version is a
-    /// real, distinct title, not a wildcard -- so drilling into a row returns that
-    /// row's devices and not a superset.
-    /// </para>
-    /// <para>
-    /// One row per installation, so a device appears once per user who has the
-    /// product. That is the truth of the machine and it is what makes a per-user
-    /// deployment decision possible; the device count above is DISTINCT.
-    /// </para>
-    /// </remarks>
     public async Task<SoftwareInstallationPage> ListInstallationsAsync(
         Guid organizationId,
         IReadOnlyCollection<Guid>? scopedDeviceIds,
@@ -131,6 +150,14 @@ public sealed class SoftwareReadService(EndpointPlatformDbContext dbContext)
                 s.InstallLocation,
                 s.ProductCode,
                 s.CollectedAt,
+                s.IdentityKind,
+                s.StableKey,
+                s.Confidence,
+                s.Category,
+                s.PackageFamilyName,
+                s.ExecutablePath,
+                s.SignerSubject,
+                s.SignatureStatus,
             };
 
         if (scopedDeviceIds is not null)
@@ -159,7 +186,15 @@ public sealed class SoftwareReadService(EndpointPlatformDbContext dbContext)
                 r.Architecture,
                 r.InstallLocation,
                 r.ProductCode,
-                r.CollectedAt))
+                r.CollectedAt,
+                r.IdentityKind,
+                r.StableKey,
+                r.Confidence,
+                r.Category,
+                r.PackageFamilyName,
+                r.ExecutablePath,
+                r.SignerSubject,
+                r.SignatureStatus))
             .ToList();
 
         return new SoftwareInstallationPage(items, totalCount, page, pageSize);
@@ -178,17 +213,19 @@ public sealed class SoftwareReadService(EndpointPlatformDbContext dbContext)
             .ToListAsync(cancellationToken);
 }
 
-public sealed record SoftwareTitle(string Name, string? Version, string? Publisher, int InstallCount);
+/// <param name="Category">The title's category, or null when no reporting agent said (older than 1.9.0).</param>
+/// <param name="Confidence"><c>Installed</c>, <c>Observed</c>, or null from older agents.</param>
+public sealed record SoftwareTitle(
+    string Name,
+    string? Version,
+    string? Publisher,
+    int InstallCount,
+    string? Category = null,
+    string? Confidence = null);
 
 public sealed record SoftwareTitlePage(
     IReadOnlyList<SoftwareTitle> Items, int TotalCount, int Page, int PageSize);
 
-/// <summary>One installation of a title on one device.</summary>
-/// <remarks>
-/// Carries <see cref="DeviceId"/> as the identity: hostnames are display text,
-/// they repeat across a fleet and they change, so nothing addresses a device by
-/// one.
-/// </remarks>
 public sealed record SoftwareInstallation(
     Guid DeviceId,
     string Hostname,
@@ -200,7 +237,15 @@ public sealed record SoftwareInstallation(
     string? Architecture,
     string? InstallLocation,
     string? ProductCode,
-    DateTimeOffset CollectedAt);
+    DateTimeOffset CollectedAt,
+    string? IdentityKind = null,
+    string? StableKey = null,
+    string? Confidence = null,
+    string? Category = null,
+    string? PackageFamilyName = null,
+    string? ExecutablePath = null,
+    string? SignerSubject = null,
+    string? SignatureStatus = null);
 
 public sealed record SoftwareInstallationPage(
     IReadOnlyList<SoftwareInstallation> Items, int TotalCount, int Page, int PageSize);

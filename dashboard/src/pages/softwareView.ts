@@ -147,3 +147,136 @@ export function activeInstallations(
 ): SoftwareInstallation[] {
   return installations.filter((i) => i.deviceStatus === 'Active')
 }
+
+/**
+ * The categories the endpoint labels as not-an-application: present on the
+ * machine, collected, and hidden from the default view. Kept as the same list
+ * the server hides for the fleet-wide titles, so the two views agree.
+ */
+export const SYSTEM_CATEGORIES: readonly string[] = ['FrameworkOrResource', 'InboxApp', 'Component']
+
+/**
+ * Whether a row belongs to the default view.
+ *
+ * A row with no category came from an agent that predates discovery and could
+ * not say; it is shown rather than hidden by a label it never had.
+ */
+export function isApplicationRow(category: string | null | undefined): boolean {
+  return category === null || category === undefined || !SYSTEM_CATEGORIES.includes(category)
+}
+
+/**
+ * What kind of thing a row is, in words. The raw value is shown for anything
+ * the console does not know, rather than nothing: a label a newer agent adds
+ * is still information.
+ */
+export function categoryLabel(category: string | null | undefined): string {
+  switch (category) {
+    case 'Application':
+      return 'Application'
+    case 'InboxApp':
+      return 'Windows app'
+    case 'RuntimeOrSdk':
+      return 'Runtime / SDK'
+    case 'FrameworkOrResource':
+      return 'Framework / resources'
+    case 'Component':
+      return 'System component'
+    case 'Observed':
+      return 'Running only'
+    case 'Transient':
+      return 'Installer / updater'
+    case null:
+    case undefined:
+      return 'Not reported'
+    default:
+      return category
+  }
+}
+
+/**
+ * How the endpoint knows the application is there.
+ *
+ * "Observed" is the one that matters to say plainly: nothing installed it, a
+ * process is the only witness, and it may be gone at the next inventory. An
+ * agent older than 1.9.0 reported only installation records, so an absent
+ * value is "Installed" in fact but is labelled as the older agent's silence.
+ */
+export function confidenceLabel(confidence: string | null | undefined): string {
+  switch (confidence) {
+    case 'Installed':
+      return 'Installed'
+    case 'Observed':
+      return 'Running only'
+    case null:
+    case undefined:
+      return 'Installed (not stated)'
+    default:
+      return confidence
+  }
+}
+
+/** Badge tone for a confidence: an observed row is a warning, an installed one is neutral. */
+export function confidenceTone(confidence: string | null | undefined): 'neutral' | 'warn' {
+  return confidence === 'Observed' ? 'warn' : 'neutral'
+}
+
+/**
+ * Which discovery source an evidence entry names, in words an operator can
+ * act on. The three installation records are called what they are; the rest
+ * are hints and are named as such.
+ */
+export function evidenceSourceLabel(source: string): string {
+  switch (source) {
+    case 'WindowsInstaller':
+      return 'Windows Installer product'
+    case 'UninstallRegistry':
+      return 'Uninstall registration'
+    case 'PackageRegistration':
+      return 'Package registration'
+    case 'AppPaths':
+      return 'Execution alias'
+    case 'StartMenuShortcut':
+      return 'Start Menu shortcut'
+    case 'ExecutableMetadata':
+      return 'Executable metadata'
+    case 'RunningProcess':
+      return 'Running process'
+    default:
+      return source
+  }
+}
+
+/**
+ * What a signature status means for the signer shown next to it.
+ *
+ * Presence, not trust: "Signed" says the file carries a signature naming this
+ * subject, or that Windows verified a package as this publisher. It does not
+ * say the certificate chains to a trusted root, and the label must not imply
+ * that it does.
+ */
+export function signerLabel(
+  signerSubject: string | null | undefined,
+  signatureStatus: string | null | undefined,
+): string {
+  if (signatureStatus === 'Signed' && signerSubject) return commonName(signerSubject)
+  if (signatureStatus === 'Signed') return 'Signed'
+  if (signatureStatus === 'Unsigned') return 'Unsigned'
+  if (signatureStatus === 'Unreadable') return 'Signature unreadable'
+  return '—'
+}
+
+/** The CN of a subject, or the subject itself when it has none; quoted values are unwrapped. */
+export function commonName(subject: string): string {
+  const at = subject.search(/CN=/i)
+  if (at < 0) return subject
+
+  const rest = subject.slice(at + 3).trimStart()
+  if (rest.startsWith('"')) {
+    const close = rest.indexOf('"', 1)
+    return close < 0 ? rest.slice(1) : rest.slice(1, close)
+  }
+
+  const comma = rest.indexOf(',')
+  return (comma < 0 ? rest : rest.slice(0, comma)).trim() || subject
+}

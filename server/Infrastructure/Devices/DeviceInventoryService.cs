@@ -592,6 +592,8 @@ public sealed class DeviceInventoryService(
         var existing = await _dbContext.DeviceSoftware
             .Where(s => s.DeviceId == device.Id)
             .ToListAsync(cancellationToken);
+        // The evidence rows go with their software rows: the database cascades
+        // the delete, and nothing here has to know how many there were.
         _dbContext.DeviceSoftware.RemoveRange(existing);
 
         foreach (var app in software.Take(MaxSoftwareEntries))
@@ -601,7 +603,7 @@ public sealed class DeviceInventoryService(
                 continue;
             }
 
-            _dbContext.DeviceSoftware.Add(new DeviceSoftware(
+            var row = new DeviceSoftware(
                 device.Id,
                 Truncate(app.Name, 384)!,
                 Truncate(app.Version, 128),
@@ -612,7 +614,35 @@ public sealed class DeviceInventoryService(
                 now,
                 Truncate(app.InstallationScope, 16),
                 Truncate(app.InstalledForUser, 256),
-                Truncate(app.ProductCode, 64)));
+                Truncate(app.ProductCode, 64),
+                Truncate(app.IdentityKind, InventorySoftware.MaxIdentityKind),
+                Truncate(app.StableKey, InventorySoftware.MaxStableKey),
+                Truncate(app.VersionKey, InventorySoftware.MaxVersionKey),
+                Truncate(app.Confidence, InventorySoftware.MaxConfidence),
+                Truncate(app.Category, InventorySoftware.MaxCategory),
+                Truncate(app.PackageFamilyName, InventorySoftware.MaxPackageName),
+                Truncate(app.PackageFullName, InventorySoftware.MaxPackageName),
+                Truncate(app.UpgradeCode, InventorySoftware.MaxUpgradeCode),
+                Truncate(app.ExecutablePath, InventorySoftware.MaxExecutablePath),
+                Truncate(app.SignerSubject, InventorySoftware.MaxSignerSubject),
+                Truncate(app.SignatureStatus, InventorySoftware.MaxSignatureStatus));
+            _dbContext.DeviceSoftware.Add(row);
+
+            var ordinal = 0;
+            foreach (var witness in (app.Evidence ?? []).Take(InventorySoftware.MaxEvidence))
+            {
+                if (witness is null || string.IsNullOrWhiteSpace(witness.Source))
+                {
+                    continue;
+                }
+
+                _dbContext.DeviceSoftwareEvidence.Add(new DeviceSoftwareEvidence(
+                    row.Id,
+                    ordinal++,
+                    Truncate(witness.Source, InventorySoftwareEvidence.MaxSource)!,
+                    Truncate(witness.Name, InventorySoftwareEvidence.MaxName),
+                    Truncate(witness.Detail, InventorySoftwareEvidence.MaxDetail)));
+            }
         }
     }
 

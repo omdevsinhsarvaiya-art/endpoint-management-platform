@@ -34,6 +34,13 @@ public sealed class ApplicationMergerAttachmentTests
     private static SoftwareEvidence Process(string path, string? name = null) =>
         new(EvidenceSource.RunningProcess, name, ExecutablePath: path);
 
+    /// <summary>The nine fields the report has always carried: the row, as distinct from what discovery adds to it.</summary>
+    private static DiscoveredSoftware Row(DiscoveredApplication app)
+    {
+        var s = app.ToDiscoveredSoftware();
+        return new DiscoveredSoftware(s.Name, s.Version, s.Publisher, s.InstallDate, s.InstallLocation, s.RegistryView, s.Scope, s.InstalledForUser, s.ProductCode);
+    }
+
     // ---- stage 1: installations --------------------------------------------------------
 
     [Fact]
@@ -115,8 +122,8 @@ public sealed class ApplicationMergerAttachmentTests
         var shortcut = Shortcut("Brave", @"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe");
         var metadata = Metadata(@"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe", "Brave Browser", "Brave Software, Inc.", "152.1.94.121");
 
-        var alone = ApplicationMerger.Merge([registry]).Single().ToDiscoveredSoftware();
-        var joined = ApplicationMerger.Merge([registry, shortcut, metadata]).Single().ToDiscoveredSoftware();
+        var alone = Row(ApplicationMerger.Merge([registry]).Single());
+        var joined = Row(ApplicationMerger.Merge([registry, shortcut, metadata]).Single());
 
         joined.ShouldBe(alone);
     }
@@ -187,8 +194,8 @@ public sealed class ApplicationMergerAttachmentTests
         var registry = Registry("Python 3.14.7 (64-bit)", "3.14.7150.0", "Python Software Foundation", location: null);
         var shortcut = Shortcut("Python 3.14.7 (64-bit)", @"C:\Python314\python.exe");
 
-        var alone = ApplicationMerger.Merge([registry]).Single().ToDiscoveredSoftware();
-        var adopted = ApplicationMerger.Merge([registry, shortcut]).Single().ToDiscoveredSoftware();
+        var alone = Row(ApplicationMerger.Merge([registry]).Single());
+        var adopted = Row(ApplicationMerger.Merge([registry, shortcut]).Single());
 
         adopted.ShouldBe(alone with { InstallLocation = @"C:\Python314" });
     }

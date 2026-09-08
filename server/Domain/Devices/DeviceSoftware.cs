@@ -3,9 +3,15 @@ using EndpointPlatform.Domain.Common;
 namespace EndpointPlatform.Domain.Devices;
 
 /// <summary>
-/// One installed application on a managed device, as last reported by its agent.
-/// Replaced wholesale per inventory upload.
+/// One application on one device, as the device's last inventory reported it.
 /// </summary>
+/// <remarks>
+/// The first ten members are the row as it has always been stored. The rest
+/// arrived with application discovery (agent 1.9.0) and are null for rows an
+/// older agent reported: an absent value means "the agent did not say", never
+/// a default the server invented. Every string is bounded to the wire contract's
+/// limit, which the Agent API enforces before this is constructed.
+/// </remarks>
 public sealed class DeviceSoftware : AuditableEntity
 {
     private DeviceSoftware()
@@ -24,7 +30,18 @@ public sealed class DeviceSoftware : AuditableEntity
         DateTimeOffset collectedAt,
         string? installationScope = null,
         string? installedForUser = null,
-        string? productCode = null)
+        string? productCode = null,
+        string? identityKind = null,
+        string? stableKey = null,
+        string? versionKey = null,
+        string? confidence = null,
+        string? category = null,
+        string? packageFamilyName = null,
+        string? packageFullName = null,
+        string? upgradeCode = null,
+        string? executablePath = null,
+        string? signerSubject = null,
+        string? signatureStatus = null)
     {
         DeviceId = Guard.NotEmpty(deviceId);
         Name = Guard.NotNullOrWhiteSpace(name, nameof(name), maxLength: 384);
@@ -37,6 +54,17 @@ public sealed class DeviceSoftware : AuditableEntity
         InstallationScope = Guard.OptionalMaxLength(installationScope, 16);
         InstalledForUser = Guard.OptionalMaxLength(installedForUser, 256);
         ProductCode = Guard.OptionalMaxLength(productCode, 64);
+        IdentityKind = Guard.OptionalMaxLength(identityKind, 32);
+        StableKey = Guard.OptionalMaxLength(stableKey, 1024);
+        VersionKey = Guard.OptionalMaxLength(versionKey, 256);
+        Confidence = Guard.OptionalMaxLength(confidence, 16);
+        Category = Guard.OptionalMaxLength(category, 32);
+        PackageFamilyName = Guard.OptionalMaxLength(packageFamilyName, 256);
+        PackageFullName = Guard.OptionalMaxLength(packageFullName, 256);
+        UpgradeCode = Guard.OptionalMaxLength(upgradeCode, 64);
+        ExecutablePath = Guard.OptionalMaxLength(executablePath, 512);
+        SignerSubject = Guard.OptionalMaxLength(signerSubject, 512);
+        SignatureStatus = Guard.OptionalMaxLength(signatureStatus, 16);
     }
 
     public Guid DeviceId { get; private set; }
@@ -51,36 +79,38 @@ public sealed class DeviceSoftware : AuditableEntity
 
     public string? InstallLocation { get; private set; }
 
-    /// <summary>
-    /// Which uninstall registry view the entry was found in, not the binary's
-    /// architecture.
-    /// </summary>
-    /// <remarks>
-    /// Chrome, Edge and Brave are 64-bit yet register under WOW6432Node and so
-    /// report <c>x86</c>. The console labels this as the registry view rather
-    /// than claiming an architecture the platform has not actually determined.
-    /// </remarks>
     public string? Architecture { get; private set; }
 
     public DateTimeOffset CollectedAt { get; private set; }
 
-    /// <summary>
-    /// <c>Machine</c> for an all-users install, <c>User</c> for a per-user one;
-    /// null when reported by an agent older than 1.5.0, which could not tell.
-    /// </summary>
     public string? InstallationScope { get; private set; }
 
-    /// <summary>
-    /// The account a per-user install belongs to; null for machine-wide installs
-    /// and for agents older than 1.5.0. The same product installed for two people
-    /// is two rows, because it is two installations.
-    /// </summary>
     public string? InstalledForUser { get; private set; }
 
-    /// <summary>
-    /// The Windows Installer product code, when the application has one. Matches
-    /// <c>SoftwarePackage.MsiProductCode</c>, so an installed application can be
-    /// related to an approved package.
-    /// </summary>
     public string? ProductCode { get; private set; }
+
+    /// <summary>Package, WindowsInstaller, Registered or Executable; null from older agents.</summary>
+    public string? IdentityKind { get; private set; }
+
+    /// <summary>The identity that survives an update; the key a block rule will one day name.</summary>
+    public string? StableKey { get; private set; }
+
+    public string? VersionKey { get; private set; }
+
+    /// <summary>Installed or Observed; null from older agents, for which every row was an installation.</summary>
+    public string? Confidence { get; private set; }
+
+    public string? Category { get; private set; }
+
+    public string? PackageFamilyName { get; private set; }
+
+    public string? PackageFullName { get; private set; }
+
+    public string? UpgradeCode { get; private set; }
+
+    public string? ExecutablePath { get; private set; }
+
+    public string? SignerSubject { get; private set; }
+
+    public string? SignatureStatus { get; private set; }
 }
