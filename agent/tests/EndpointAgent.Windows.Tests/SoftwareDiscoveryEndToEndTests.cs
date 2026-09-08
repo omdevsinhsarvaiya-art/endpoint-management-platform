@@ -29,6 +29,7 @@ public sealed class SoftwareDiscoveryEndToEndTests
     /// <summary>The composition in <c>Program.cs</c>, built by hand so the test cannot drift from it silently.</summary>
     private static (WindowsSoftwareCollector Registry, WindowsPackageRegistrationEvidenceSource Packages, SoftwareDiscoveryCollector Composite) Production()
     {
+        var processes = new WindowsServiceProcessProvider(NullLogger<WindowsServiceProcessProvider>.Instance);
         var registry = new WindowsSoftwareCollector(
             NullLogger<WindowsSoftwareCollector>.Instance,
             new WindowsInstallLocationResolver(NullLogger<WindowsInstallLocationResolver>.Instance),
@@ -41,6 +42,7 @@ public sealed class SoftwareDiscoveryEndToEndTests
                 packages,
                 new WindowsAppPathsEvidenceSource(NullLogger<WindowsAppPathsEvidenceSource>.Instance),
                 new WindowsStartMenuEvidenceSource(NullLogger<WindowsStartMenuEvidenceSource>.Instance),
+                new WindowsRunningProcessEvidenceSource(processes, NullLogger<WindowsRunningProcessEvidenceSource>.Instance),
             ],
             NullLogger<SoftwareDiscoveryCollector>.Instance,
             new WindowsExecutableMetadataReader());
@@ -51,19 +53,37 @@ public sealed class SoftwareDiscoveryEndToEndTests
     private static string RowIdentity(InventorySoftware s) =>
         string.Join((char)0x1F, s.Name, s.Version, s.Publisher, s.InstallationScope, s.InstalledForUser);
 
+    /// <summary>
+    /// Rows come from installation records and from observed executables, and
+    /// from nothing else: every registry row and every package row is still
+    /// there, and every other row is an observed application.
+    /// </summary>
     [Fact]
-    public async Task Only_installation_records_add_rows_and_none_are_removed()
+    public async Task Rows_are_installation_records_or_observed_executables_and_none_are_removed()
     {
         var (registry, packages, composite) = Production();
 
         var fromRegistry = await registry.CollectAsync(CancellationToken.None);
         var fromPackages = SoftwareDiscoveryPipeline.Run(await packages.CollectEvidenceAsync(CancellationToken.None));
-        var after = await composite.CollectAsync(CancellationToken.None);
+        var evidence = await composite.CollectEvidenceAsync(CancellationToken.None);
+        var after = SoftwareDiscoveryPipeline.Run(evidence);
 
-        var expected = fromRegistry.Concat(fromPackages).Select(RowIdentity).Distinct(StringComparer.OrdinalIgnoreCase);
+        var installed = new HashSet<string>(fromRegistry.Concat(fromPackages).Select(RowIdentity), StringComparer.OrdinalIgnoreCase);
+        var afterKeys = new HashSet<string>(after.Select(RowIdentity), StringComparer.OrdinalIgnoreCase);
 
-        after.Select(RowIdentity).OrderBy(k => k, StringComparer.Ordinal)
-            .ShouldBe(expected.OrderBy(k => k, StringComparer.Ordinal));
+        installed.Where(k => !afterKeys.Contains(k)).ShouldBeEmpty("no installation row may be lost");
+
+        var observed = new HashSet<string>(
+            ApplicationMerger.Merge(evidence)
+                .Where(a => a.Confidence == DiscoveryConfidence.Observed)
+                .Select(a => string.Join((char)0x1F, a.Name, a.Version, a.Publisher,
+                    a.Scope == SoftwareScope.User ? "User" : "Machine", a.Scope == SoftwareScope.User ? a.InstalledForUser : null)),
+            StringComparer.OrdinalIgnoreCase);
+
+        after.Where(r => !installed.Contains(RowIdentity(r)))
+            .Where(r => !observed.Contains(RowIdentity(r)))
+            .Select(r => $"{r.Name} {r.Version}")
+            .ShouldBeEmpty("every row that is not an installation is an observed executable");
     }
 
     [Fact]

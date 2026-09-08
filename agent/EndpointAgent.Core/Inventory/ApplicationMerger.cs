@@ -67,6 +67,27 @@ public static class ApplicationMerger
         "language pack",
     ];
 
+    /// <summary>
+    /// File names that mark an executable as an installer, updater or
+    /// bootstrapper rather than an application: present, but transient.
+    /// </summary>
+    /// <remarks>
+    /// Matched against the executable's file name only, never a display name,
+    /// and applied only to executables no installation record covers: an
+    /// application's own updater inside its install directory is that
+    /// application's evidence, not a transient of its own.
+    /// </remarks>
+    private static readonly string[] TransientMarkers =
+    [
+        "setup",
+        "install",
+        "unins",
+        "update",
+        "upgrade",
+        "bootstrap",
+        "msiexec",
+    ];
+
     /// <summary>The same separator the normalizer and the identity use, for the same reason.</summary>
     private const char KeySeparator = (char)0x1F;
 
@@ -280,25 +301,62 @@ public static class ApplicationMerger
             return null;
         }
 
+        // What the executable is: an installer, updater or a run from a temp
+        // folder is transient -- present now, not an application. Otherwise a
+        // process makes it observed and anything less makes it referenced.
+        var transient = IsTransient(path);
+        var confidence = transient
+            ? DiscoveryConfidence.Transient
+            : process is not null ? DiscoveryConfidence.Observed : DiscoveryConfidence.Referenced;
+
+        // An observed executable's directory is reported as its location only
+        // when the directory is its own. A shared folder -- Downloads, a profile
+        // root, a temp folder -- would make Force Stop act on everything there.
+        var directory = ExecutablePath.DirectoryOf(path);
+        var location = confidence == DiscoveryConfidence.Observed
+            && directory is not null
+            && !ExecutablePath.IsSharedDirectory(directory)
+            && ApplicationProcessMatcher.CanResolve(directory)
+            ? directory
+            : null;
+
         return new DiscoveredApplication(
             identity,
             name,
             composite.Version,
             composite.Publisher,
             InstallDate: null,
-            InstallLocation: null,
+            location,
             RegistryView: null,
             composite.Scope,
             composite.InstalledForUser,
             ProductCode: null,
-            process is not null ? DiscoveryConfidence.Observed : DiscoveryConfidence.Referenced,
-            CategoryOf(composite, name),
+            confidence,
+            transient ? ApplicationCategory.Transient : CategoryOf(composite, name),
             group)
         {
             ExecutablePath = path,
             SignerSubject = composite.SignerSubject,
             SignatureStatus = composite.SignatureStatus,
         };
+    }
+
+    /// <summary>An installer, updater or bootstrapper by file name, or anything run from a temp folder.</summary>
+    public static bool IsTransient(string? executablePath)
+    {
+        if (string.IsNullOrWhiteSpace(executablePath))
+        {
+            return false;
+        }
+
+        if (executablePath.Contains(@"\Temp\", StringComparison.OrdinalIgnoreCase)
+            || executablePath.Contains(@"\Tmp\", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var file = FileName(executablePath)?.ToLowerInvariant();
+        return file is not null && TransientMarkers.Any(m => file.Contains(m, StringComparison.Ordinal));
     }
 
     // ---- shared -------------------------------------------------------------------------

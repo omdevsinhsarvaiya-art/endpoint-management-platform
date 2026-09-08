@@ -117,6 +117,62 @@ public static class ExecutablePath
     /// <c>C:\Program Files\FooBar\app.exe</c>, which a plain prefix test would.
     /// The same rule the process matcher applies, for the same reason.
     /// </remarks>
+    /// <summary>
+    /// Whether a directory is one that many unrelated things share -- a profile
+    /// root, its Downloads, Desktop or Documents, a temp folder -- rather than
+    /// one an application owns.
+    /// </summary>
+    /// <remarks>
+    /// An install location becomes the root Force Stop terminates processes
+    /// under, so a portable executable found in Downloads must not make
+    /// Downloads an install location: that would make "stop this application"
+    /// mean "stop everything anyone ran from Downloads". A dedicated directory
+    /// (<c>C:\Tools\Caffeine</c>) is an application's own and is fine.
+    /// </remarks>
+    public static bool IsSharedDirectory(string? directory)
+    {
+        if (string.IsNullOrWhiteSpace(directory))
+        {
+            return true;
+        }
+
+        var value = directory.Trim().Trim('"').Replace('/', '\\').TrimEnd('\\');
+        if (value.Length < 3)
+        {
+            return true;
+        }
+
+        if (value.Contains(@"\Temp\", StringComparison.OrdinalIgnoreCase)
+            || value.EndsWith(@"\Temp", StringComparison.OrdinalIgnoreCase)
+            || value.Contains(@"\Tmp\", StringComparison.OrdinalIgnoreCase)
+            || value.EndsWith(@"\Tmp", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        // X:\Users\<account>[\<well-known folder>]
+        var parts = value.Split('\\');
+        if (parts.Length >= 3 && parts[0].Length == 2 && string.Equals(parts[1], "Users", StringComparison.OrdinalIgnoreCase))
+        {
+            if (parts.Length == 3)
+            {
+                return true; // The profile root itself.
+            }
+
+            if (parts.Length == 4 && SharedProfileFolders.Contains(parts[3]))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static readonly HashSet<string> SharedProfileFolders = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Downloads", "Desktop", "Documents", "Pictures", "Videos", "Music", "OneDrive", "Public",
+    };
+
     public static bool IsUnder(string? executablePath, string? directory)
     {
         if (string.IsNullOrWhiteSpace(executablePath) || string.IsNullOrWhiteSpace(directory))

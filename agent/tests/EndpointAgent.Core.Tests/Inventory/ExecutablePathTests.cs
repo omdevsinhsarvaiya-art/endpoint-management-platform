@@ -81,6 +81,29 @@ public sealed class ExecutablePathTests
         ExecutablePath.DirectoryOf(@"C:\").ShouldBeNull();
     }
 
+    [Theory]
+    [InlineData(@"C:\Users\Techsara\Downloads", true)]
+    [InlineData(@"C:\Users\Techsara\Desktop", true)]
+    [InlineData(@"C:\Users\Techsara\Documents\", true)]
+    [InlineData(@"c:\users\techsara\downloads", true)]
+    [InlineData(@"C:\Users\Techsara", true)]
+    [InlineData(@"C:\Users\Public\Downloads", true)]
+    [InlineData(@"C:\Users\Techsara\AppData\Local\Temp", true)]
+    [InlineData(@"C:\Users\Techsara\AppData\Local\Temp\7zS1234", true)]
+    [InlineData(@"C:\Windows\Temp", true)]
+    [InlineData(@"C:\", true)]
+    [InlineData("", true)]
+    [InlineData(null, true)]
+    [InlineData(@"C:\Users\Techsara\Downloads\Caffeine", false)]
+    [InlineData(@"C:\Users\Techsara\AppData\Local\Programs\antigravity", false)]
+    [InlineData(@"C:\Tools\Caffeine", false)]
+    [InlineData(@"C:\Program Files\Contoso", false)]
+    [InlineData(@"C:\Temporal\app", false)]
+    public void Knows_which_directories_are_shared_rather_than_an_applications_own(string? directory, bool shared)
+    {
+        ExecutablePath.IsSharedDirectory(directory).ShouldBe(shared);
+    }
+
     /// <summary>Containment respects a directory boundary, exactly as the process matcher does.</summary>
     [Fact]
     public void Containment_respects_the_directory_boundary()
