@@ -257,13 +257,21 @@ public sealed class ApplicationMergerAttachmentTests
 
     /// <summary>
     /// The directory adopted becomes the root Force Stop terminates processes
-    /// under. A root the matcher refuses is not adopted, however good the name
-    /// match; the evidence still attaches.
+    /// under, and a shortcut is a file a user can write. A root the matcher
+    /// refuses, anything under the Windows directory, and a shared profile
+    /// folder are not adopted however good the name match; the evidence still
+    /// attaches.
     /// </summary>
     [Theory]
     [InlineData(@"C:\Windows\notepad.exe")]
+    [InlineData(@"C:\Windows\System32\cmd.exe")]
+    [InlineData(@"C:\Windows\SystemApps\Microsoft.Windows.X_cw5n1h2txyewy\app.exe")]
     [InlineData(@"C:\Program Files\app.exe")]
     [InlineData(@"C:\Users\app.exe")]
+    [InlineData(@"C:\Users\Techsara\Downloads\app.exe")]
+    [InlineData(@"C:\Users\Techsara\Desktop\app.exe")]
+    [InlineData(@"C:\Users\Techsara\app.exe")]
+    [InlineData(@"C:\Users\Techsara\AppData\Local\Temp\app.exe")]
     [InlineData(@"C:\app.exe")]
     public void Adoption_refuses_a_directory_force_stop_could_not_act_on(string path)
     {

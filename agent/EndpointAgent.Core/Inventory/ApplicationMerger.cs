@@ -311,12 +311,10 @@ public static class ApplicationMerger
 
         // An observed executable's directory is reported as its location only
         // when the directory is its own. A shared folder -- Downloads, a profile
-        // root, a temp folder -- would make Force Stop act on everything there.
+        // root, a temp folder -- or anything under the Windows directory would
+        // make Force Stop act on everything there.
         var directory = ExecutablePath.DirectoryOf(path);
-        var location = confidence == DiscoveryConfidence.Observed
-            && directory is not null
-            && !ExecutablePath.IsSharedDirectory(directory)
-            && ApplicationProcessMatcher.CanResolve(directory)
+        var location = confidence == DiscoveryConfidence.Observed && ExecutablePath.IsAdoptableLocation(directory)
             ? directory
             : null;
 
@@ -485,15 +483,23 @@ public static class ApplicationMerger
 
         /// <summary>
         /// Supplementary evidence named like this installation, which has no
-        /// recorded directory: take the executable's, if it is one Force Stop
-        /// could act on, and only while every such piece of evidence agrees.
+        /// recorded directory: take the executable's, if it is one an
+        /// application could own and Force Stop could act on safely -- never a
+        /// shared folder, never the Windows directory -- and only while every
+        /// such piece of evidence agrees.
         /// </summary>
+        /// <remarks>
+        /// A shortcut is a file a user can write. Whatever it points at, the
+        /// directory adopted here becomes the root an operator's Force Stop
+        /// terminates processes under, so the rule is the same one an observed
+        /// executable's location follows, and it is refused rather than trusted.
+        /// </remarks>
         public void Adopt(SoftwareEvidence item, string path)
         {
             Attach(item, path);
 
             var directory = ExecutablePath.DirectoryOf(path);
-            if (directory is null || _adoptionWithdrawn || !ApplicationProcessMatcher.CanResolve(directory))
+            if (directory is null || _adoptionWithdrawn || !ExecutablePath.IsAdoptableLocation(directory))
             {
                 return;
             }

@@ -173,6 +173,44 @@ public static class ExecutablePath
         "Downloads", "Desktop", "Documents", "Pictures", "Videos", "Music", "OneDrive", "Public",
     };
 
+    /// <summary>
+    /// Whether a directory is the Windows directory or lies inside it.
+    /// </summary>
+    /// <remarks>
+    /// An install location becomes the root Force Stop acts on, and nothing
+    /// discovery adopts from a shortcut or a file may point that at the
+    /// operating system: a location under <c>X:\Windows</c> would let a Force
+    /// Stop terminate whatever runs there. Judged by the conventional root
+    /// rather than the machine's <c>%SystemRoot%</c>, which platform-neutral
+    /// code cannot ask for; the process source separately excludes the real
+    /// Windows directory it reads.
+    /// </remarks>
+    public static bool IsSystemDirectory(string? directory)
+    {
+        if (string.IsNullOrWhiteSpace(directory))
+        {
+            return false;
+        }
+
+        var value = directory.Trim().Trim('"').Replace('/', '\\').TrimEnd('\\');
+        var parts = value.Split('\\');
+
+        return parts.Length >= 2
+            && parts[0].Length == 2
+            && parts[0][1] == ':'
+            && string.Equals(parts[1], "Windows", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Whether a directory may become an install location discovery filled in:
+    /// one an application could own, that Force Stop could act on safely.
+    /// </summary>
+    public static bool IsAdoptableLocation(string? directory) =>
+        !string.IsNullOrWhiteSpace(directory)
+        && !IsSharedDirectory(directory)
+        && !IsSystemDirectory(directory)
+        && ApplicationProcessMatcher.CanResolve(directory);
+
     public static bool IsUnder(string? executablePath, string? directory)
     {
         if (string.IsNullOrWhiteSpace(executablePath) || string.IsNullOrWhiteSpace(directory))

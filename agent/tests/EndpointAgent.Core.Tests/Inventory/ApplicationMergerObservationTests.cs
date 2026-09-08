@@ -88,6 +88,8 @@ public sealed class ApplicationMergerObservationTests
     [InlineData(@"C:\Users\Public\tool.exe")]
     [InlineData(@"C:\tool.exe")]
     [InlineData(@"C:\Program Files\tool.exe")]
+    [InlineData(@"C:\Windows\System32\tool.exe")]
+    [InlineData(@"C:\Windows\Tools\tool.exe")]
     public void A_shared_or_forbidden_directory_is_never_an_observed_applications_location(string path)
     {
         var app = ApplicationMerger.Merge([Process(path, "tool")]).ShouldHaveSingleItem();

@@ -104,6 +104,44 @@ public sealed class ExecutablePathTests
         ExecutablePath.IsSharedDirectory(directory).ShouldBe(shared);
     }
 
+    [Theory]
+    [InlineData(@"C:\Windows", true)]
+    [InlineData(@"C:\Windows\", true)]
+    [InlineData(@"c:\windows\system32", true)]
+    [InlineData(@"C:\Windows\SystemApps\Microsoft.Windows.X_cw5n1h2txyewy", true)]
+    [InlineData(@"D:\Windows\Temp\x", true)]
+    [InlineData(@"C:\WindowsApps", false)]
+    [InlineData(@"C:\Program Files\WindowsApps\Contoso_1.0_x64__abc", false)]
+    [InlineData(@"C:\Tools\Windows", false)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    public void Knows_the_windows_directory_and_everything_under_it(string? directory, bool system)
+    {
+        ExecutablePath.IsSystemDirectory(directory).ShouldBe(system);
+    }
+
+    /// <summary>
+    /// The one rule for a directory discovery may fill in as an install location:
+    /// an application's own, outside Windows, and one the process matcher accepts.
+    /// </summary>
+    [Theory]
+    [InlineData(@"C:\Tools\Caffeine", true)]
+    [InlineData(@"C:\Users\Techsara\AppData\Local\Programs\antigravity", true)]
+    [InlineData(@"C:\Users\Techsara\Downloads\caffeine", true)]
+    [InlineData(@"C:\Users\Techsara\Downloads", false)]
+    [InlineData(@"C:\Users\Techsara", false)]
+    [InlineData(@"C:\Windows\System32", false)]
+    [InlineData(@"C:\Windows", false)]
+    [InlineData(@"C:\Program Files", false)]
+    [InlineData(@"C:\", false)]
+    [InlineData(@"\\server\share\app", false)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    public void Knows_which_directories_discovery_may_adopt_as_an_install_location(string? directory, bool adoptable)
+    {
+        ExecutablePath.IsAdoptableLocation(directory).ShouldBe(adoptable);
+    }
+
     /// <summary>Containment respects a directory boundary, exactly as the process matcher does.</summary>
     [Fact]
     public void Containment_respects_the_directory_boundary()
