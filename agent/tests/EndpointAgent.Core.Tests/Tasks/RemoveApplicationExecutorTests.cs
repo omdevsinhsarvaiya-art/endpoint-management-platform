@@ -234,7 +234,10 @@ public sealed class RemoveApplicationExecutorTests
 
     /// <summary>
     /// Every process vanishing between enumeration and termination fails Force
-    /// Stop; here it is simply "not running" on the way to the uninstall.
+    /// Stop; here it does not block the uninstall. What it must never do is
+    /// report "not running": the application <em>was</em> running, and something
+    /// else -- an exit, or a pid whose identity changed -- is why nothing was
+    /// terminated. See <see cref="A_match_that_could_not_be_terminated_is_never_reported_as_not_running"/>.
     /// </summary>
     [Fact]
     public async Task Processes_that_end_before_they_can_be_terminated_do_not_block_the_removal()
@@ -247,8 +250,72 @@ public sealed class RemoveApplicationExecutorTests
         var result = await Executor(collector, control, remover).ExecuteAsync(Task_());
 
         result.Succeeded.ShouldBeTrue();
-        result.Message.ShouldBe("'Google Chrome' removed: not running; uninstalled.");
+        result.Message.ShouldBe("'Google Chrome' removed: 1 process(es) could not be stopped; uninstalled.");
         remover.Calls.Count.ShouldBe(1);
+    }
+
+    /// <summary>
+    /// "Not running" is a claim about what was found, not about what was killed.
+    /// Reporting it when processes matched and none could be terminated tells an
+    /// operator the application was idle when it was not, on the one path that
+    /// then uninstalls it out from under those processes. Force Stop already
+    /// separates these two cases; Remove collapsing them is the drift that
+    /// sharing <c>ApplicationStopper</c> exists to prevent.
+    /// </summary>
+    [Fact]
+    public async Task A_match_that_could_not_be_terminated_is_never_reported_as_not_running()
+    {
+        var collector = new FakeCollector(
+            Proc(1000, "chrome", $@"{ChromeDir}\chrome.exe"),
+            Proc(1001, "chrome", $@"{ChromeDir}\chrome.exe"));
+        var control = new FakeControl();
+        control.RefuseAsGone.Add(1000);
+        control.RefuseAsGone.Add(1001);
+        var remover = new FakeRemover(control);
+
+        var result = await Executor(collector, control, remover).ExecuteAsync(Task_());
+
+        result.Succeeded.ShouldBeTrue();
+        result.Message!.ShouldNotContain("not running");
+        result.Message.ShouldBe("'Google Chrome' removed: 2 process(es) could not be stopped; uninstalled.");
+    }
+
+    /// <summary>
+    /// A partial stop says both halves. Reporting only the terminations would
+    /// read as a clean stop while some of the application was still up.
+    /// </summary>
+    [Fact]
+    public async Task A_partial_stop_reports_what_was_terminated_and_what_was_not()
+    {
+        var collector = new FakeCollector(
+            Proc(1000, "chrome", $@"{ChromeDir}\chrome.exe"),
+            Proc(1001, "chrome", $@"{ChromeDir}\chrome.exe"));
+        var control = new FakeControl();
+        control.RefuseAsGone.Add(1001);
+        var remover = new FakeRemover(control);
+
+        var result = await Executor(collector, control, remover).ExecuteAsync(Task_());
+
+        result.Succeeded.ShouldBeTrue();
+        result.Message.ShouldBe(
+            "'Google Chrome' removed: 1 process(es) terminated, 1 could not be; uninstalled.");
+    }
+
+    /// <summary>
+    /// Nothing matching at all is the one case that may say "not running".
+    /// </summary>
+    [Fact]
+    public async Task Nothing_matching_is_the_only_case_reported_as_not_running()
+    {
+        var collector = new FakeCollector(Proc(1000, "notepad", @"C:\Windows\System32\notepad.exe"));
+        var control = new FakeControl();
+        var remover = new FakeRemover(control);
+
+        var result = await Executor(collector, control, remover).ExecuteAsync(Task_());
+
+        result.Succeeded.ShouldBeTrue();
+        result.Message.ShouldBe("'Google Chrome' removed: not running; uninstalled.");
+        control.Terminated.ShouldBeEmpty();
     }
 
     /// <summary>
@@ -315,7 +382,10 @@ public sealed class RemoveApplicationExecutorTests
     public static TheoryData<ApplicationRemovalResult, string?, bool, string> Outcomes() => new()
     {
         { ApplicationRemovalResult.Removed, "removed", true, "'Google Chrome' removed: 2 process(es) terminated; uninstalled." },
-        { ApplicationRemovalResult.RemovedRebootRequired, "removed; a restart is required to finish", true, "'Google Chrome' removed; a restart is required to finish." },
+        // Reboot-required carries the stop summary too. Dropping it was the one
+        // success path that told an operator nothing about whether the
+        // application had been stopped before it was uninstalled.
+        { ApplicationRemovalResult.RemovedRebootRequired, "removed; a restart is required to finish", true, "'Google Chrome' removed: 2 process(es) terminated; a restart is required to finish." },
         { ApplicationRemovalResult.AlreadyRemoved, "the product is not installed on this device", true, "'Google Chrome' was already removed." },
         { ApplicationRemovalResult.Refused, "refused: this is the endpoint agent", false, "'Google Chrome' could not be removed: refused: this is the endpoint agent." },
         { ApplicationRemovalResult.Failed, "Windows Installer returned 1603", false, "'Google Chrome' could not be removed: Windows Installer returned 1603." },

@@ -113,7 +113,7 @@ public sealed class RemoveApplicationExecutor(
             {
                 var report = await _stopper.StopAsync(applicationName, installLocation!, cancellationToken);
                 processesTerminated = report.Stopped;
-                stopSummary = report.Stopped > 0 ? $"{report.Stopped} process(es) terminated" : "not running";
+                stopSummary = StopSummary(report);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -169,9 +169,39 @@ public sealed class RemoveApplicationExecutor(
             applicationName, processesTerminated);
 
         var message = outcome.Result == ApplicationRemovalResult.RemovedRebootRequired
-            ? $"'{applicationName}' removed; a restart is required to finish."
+            ? $"'{applicationName}' removed: {stopSummary}; a restart is required to finish."
             : $"'{applicationName}' removed: {stopSummary}; uninstalled.";
         return new AgentTaskResult(true, message, resultJson);
+    }
+
+    /// <summary>
+    /// What the stop step actually achieved, drawing the same three distinctions
+    /// <see cref="StopApplicationExecutor"/> draws.
+    /// </summary>
+    /// <remarks>
+    /// "Not running" must mean nothing matched. Saying it when processes did
+    /// match and none could be terminated reports a stop that never happened, on
+    /// the one path where the application is about to be uninstalled out from
+    /// under those processes -- and it is the exact drift between Force Stop and
+    /// Remove that sharing <see cref="ApplicationStopper"/> exists to prevent.
+    /// Unlike Force Stop this is still not a failure: the uninstall is the task,
+    /// and Windows Installer gives the verdict. It just has to be said honestly.
+    /// </remarks>
+    private static string StopSummary(ApplicationStopReport report)
+    {
+        if (report.WasNotRunning)
+        {
+            return "not running";
+        }
+
+        if (report.Stopped == 0)
+        {
+            return $"{report.Matched} process(es) could not be stopped";
+        }
+
+        return report.NotTerminated.Count > 0
+            ? $"{report.Stopped} process(es) terminated, {report.NotTerminated.Count} could not be"
+            : $"{report.Stopped} process(es) terminated";
     }
 
     private static string? OptionalString(JsonElement root, string name) =>
